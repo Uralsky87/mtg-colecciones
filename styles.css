@@ -26,3 +26,8 @@ h1 {
 .card-list td:nth-child(5) {
   text-align: center;
 }
+
+#resumen {
+  margin-bottom: 15px;
+  font-weight: bold;
+}

@@ -38,6 +38,22 @@ function guardarColeccion() {
   localStorage.setItem(LS_KEY_COLECCION, JSON.stringify(coleccion));
 }
 
+function mostrarResumen() {
+  const total = cartas.length;
+  let tengo = 0;
+
+  cartas.forEach(carta => {
+    if (coleccion[carta.id]) {
+      tengo++;
+    }
+  });
+
+  const porcentaje = total > 0 ? ((tengo / total) * 100).toFixed(1) : 0;
+
+  const resumenDiv = document.getElementById("resumen");
+  resumenDiv.textContent = `Tienes ${tengo} de ${total} cartas (${porcentaje}%).`;
+}
+
 // ===============================
 // 3. Renderizado de cartas
 // ===============================
@@ -87,6 +103,8 @@ function mostrarCartas() {
 
   app.innerHTML = html;
 
+  mostrarResumen();
+
   // Añadimos los listeners a los checkboxes una vez pintados
   const checkboxes = document.querySelectorAll(".checkbox-tengo");
   checkboxes.forEach(chk => {
@@ -94,6 +112,7 @@ function mostrarCartas() {
       const idCarta = parseInt(chk.dataset.id, 10);
       coleccion[idCarta] = chk.checked;   // true si marcado, false si no
       guardarColeccion();
+      mostrarResumen();
     });
   });
 }
