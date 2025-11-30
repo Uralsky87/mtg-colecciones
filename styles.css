@@ -1,0 +1,28 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 20px;
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.card-list {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.card-list th, .card-list td {
+  padding: 8px;
+  border-bottom: 1px solid #ccc;
+}
+
+.card-list th {
+  background: #f2f2f2;
+}
+
+.card-list th:nth-child(5),
+.card-list td:nth-child(5) {
+  text-align: center;
+}
