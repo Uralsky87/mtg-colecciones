@@ -1,6 +1,6 @@
 body {
   font-family: Arial, sans-serif;
-  max-width: 600px;
+  max-width: 700px;
   margin: 0 auto;
   padding: 20px;
 }
@@ -9,31 +9,66 @@ h1, h2 {
   text-align: center;
 }
 
-.pantalla {
-  display: none;
+.menu {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
 }
 
-.pantalla.active {
-  display: block;
-}
-
-.btn-menu {
-  width: 100%;
-  padding: 15px;
-  font-size: 1.2rem;
-  margin-bottom: 15px;
+.menu button {
+  padding: 10px 14px;
   cursor: pointer;
   border-radius: 8px;
   background: #0077cc;
   color: white;
   border: none;
+  font-weight: bold;
 }
 
-.btn-menu:hover {
+.menu button:hover {
   background: #005fa3;
 }
 
-.btn-volver {
-  margin-top: 20px;
-  padding: 10px;
+.pantalla {
+  display: none;
+}
+
+.pantalla.activa {
+  display: block;
+}
+
+.coleccion-item {
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  background: #fafafa;
+}
+
+.progreso {
+  color: #444;
+}
+
+table.card-list {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 12px;
+}
+
+.card-list th, .card-list td {
+  padding: 8px;
+  border-bottom: 1px solid #ccc;
+  text-align: left;
+}
+
+.card-list th {
+  background: #f2f2f2;
+}
+
+#resumen {
+  margin-top: 10px;
+  font-weight: bold;
+  margin-bottom: 10px;
 }

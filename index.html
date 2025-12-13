@@ -8,51 +8,36 @@
 </head>
 
 <body>
-
-  <div id="menuPrincipal">
-  <button data-pantalla="colecciones">Colecciones</button>
-  <button data-pantalla="buscar">Buscar</button>
-  <button data-pantalla="estadisticas">Estadísticas</button>
-</div>
-
   <h1>Mi Colección de Magic</h1>
 
-  <!-- =======================
-       MENÚ PRINCIPAL
-  ======================= -->
-  <div id="menuPrincipal">
+  <!-- MENÚ PRINCIPAL -->
+  <nav id="menuPrincipal" class="menu">
     <button data-pantalla="colecciones">Colecciones</button>
     <button data-pantalla="buscar">Buscar</button>
     <button data-pantalla="estadisticas">Estadísticas</button>
-  </div>
+  </nav>
 
-  <!-- =======================
-       PANTALLA: COLECCIONES
-  ======================= -->
-  <div id="contenedorColecciones" class="pantalla">
-    <!-- JS rellenará esta pantalla -->
-  </div>
+  <!-- PANTALLA: COLECCIONES -->
+  <section id="pantallaColecciones" class="pantalla">
+    <div id="contenedorColecciones"></div>
+  </section>
 
-  <!-- =======================
-       PANTALLA: BUSCAR
-  ======================= -->
-  <div id="pantallaBuscar" class="pantalla">
+  <!-- PANTALLA: BUSCAR -->
+  <section id="pantallaBuscar" class="pantalla">
     <h2>Buscar carta</h2>
 
     <label for="buscarNombre">Buscar nombre:</label>
     <input id="buscarNombre" type="text" placeholder="Escribe nombre...">
 
-    <div id="app"><!-- Aquí salen los resultados filtrados --></div>
     <div id="resumen"></div>
-  </div>
+    <div id="app"></div>
+  </section>
 
-  <!-- =======================
-       PANTALLA: ESTADISTICAS
-  ======================= -->
-  <div id="pantallaEstadisticas" class="pantalla">
-    <h2>Estadísticas (próximamente)</h2>
-    <p>Aquí mostraremos porcentajes, totales, etc.</p>
-  </div>
+  <!-- PANTALLA: ESTADÍSTICAS -->
+  <section id="pantallaEstadisticas" class="pantalla">
+    <h2>Estadísticas</h2>
+    <p>(Próximamente)</p>
+  </section>
 
   <script src="app.js"></script>
 </body>

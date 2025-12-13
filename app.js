@@ -1,7 +1,6 @@
 // ===============================
-// 1. Datos de ejemplo (MVP con varias colecciones)
+// 1) Datos de ejemplo
 // ===============================
-
 const cartas = [
   // TestSet A
   { id: 1, nombre: "Lightning Bolt",  coleccion: "TestSet A", numero: 101, rareza: "Común" },
@@ -18,50 +17,60 @@ const cartas = [
   { id: 10, nombre: "Wrath of God",      coleccion: "TestSet B", numero: 205, rareza: "Rara" }
 ];
 
-// Obtener lista única de colecciones desde los datos
-function obtenerColecciones() {
-  return [...new Set(cartas.map(c => c.coleccion))];
-}
-
-// Lista de colecciones únicas
-const colecciones = [...new Set(cartas.map(c => c.coleccion))];
-
-// Colección seleccionada actualmente ("TODAS" o una de las colecciones)
-let coleccionActual = "TODAS";
-
-// Texto de búsqueda por nombre (filtro)
+const LS_KEY_COLECCION = "mtg_coleccion";
+let coleccionEstado = {};
 let filtroNombre = "";
 
 // ===============================
-// 2. Estado de la colección (localStorage)
+// 2) LocalStorage
 // ===============================
-
-const LS_KEY_COLECCION = "mtg_coleccion";
-
-// Objeto donde guardamos si tengo la carta o no, por id
-// Ejemplo: { "1": true, "2": false, ... }
-let coleccionEstado = {};
-
 function cargarColeccion() {
   const guardado = localStorage.getItem(LS_KEY_COLECCION);
-  if (guardado) {
-    coleccionEstado = JSON.parse(guardado);
-  } else {
-    coleccionEstado = {};
-  }
+  coleccionEstado = guardado ? JSON.parse(guardado) : {};
 }
 
 function guardarColeccion() {
   localStorage.setItem(LS_KEY_COLECCION, JSON.stringify(coleccionEstado));
 }
 
+// ===============================
+// 3) Utilidades
+// ===============================
+function obtenerColecciones() {
+  return [...new Set(cartas.map(c => c.coleccion))];
+}
+
 function progresoColeccion(nombreColeccion) {
   const cartasDelSet = cartas.filter(c => c.coleccion === nombreColeccion);
   const total = cartasDelSet.length;
-  const tengo = cartasDelSet.filter(c => coleccionEstado[c.id]).length;
+  const tengo = cartasDelSet.filter(c => !!coleccionEstado[c.id]).length;
   return { tengo, total };
 }
 
+// ===============================
+// 4) Navegación entre pantallas
+// ===============================
+function activarPantalla(nombre) {
+  document.querySelectorAll(".pantalla").forEach(p => p.classList.remove("activa"));
+
+  if (nombre === "colecciones") {
+    document.getElementById("pantallaColecciones").classList.add("activa");
+    mostrarPantallaColecciones();
+  }
+
+  if (nombre === "buscar") {
+    document.getElementById("pantallaBuscar").classList.add("activa");
+    mostrarBusqueda(); // pinta resultados según filtro actual
+  }
+
+  if (nombre === "estadisticas") {
+    document.getElementById("pantallaEstadisticas").classList.add("activa");
+  }
+}
+
+// ===============================
+// 5) Pantalla Colecciones
+// ===============================
 function mostrarPantallaColecciones() {
   const cont = document.getElementById("contenedorColecciones");
   const sets = obtenerColecciones();
@@ -70,7 +79,6 @@ function mostrarPantallaColecciones() {
 
   sets.forEach(set => {
     const { tengo, total } = progresoColeccion(set);
-
     html += `
       <div class="coleccion-item">
         <strong>${set}</strong><br>
@@ -81,115 +89,24 @@ function mostrarPantallaColecciones() {
 
   cont.innerHTML = html;
 }
-// ===============================
-// 3. Selector de colección
-// ===============================
-
-function inicializarSelectorColecciones() {
-  const select = document.getElementById("selectColeccion");
-  if (!select) return;
-
-  function inicializarBuscadorNombre() {
-  const input = document.getElementById("buscarNombre");
-  if (!input) return;
-
-  // Por si en el futuro quieres recordar el último filtro, podrías usar localStorage.
-  // De momento, empezar siempre vacío:
-  input.value = "";
-
-  input.addEventListener("input", () => {
-    filtroNombre = input.value.toLowerCase();
-    mostrarCartas(); // volvemos a pintar con el filtro aplicado
-  });
-}
-
-  // Limpiamos por si acaso
-  select.innerHTML = "";
-
-  // Opción "Todas"
-  const optTodas = document.createElement("option");
-  optTodas.value = "TODAS";
-  optTodas.textContent = "Todas las colecciones";
-  select.appendChild(optTodas);
-
-  // Una opción por cada colección
-  colecciones.forEach(col => {
-    const opt = document.createElement("option");
-    opt.value = col;
-    opt.textContent = col;
-    select.appendChild(opt);
-  });
-
-  // Seleccionar por defecto "TODAS"
-  select.value = coleccionActual;
-
-  // Cuando cambie la selección, actualizamos y volvemos a pintar
-  select.addEventListener("change", () => {
-    coleccionActual = select.value;
-    mostrarCartas();
-  });
-}
 
 // ===============================
-// 4. Resumen (según la colección seleccionada)
+// 6) Pantalla Buscar
 // ===============================
-
-function mostrarResumen() {
+function mostrarResumen(lista) {
   const resumenDiv = document.getElementById("resumen");
   if (!resumenDiv) return;
 
-   // Filtramos las cartas según la colección actual
-  let lista = cartas;
-  if (coleccionActual !== "TODAS") {
-    lista = cartas.filter(c => c.coleccion === coleccionActual);
-  }
-
-  // Aplicamos también el filtro de nombre al resumen
-  if (filtroNombre && filtroNombre.trim() !== "") {
-    const texto = filtroNombre.trim();
-    lista = lista.filter(c =>
-      c.nombre.toLowerCase().includes(texto)
-    );
-  }
-
   const total = lista.length;
-  let tengo = 0;
+  const tengo = lista.filter(c => !!coleccionEstado[c.id]).length;
+  const porcentaje = total > 0 ? ((tengo / total) * 100).toFixed(1) : "0.0";
 
-  lista.forEach(carta => {
-    if (coleccionEstado[carta.id]) {
-      tengo++;
-    }
-  });
-
-  const porcentaje = total > 0 ? ((tengo / total) * 100).toFixed(1) : 0;
-
-  const textoColeccion =
-    coleccionActual === "TODAS" ? "overall" : `en "${coleccionActual}"`;
-
-  resumenDiv.textContent = `Tienes ${tengo} de ${total} cartas (${porcentaje}%) ${textoColeccion}.`;
+  resumenDiv.textContent = `Tienes ${tengo} de ${total} cartas (${porcentaje}%).`;
 }
 
-// ===============================
-// 5. Renderizado de cartas
-// ===============================
-
-function mostrarCartas() {
+function renderTabla(lista) {
   const app = document.getElementById("app");
   if (!app) return;
-
-  // Filtramos por colección seleccionada
-  let lista = cartas;
-  if (coleccionActual !== "TODAS") {
-    lista = cartas.filter(c => c.coleccion === coleccionActual);
-  }
-
-  // Filtro por nombre (si hay texto en el buscador)
-  if (filtroNombre && filtroNombre.trim() !== "") {
-    const texto = filtroNombre.trim();
-    lista = lista.filter(c =>
-      c.nombre.toLowerCase().includes(texto)
-    );
-  }
 
   let html = `
     <table class="card-list">
@@ -206,8 +123,7 @@ function mostrarCartas() {
   `;
 
   lista.forEach(carta => {
-    const tengoEsta = !!coleccionEstado[carta.id]; // true/false
-
+    const tengoEsta = !!coleccionEstado[carta.id];
     html += `
       <tr>
         <td>${carta.nombre}</td>
@@ -215,66 +131,63 @@ function mostrarCartas() {
         <td>${carta.numero}</td>
         <td>${carta.rareza}</td>
         <td style="text-align:center;">
-          <input 
-            type="checkbox" 
-            class="checkbox-tengo" 
-            data-id="${carta.id}"
-            ${tengoEsta ? "checked" : ""}
-          >
+          <input type="checkbox" class="checkbox-tengo" data-id="${carta.id}" ${tengoEsta ? "checked" : ""}>
         </td>
       </tr>
     `;
   });
 
-  html += `
-      </tbody>
-    </table>
-  `;
-
+  html += `</tbody></table>`;
   app.innerHTML = html;
 
-  // Listeners de los checkboxes
-  const checkboxes = document.querySelectorAll(".checkbox-tengo");
-  checkboxes.forEach(chk => {
+  document.querySelectorAll(".checkbox-tengo").forEach(chk => {
     chk.addEventListener("change", () => {
-      const idCarta = parseInt(chk.dataset.id, 10);
-      coleccionEstado[idCarta] = chk.checked;   // true si marcado, false si no
+      const id = parseInt(chk.dataset.id, 10);
+      coleccionEstado[id] = chk.checked;
       guardarColeccion();
-      mostrarResumen(); // actualizar resumen al cambiar
+      // refresca resumen sin repintar todo
+      mostrarResumen(listaFiltradaActual());
     });
   });
-
-  // Actualizar resumen cada vez que mostramos
-  mostrarResumen();
 }
 
-function cambiarPantalla(nombre) {
-  document.querySelectorAll(".pantalla").forEach(p => p.classList.remove("activa"));
+function listaFiltradaActual() {
+  const texto = filtroNombre.trim().toLowerCase();
+  if (!texto) return cartas;
+  return cartas.filter(c => c.nombre.toLowerCase().includes(texto));
+}
 
-  if (nombre === "colecciones") {
-    mostrarPantallaColecciones();
-    document.getElementById("contenedorColecciones").classList.add("activa");
-  }
-
-  // Más pantallas vendrán luego
+function mostrarBusqueda() {
+  const lista = listaFiltradaActual();
+  mostrarResumen(lista);
+  renderTabla(lista);
 }
 
 // ===============================
-// 6. Inicialización
+// 7) Inicialización
 // ===============================
+function inicializarBuscador() {
+  const input = document.getElementById("buscarNombre");
+  if (!input) return;
+
+  input.value = "";
+  input.addEventListener("input", () => {
+    filtroNombre = input.value;
+    mostrarBusqueda();
+  });
+}
+
+function inicializarMenu() {
+  document.querySelectorAll("#menuPrincipal button").forEach(btn => {
+    btn.addEventListener("click", () => activarPantalla(btn.dataset.pantalla));
+  });
+}
 
 function inicializar() {
   cargarColeccion();
-
-  // Activamos menú
-  document.querySelectorAll("#menuPrincipal button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      cambiarPantalla(btn.dataset.pantalla);
-    });
-  });
-
-  // Al iniciar, mostrar colecciones
-  cambiarPantalla("colecciones");
+  inicializarMenu();
+  inicializarBuscador();
+  activarPantalla("colecciones"); // pantalla inicial
 }
 
 inicializar();
