@@ -1,33 +1,39 @@
 body {
   font-family: Arial, sans-serif;
-  margin: 20px;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px;
 }
 
-h1 {
+h1, h2 {
   text-align: center;
-  margin-bottom: 20px;
 }
 
-.card-list {
-  border-collapse: collapse;
+.pantalla {
+  display: none;
+}
+
+.pantalla.active {
+  display: block;
+}
+
+.btn-menu {
   width: 100%;
-}
-
-.card-list th, .card-list td {
-  padding: 8px;
-  border-bottom: 1px solid #ccc;
-}
-
-.card-list th {
-  background: #f2f2f2;
-}
-
-.card-list th:nth-child(5),
-.card-list td:nth-child(5) {
-  text-align: center;
-}
-
-#resumen {
+  padding: 15px;
+  font-size: 1.2rem;
   margin-bottom: 15px;
-  font-weight: bold;
+  cursor: pointer;
+  border-radius: 8px;
+  background: #0077cc;
+  color: white;
+  border: none;
+}
+
+.btn-menu:hover {
+  background: #005fa3;
+}
+
+.btn-volver {
+  margin-top: 20px;
+  padding: 10px;
 }
