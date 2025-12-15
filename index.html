@@ -1,42 +1,93 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>MTG Colecciones</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="styles.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
-
 <body>
-  <h1>Mi Colección de Magic</h1>
 
-  <!-- MENÚ PRINCIPAL -->
-  <nav id="menuPrincipal" class="menu">
-    <button data-pantalla="colecciones">Colecciones</button>
-    <button data-pantalla="buscar">Buscar</button>
-    <button data-pantalla="estadisticas">Estadísticas</button>
-  </nav>
+  <!-- =======================
+       PANTALLA: BIENVENIDA
+  ======================= -->
+  <section id="pantallaInicio" class="pantalla active">
+    <h1>Mi Colección de Magic</h1>
+    <p class="subtitulo">Organiza tus ediciones y marca tus cartas.</p>
+    <button id="btnEntrar" class="btn-principal">Entrar</button>
+  </section>
 
-  <!-- PANTALLA: COLECCIONES -->
+  <!-- =======================
+       PANTALLA: MENÚ PRINCIPAL
+  ======================= -->
+  <section id="pantallaMenu" class="pantalla">
+    <h2>Menú</h2>
+    <div class="menu">
+      <button class="btn-menu" data-pantalla="colecciones">Colecciones</button>
+      <button class="btn-menu" data-pantalla="buscar">Buscar</button>
+      <button class="btn-menu" data-pantalla="estadisticas">Estadísticas</button>
+    </div>
+  </section>
+
+  <!-- =======================
+       PANTALLA: LISTA COLECCIONES
+  ======================= -->
   <section id="pantallaColecciones" class="pantalla">
-    <div id="contenedorColecciones"></div>
+    <div class="topbar">
+      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <h2>Colecciones</h2>
+    </div>
+
+    <div id="listaColecciones"></div>
   </section>
 
-  <!-- PANTALLA: BUSCAR -->
+  <!-- =======================
+       PANTALLA: SET (CARTAS DE UNA COLECCIÓN)
+  ======================= -->
+  <section id="pantallaSet" class="pantalla">
+    <div class="topbar">
+      <button class="btn-secundario" data-action="volverColecciones">← Colecciones</button>
+      <h2 id="tituloSet">Set</h2>
+    </div>
+
+    <div id="progresoSet" class="progreso-box"></div>
+
+    <div id="listaCartasSet"></div>
+  </section>
+
+  <!-- =======================
+       PANTALLA: BUSCAR
+  ======================= -->
   <section id="pantallaBuscar" class="pantalla">
-    <h2>Buscar carta</h2>
+    <div class="topbar">
+      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <h2>Buscar</h2>
+    </div>
 
-    <label for="buscarNombre">Buscar nombre:</label>
-    <input id="buscarNombre" type="text" placeholder="Escribe nombre...">
+    <div class="card">
+      <label for="inputBuscar">Nombre de carta:</label>
+      <div class="fila">
+        <input id="inputBuscar" type="text" placeholder="Ej: Lightning Bolt" />
+        <button id="btnBuscar" class="btn-principal">Buscar</button>
+      </div>
+      <small class="hint">Puedes escribir solo una parte del nombre.</small>
+    </div>
 
-    <div id="resumen"></div>
-    <div id="app"></div>
+    <div id="resultadosBuscar"></div>
   </section>
 
-  <!-- PANTALLA: ESTADÍSTICAS -->
+  <!-- =======================
+       PANTALLA: ESTADÍSTICAS
+  ======================= -->
   <section id="pantallaEstadisticas" class="pantalla">
-    <h2>Estadísticas</h2>
-    <p>(Próximamente)</p>
+    <div class="topbar">
+      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <h2>Estadísticas</h2>
+    </div>
+
+    <div class="card">
+      <p>Próximamente: totales, porcentajes, rarezas, colores, valor, etc.</p>
+    </div>
   </section>
 
   <script src="app.js"></script>

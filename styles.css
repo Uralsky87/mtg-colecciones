@@ -1,74 +1,151 @@
 body {
   font-family: Arial, sans-serif;
-  max-width: 700px;
+  max-width: 720px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 18px;
 }
 
 h1, h2 {
   text-align: center;
 }
 
-.menu {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.menu button {
-  padding: 10px 14px;
-  cursor: pointer;
-  border-radius: 8px;
-  background: #0077cc;
-  color: white;
-  border: none;
-  font-weight: bold;
-}
-
-.menu button:hover {
-  background: #005fa3;
+.subtitulo {
+  text-align: center;
+  opacity: 0.8;
+  margin-top: -8px;
+  margin-bottom: 18px;
 }
 
 .pantalla {
   display: none;
 }
 
-.pantalla.activa {
+.pantalla.active {
   display: block;
 }
 
-.coleccion-item {
-  padding: 12px;
-  border: 1px solid #ddd;
+.menu {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.btn-principal {
+  width: 100%;
+  padding: 14px;
+  font-size: 1.1rem;
+  cursor: pointer;
   border-radius: 10px;
+  background: #0077cc;
+  color: white;
+  border: none;
+  font-weight: bold;
+}
+
+.btn-principal:hover {
+  background: #005fa3;
+}
+
+.btn-menu {
+  width: 100%;
+  padding: 14px;
+  font-size: 1.05rem;
+  cursor: pointer;
+  border-radius: 10px;
+  background: #e6e6e6;
+  color: #111;
+  border: none;
+  font-weight: bold;
+}
+
+.btn-menu:hover {
+  background: #d8d8d8;
+}
+
+.btn-secundario {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.fila {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+input[type="text"] {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+}
+
+.hint {
+  opacity: 0.75;
+}
+
+.coleccion-item {
+  border: 1px solid #eee;
+  border-radius: 12px;
+  padding: 12px;
   margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.coleccion-item:hover {
   background: #fafafa;
 }
 
-.progreso {
-  color: #444;
+.progreso-box {
+  text-align: center;
+  padding: 10px;
+  border: 1px solid #eee;
+  border-radius: 12px;
+  margin-bottom: 12px;
 }
 
-table.card-list {
-  border-collapse: collapse;
+.tabla {
   width: 100%;
-  margin-top: 12px;
+  border-collapse: collapse;
 }
 
-.card-list th, .card-list td {
-  padding: 8px;
-  border-bottom: 1px solid #ccc;
+.tabla th, .tabla td {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
   text-align: left;
 }
 
-.card-list th {
-  background: #f2f2f2;
+.acciones {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
 }
 
-#resumen {
-  margin-top: 10px;
-  font-weight: bold;
-  margin-bottom: 10px;
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #eee;
+  font-size: 0.85rem;
+  opacity: 0.85;
 }
