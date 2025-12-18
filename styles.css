@@ -160,3 +160,109 @@ input[type="text"] {
 .resultado-version span {
   flex: 1;
 }
+
+/* --- NUEVO: controles de cantidad / played --- */
+
+.acciones-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.fila-accion {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.lbl {
+  opacity: 0.75;
+  font-size: 0.92rem;
+}
+
+.stepper {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-step {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.btn-step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.inp-num {
+  width: 64px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+  text-align: center;
+}
+
+.chkline {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ya lo tenías para el botón "Ir", pero lo dejamos aquí por si no lo añadiste antes */
+.resultado-version {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.resultado-version span {
+  flex: 1;
+}
+
+/* --- Filtros de idioma en Colecciones --- */
+.filtros {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin: 10px 0 14px;
+}
+
+.btn-filtro {
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.btn-filtro.active {
+  background: #0077cc;
+  color: #fff;
+  border-color: #0077cc;
+}
+
+.lang-pill {
+  margin-left: 8px;
+  font-size: 0.78rem;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #eee;
+  opacity: 0.85;
+}
+
+#inputBuscarColecciones {
+  width: 100%;
+  margin-top: 6px;
+}
