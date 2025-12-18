@@ -248,13 +248,24 @@ function renderResultadosBuscar(texto) {
       const st = getEstadoCarta(v.id);
       const tengoTxt = st.tengo ? "✅ Tengo" : "❌ No tengo";
       const foilTxt = st.foil ? " · ✨ Foil" : "";
-      html += `<li><strong>${v.coleccion}</strong> (#${v.numero}, ${v.rareza}) — ${tengoTxt}${foilTxt}</li>`;
+      html += `
+  <li class="resultado-version">
+    <span><strong>${v.coleccion}</strong> (#${v.numero}, ${v.rareza}) — ${tengoTxt}${foilTxt}</span>
+    <button class="btn-secundario btn-ir-set" data-set="${v.coleccion}">Ir</button>
+  </li>
+`;
     });
 
     html += `</ul></div>`;
   });
 
   cont.innerHTML = html;
+  cont.querySelectorAll(".btn-ir-set").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const set = btn.dataset.set;
+    abrirSet(set);
+  });
+});
 }
 
 // ===============================

@@ -149,3 +149,14 @@ input[type="text"] {
   font-size: 0.85rem;
   opacity: 0.85;
 }
+
+.resultado-version {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.resultado-version span {
+  flex: 1;
+}
