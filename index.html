@@ -69,6 +69,21 @@
 
     <div id="progresoSet" class="progreso-box"></div>
 
+    <div class="card">
+  <label for="inputBuscarEnSet">Buscar carta en este set:</label>
+
+  <div class="fila fila-busqueda">
+    <input id="inputBuscarEnSet" type="text" placeholder="Ej: Bolt, Angel, Duress..." />
+    <button id="btnLimpiarBuscarEnSet" class="btn-secundario" type="button" title="Limpiar">✕</button>
+  </div>
+
+  <label class="chkline" style="margin-top:10px;">
+  <input id="chkSoloFaltanSet" type="checkbox" />
+  Solo faltan
+</label>
+
+</div>
+
     <div id="listaCartasSet"></div>
   </section>
 
@@ -101,6 +116,20 @@
       <button class="btn-secundario" data-action="volverMenu">← Menú</button>
       <h2>Estadísticas</h2>
     </div>
+
+    <div class="card">
+  <h3 style="margin-top:0;">Copia de seguridad</h3>
+  <p class="hint">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
+
+  <button id="btnExportarEstado" class="btn-principal" type="button">Exportar (JSON)</button>
+
+  <div style="height:10px;"></div>
+
+  <input id="inputImportarEstado" type="file" accept="application/json" style="display:none;" />
+  <button id="btnImportarEstado" class="btn-secundario" type="button">Importar (reemplazar)</button>
+
+  <p id="msgBackup" class="hint" style="margin-top:10px;"></p>
+</div>
 
     <div class="card">
       <p>Próximamente: totales, porcentajes, rarezas, colores, valor, etc.</p>

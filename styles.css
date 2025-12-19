@@ -279,3 +279,15 @@ input[type="text"] {
   display: grid;
   place-items: center;
 }
+
+.fila-busqueda {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+#btnLimpiarBuscarEnSet {
+  height: 44px;
+  min-width: 44px;
+  display: grid;
+  place-items: center;
+}

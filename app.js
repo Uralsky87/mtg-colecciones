@@ -38,6 +38,44 @@ function formatLang(lang) {
   return (lang || "en").toUpperCase();
 }
 
+function parseCollectorNumber(value) {
+  const raw = String(value ?? "").trim();
+  const s = raw.toLowerCase();
+
+  // Caso típico: "123", "001", "123a", "123-b", "123★"...
+  const m = s.match(/^(\d+)(.*)$/);
+  if (m) {
+    return {
+      hasNum: true,
+      num: parseInt(m[1], 10),
+      rest: (m[2] || "").trim(),
+      raw: s
+    };
+  }
+
+  // Caso no-numérico: "S1", "U12", "PRM", etc.
+  return {
+    hasNum: false,
+    num: Number.POSITIVE_INFINITY,
+    rest: s,
+    raw: s
+  };
+}
+
+function compareCollectorNumbers(a, b) {
+  const A = parseCollectorNumber(a);
+  const B = parseCollectorNumber(b);
+
+  // Primero: los que tienen número delante, antes que los que no
+  if (A.hasNum !== B.hasNum) return A.hasNum ? -1 : 1;
+
+  // Segundo: número principal
+  if (A.num !== B.num) return A.num - B.num;
+
+  // Tercero: sufijo/resto (natural: "a" < "b", "" < "a", "10" > "2", etc.)
+  return A.rest.localeCompare(B.rest, "es", { numeric: true, sensitivity: "base" });
+}
+
 function obtenerColecciones() {
   // colección única por (coleccion + lang)
   const map = new Map();
@@ -305,6 +343,41 @@ function cargarFiltrosColecciones() {
 // ===============================
 
 let setActualKey = null;
+let filtroTextoSet = "";
+let filtroSoloFaltanSet = false;
+
+function aplicarUIFiltrosSet() {
+  const inp = document.getElementById("inputBuscarEnSet");
+  if (inp) inp.value = filtroTextoSet || "";
+
+  const chk = document.getElementById("chkSoloFaltanSet");
+  if (chk) chk.checked = !!filtroSoloFaltanSet;
+}
+
+function setFiltroTextoSet(texto) {
+  filtroTextoSet = (texto || "").trim().toLowerCase();
+  if (setActualKey) renderTablaSet(setActualKey);
+}
+
+function setFiltroSoloFaltanSet(val) {
+  filtroSoloFaltanSet = !!val;
+  if (setActualKey) renderTablaSet(setActualKey);
+}
+
+function getListaSetFiltrada(setKey) {
+  let lista = cartasDeSetKey(setKey)
+    .sort((a, b) => compareCollectorNumbers(a.numero, b.numero));
+
+  if (filtroTextoSet) {
+    lista = lista.filter(c => c.nombre.toLowerCase().includes(filtroTextoSet));
+  }
+
+  if (filtroSoloFaltanSet) {
+    lista = lista.filter(c => getEstadoCarta(c.id).qty === 0);
+  }
+
+  return lista;
+}
 
 function abrirSet(setKey) {
   setActualKey = setKey;
@@ -315,7 +388,14 @@ function abrirSet(setKey) {
   const { tengo, total } = progresoDeColeccion(setKey);
   document.getElementById("progresoSet").textContent = `Progreso: ${tengo} / ${total}`;
 
-  const lista = cartasDeSetKey(setKey).sort((a, b) => a.numero - b.numero);
+  aplicarUIFiltrosSet();
+  renderTablaSet(setKey);
+
+  mostrarPantalla("set");
+}
+
+function renderTablaSet(setKey) {
+  const lista = getListaSetFiltrada(setKey);
 
   let html = `
     <table class="tabla">
@@ -365,7 +445,7 @@ function abrirSet(setKey) {
 
               <label class="chkline">
                 <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
-                Busco
+                Ri
               </label>
             </div>
 
@@ -403,7 +483,7 @@ function abrirSet(setKey) {
       const id = Number(btn.dataset.id);
       const st = getEstadoCarta(id);
       setQty(id, st.qty - 1);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
       renderColecciones();
     });
   });
@@ -413,7 +493,7 @@ function abrirSet(setKey) {
       const id = Number(btn.dataset.id);
       const st = getEstadoCarta(id);
       setQty(id, st.qty + 1);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
       renderColecciones();
     });
   });
@@ -422,7 +502,7 @@ function abrirSet(setKey) {
     inp.addEventListener("change", () => {
       const id = Number(inp.dataset.id);
       setQty(id, inp.value);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
       renderColecciones();
     });
   });
@@ -433,7 +513,7 @@ function abrirSet(setKey) {
       const id = Number(btn.dataset.id);
       const st = getEstadoCarta(id);
       setPlayedQty(id, st.playedQty - 1);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
     });
   });
 
@@ -442,7 +522,7 @@ function abrirSet(setKey) {
       const id = Number(btn.dataset.id);
       const st = getEstadoCarta(id);
       setPlayedQty(id, st.playedQty + 1);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
     });
   });
 
@@ -450,16 +530,16 @@ function abrirSet(setKey) {
     inp.addEventListener("change", () => {
       const id = Number(inp.dataset.id);
       setPlayedQty(id, inp.value);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
     });
   });
 
-  // foil / busco
+  // foil / Ri
   cont.querySelectorAll(".chk-foil").forEach(chk => {
     chk.addEventListener("change", () => {
       const id = Number(chk.dataset.id);
       setFoil(id, chk.checked);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
     });
   });
 
@@ -467,12 +547,11 @@ function abrirSet(setKey) {
     chk.addEventListener("change", () => {
       const id = Number(chk.dataset.id);
       setWantMore(id, chk.checked);
-      abrirSet(setActualKey);
+      renderTablaSet(setActualKey);
     });
   });
-
-  mostrarPantalla("set");
 }
+
 
 // ===============================
 // 6) Buscar: por nombre + mostrar sets donde aparece y estado + botón Ir (set+idioma)
@@ -529,7 +608,7 @@ function renderResultadosBuscar(texto) {
       const qtyTxt = st.qty > 0 ? `✅ x${st.qty}` : `❌ x0`;
       const foilTxt = st.foil ? " · ✨ Foil" : "";
       const playedTxt = st.playedQty > 0 ? ` · 🎴 Played:${st.playedQty}` : "";
-      const wantTxt = st.wantMore ? " · 🔎 Busco" : "";
+      const wantTxt = st.wantMore ? " · 🔎 Ri" : "";
 
       html += `
         <li class="resultado-version">
@@ -554,6 +633,66 @@ function renderResultadosBuscar(texto) {
     });
   });
 }
+
+function exportarEstado() {
+  const payload = {
+    app: "MTG Colecciones",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    estado
+  };
+
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  const fecha = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  a.href = url;
+  a.download = `mtg-coleccion-backup-${fecha}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(url);
+}
+
+function validarPayloadImport(payload) {
+  if (!payload || typeof payload !== "object") return { ok: false, msg: "JSON inválido." };
+  if (!payload.estado || typeof payload.estado !== "object") return { ok: false, msg: "Falta 'estado' en el JSON." };
+  return { ok: true, msg: "" };
+}
+
+function importarEstadoDesdeTexto(jsonText) {
+  let payload;
+  try {
+    payload = JSON.parse(jsonText);
+  } catch {
+    return { ok: false, msg: "No se pudo leer el JSON (formato inválido)." };
+  }
+
+  const v = validarPayloadImport(payload);
+  if (!v.ok) return v;
+
+  // Reemplazar
+  estado = payload.estado;
+
+  // Normalizar/migrar por si viene antiguo o incompleto
+  migrarEstadoSiHaceFalta();
+
+  // Guardar
+  guardarEstado();
+
+  // Refrescar UI (si estamos dentro de un set, lo reabrimos)
+  if (typeof setActualKey !== "undefined" && setActualKey) {
+    abrirSet(setActualKey);
+  } else {
+    renderColecciones();
+  }
+
+  return { ok: true, msg: "Importación completada." };
+}
+
 
 // ===============================
 // 7) Inicialización (botones + pantallas)
@@ -591,6 +730,30 @@ function wireGlobalButtons() {
         return;
       }
     });
+    // Buscador dentro del SET
+const inputBuscarEnSet = document.getElementById("inputBuscarEnSet");
+if (inputBuscarEnSet) {
+  inputBuscarEnSet.addEventListener("input", () => {
+    setFiltroTextoSet(inputBuscarEnSet.value);
+  });
+}
+
+const btnLimpiarBuscarEnSet = document.getElementById("btnLimpiarBuscarEnSet");
+if (btnLimpiarBuscarEnSet && inputBuscarEnSet) {
+  btnLimpiarBuscarEnSet.addEventListener("click", () => {
+    inputBuscarEnSet.value = "";
+    setFiltroTextoSet("");
+    inputBuscarEnSet.focus();
+  });
+}
+
+const chkSoloFaltanSet = document.getElementById("chkSoloFaltanSet");
+if (chkSoloFaltanSet) {
+  chkSoloFaltanSet.addEventListener("change", () => {
+    setFiltroSoloFaltanSet(chkSoloFaltanSet.checked);
+  });
+}
+
   });
 
   // Volver al menú
@@ -653,11 +816,46 @@ function wireGlobalButtons() {
   }
 }
 
+function wireBackupButtons() {
+  const btnExportar = document.getElementById("btnExportarEstado");
+  const btnImportar = document.getElementById("btnImportarEstado");
+  const inputImportar = document.getElementById("inputImportarEstado");
+  const msgBackup = document.getElementById("msgBackup");
+
+  if (btnExportar) {
+    btnExportar.addEventListener("click", () => {
+      exportarEstado();
+      if (msgBackup) msgBackup.textContent = "Exportación lista (archivo descargado).";
+    });
+  }
+
+  if (btnImportar && inputImportar) {
+    btnImportar.addEventListener("click", () => {
+      inputImportar.value = ""; // permite importar el mismo archivo 2 veces
+      inputImportar.click();
+    });
+
+    inputImportar.addEventListener("change", () => {
+      const file = inputImportar.files && inputImportar.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = importarEstadoDesdeTexto(String(reader.result || ""));
+        if (msgBackup) msgBackup.textContent = res.ok ? res.msg : `Error: ${res.msg}`;
+      };
+      reader.readAsText(file);
+    });
+  }
+}
+
 function init() {
   cargarEstado();
-  cargarFiltrosColecciones();   // cargar filtros guardados (idioma + texto)
+  cargarFiltrosColecciones();
   wireGlobalButtons();
-  renderResultadosBuscar("");   // estado inicial de la pantalla Buscar
+  wireBackupButtons();          // <-- AÑADE ESTO
+  renderResultadosBuscar("");
 }
 
 init();
+
