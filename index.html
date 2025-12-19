@@ -46,11 +46,16 @@
 
 <div class="card">
   <label for="inputBuscarColecciones">Buscar colección:</label>
-  <input id="inputBuscarColecciones" type="text" placeholder="Ej: Dominaria, Ixalan, Modern..." />
+
+  <div class="fila fila-busqueda">
+    <input id="inputBuscarColecciones" type="text" placeholder="Ej: Dominaria, Ixalan, Modern..." />
+    <button id="btnLimpiarColecciones" class="btn-secundario" type="button" title="Limpiar">✕</button>
+  </div>
+
   <small class="hint">Filtra por nombre (según escribes).</small>
 </div>
 
-    <div id="listaColecciones"></div>
+<div id="listaColecciones"></div>
   </section>
 
   <!-- =======================

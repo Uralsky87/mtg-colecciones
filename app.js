@@ -194,10 +194,15 @@ let filtroIdiomaColecciones = "all"; // "all" | "en" | "es"
 
 let filtroTextoColecciones = ""; // texto del buscador
 
+const LS_FILTERS_KEY = "mtg_colecciones_filtros_v1";
+
+
 function setFiltroTextoColecciones(texto) {
   filtroTextoColecciones = (texto || "").trim().toLowerCase();
+  guardarFiltrosColecciones();
   renderColecciones();
 }
+
 
 function progresoDeColeccion(setKey) {
   const cartasDelSet = cartasDeSetKey(setKey);
@@ -211,8 +216,20 @@ function setFiltroColecciones(lang) {
   document.querySelectorAll(".btn-filtro").forEach(b => {
     b.classList.toggle("active", b.dataset.lang === lang);
   });
+  guardarFiltrosColecciones();
   renderColecciones();
 }
+
+function aplicarUIFiltrosColecciones() {
+  document.querySelectorAll(".btn-filtro").forEach(b => {
+    b.classList.toggle("active", b.dataset.lang === filtroIdiomaColecciones);
+  });
+
+  const inputBuscarCol = document.getElementById("inputBuscarColecciones");
+  if (inputBuscarCol) inputBuscarCol.value = filtroTextoColecciones || "";
+}
+
+
 
 function renderColecciones() {
   const cont = document.getElementById("listaColecciones");
@@ -254,6 +271,33 @@ if (sets.length === 0) {
       abrirSet(item.dataset.setkey);
     });
   });
+}
+
+function guardarFiltrosColecciones() {
+  const data = {
+    lang: filtroIdiomaColecciones,
+    texto: filtroTextoColecciones
+  };
+  localStorage.setItem(LS_FILTERS_KEY, JSON.stringify(data));
+}
+
+function cargarFiltrosColecciones() {
+  const raw = localStorage.getItem(LS_FILTERS_KEY);
+  if (!raw) return;
+
+  try {
+    const data = JSON.parse(raw);
+    if (data && typeof data === "object") {
+      if (data.lang === "all" || data.lang === "en" || data.lang === "es") {
+        filtroIdiomaColecciones = data.lang;
+      }
+      if (typeof data.texto === "string") {
+        filtroTextoColecciones = data.texto.trim().toLowerCase();
+      }
+    }
+  } catch {
+    // si está corrupto, lo ignoramos
+  }
 }
 
 // ===============================
@@ -517,9 +561,10 @@ function renderResultadosBuscar(texto) {
 
 function wireGlobalButtons() {
   // Entrar
-  document.getElementById("btnEntrar").addEventListener("click", () => {
-    mostrarPantalla("menu");
-  });
+  const btnEntrar = document.getElementById("btnEntrar");
+  if (btnEntrar) {
+    btnEntrar.addEventListener("click", () => mostrarPantalla("menu"));
+  }
 
   // Botones del menú principal
   document.querySelectorAll(".btn-menu").forEach(btn => {
@@ -527,32 +572,26 @@ function wireGlobalButtons() {
       const destino = btn.dataset.pantalla;
 
       if (destino === "colecciones") {
+        aplicarUIFiltrosColecciones();
         renderColecciones();
         mostrarPantalla("colecciones");
-
-        const inputBuscarCol = document.getElementById("inputBuscarColecciones");
-        if (inputBuscarCol) inputBuscarCol.value = filtroTextoColecciones;
+        return;
       }
 
       if (destino === "buscar") {
-        document.getElementById("inputBuscar").value = "";
+        const inputBuscar = document.getElementById("inputBuscar");
+        if (inputBuscar) inputBuscar.value = "";
         renderResultadosBuscar("");
         mostrarPantalla("buscar");
+        return;
       }
 
       if (destino === "estadisticas") {
         mostrarPantalla("estadisticas");
+        return;
       }
     });
   });
-
-  // Buscador de colecciones (IMPORTANTE: va fuera del forEach anterior)
-  const inputBuscarCol = document.getElementById("inputBuscarColecciones");
-  if (inputBuscarCol) {
-    inputBuscarCol.addEventListener("input", () => {
-      setFiltroTextoColecciones(inputBuscarCol.value);
-    });
-  }
 
   // Volver al menú
   document.querySelectorAll("[data-action='volverMenu']").forEach(btn => {
@@ -562,26 +601,31 @@ function wireGlobalButtons() {
   // Volver a colecciones
   document.querySelectorAll("[data-action='volverColecciones']").forEach(btn => {
     btn.addEventListener("click", () => {
+      aplicarUIFiltrosColecciones();
       renderColecciones();
       mostrarPantalla("colecciones");
-
-      const inputBuscarCol = document.getElementById("inputBuscarColecciones");
-      if (inputBuscarCol) inputBuscarCol.value = filtroTextoColecciones;
     });
   });
 
-  // Buscar cartas
-  document.getElementById("btnBuscar").addEventListener("click", () => {
-    const texto = document.getElementById("inputBuscar").value;
-    renderResultadosBuscar(texto);
-  });
-
-  document.getElementById("inputBuscar").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      const texto = document.getElementById("inputBuscar").value;
+  // Buscar cartas (botón)
+  const btnBuscar = document.getElementById("btnBuscar");
+  if (btnBuscar) {
+    btnBuscar.addEventListener("click", () => {
+      const inputBuscar = document.getElementById("inputBuscar");
+      const texto = inputBuscar ? inputBuscar.value : "";
       renderResultadosBuscar(texto);
-    }
-  });
+    });
+  }
+
+  // Buscar cartas (Enter)
+  const inputBuscar = document.getElementById("inputBuscar");
+  if (inputBuscar) {
+    inputBuscar.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        renderResultadosBuscar(inputBuscar.value);
+      }
+    });
+  }
 
   // Filtro de idioma en Colecciones
   document.querySelectorAll(".btn-filtro").forEach(btn => {
@@ -589,13 +633,31 @@ function wireGlobalButtons() {
       setFiltroColecciones(btn.dataset.lang);
     });
   });
-}
 
+  // Buscador de colecciones (input)
+  const inputBuscarCol = document.getElementById("inputBuscarColecciones");
+  if (inputBuscarCol) {
+    inputBuscarCol.addEventListener("input", () => {
+      setFiltroTextoColecciones(inputBuscarCol.value);
+    });
+  }
+
+  // Botón ✕ limpiar colecciones
+  const btnLimpiarCol = document.getElementById("btnLimpiarColecciones");
+  if (btnLimpiarCol && inputBuscarCol) {
+    btnLimpiarCol.addEventListener("click", () => {
+      inputBuscarCol.value = "";
+      setFiltroTextoColecciones("");
+      inputBuscarCol.focus();
+    });
+  }
+}
 
 function init() {
   cargarEstado();
+  cargarFiltrosColecciones();   // cargar filtros guardados (idioma + texto)
   wireGlobalButtons();
-  renderResultadosBuscar("");
+  renderResultadosBuscar("");   // estado inicial de la pantalla Buscar
 }
 
 init();
