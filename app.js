@@ -77,25 +77,18 @@ function compareCollectorNumbers(a, b) {
 }
 
 function obtenerColecciones() {
-  // colección única por (coleccion + lang)
-  const map = new Map();
-  cartas.forEach(c => {
-    const lang = getLangFromCard(c);
-    const key = `${c.coleccion}__${lang}`;
-    if (!map.has(key)) map.set(key, { nombre: c.coleccion, lang, key });
-  });
+  // Si ya cargamos Scryfall, usamos catálogo real
+  if (catalogoColecciones && catalogoColecciones.length > 0) return catalogoColecciones;
 
-  // orden: por nombre, luego lang
-  return [...map.values()].sort((a, b) => {
-    const n = a.nombre.localeCompare(b.nombre);
-    if (n !== 0) return n;
-    return a.lang.localeCompare(b.lang);
-  });
+  // Fallback (si aún no hay Scryfall): devuelve vacío (o tu demo si quieres mantenerla)
+  return [];
 }
 
-function cartasDeSetKey(key) {
-  return cartas.filter(c => setKeyFromCard(c) === key);
+
+function cartasDeSetKey(setKey) {
+  return cacheCartasPorSetLang[setKey] || [];
 }
+
 
 // ===============================
 // 2) Estado de colección en localStorage
@@ -207,6 +200,335 @@ function setWantMore(id, value) {
 }
 
 // ===============================
+// Scryfall (API) - capa de datos
+// ===============================
+
+const SCY_BASE = "https://api.scryfall.com";
+const SCY_MIN_DELAY_MS = 120; // para respetar ~10 req/seg (y margen)
+
+// Rate-limit muy simple (cola por tiempo)
+let _scyLastCallAt = 0;
+async function scryDelay() {
+  const now = Date.now();
+  const wait = Math.max(0, (_scyLastCallAt + SCY_MIN_DELAY_MS) - now);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  _scyLastCallAt = Date.now();
+}
+
+async function scryFetchJson(url) {
+  await scryDelay();
+  const res = await fetch(url, { headers: { "Accept": "application/json" } });
+
+  // Intentamos leer JSON incluso en errores
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    const text = await res.text().catch(() => "");
+    data = { object: "error", details: text || "Respuesta no-JSON" };
+  }
+
+  if (!res.ok) {
+    const err = new Error(data?.details || `Scryfall ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+
+// Scryfall devuelve listas paginadas con has_more y next_page
+async function scryFetchAllPages(firstUrl) {
+  const all = [];
+  let url = firstUrl;
+
+  while (url) {
+    const data = await scryFetchJson(url);
+    if (Array.isArray(data.data)) all.push(...data.data);
+    url = data.has_more ? data.next_page : null;
+  }
+  return all;
+}
+
+// --- Helpers de mapeo al modelo interno ---
+function mapRarity(r) {
+  const x = String(r || "").toLowerCase();
+  if (x === "common") return "Común";
+  if (x === "uncommon") return "Infrecuente";
+  if (x === "rare") return "Rara";
+  if (x === "mythic") return "Mítica";
+  return r || "—";
+}
+
+function pickCardName(card, lang) {
+  // En no-inglés, Scryfall suele rellenar printed_name
+  return (lang !== "en" && card.printed_name) ? card.printed_name : card.name;
+}
+
+function pickImage(card) {
+  if (card.image_uris && card.image_uris.normal) return card.image_uris.normal;
+  if (Array.isArray(card.card_faces) && card.card_faces[0]?.image_uris?.normal) return card.card_faces[0].image_uris.normal;
+  return null;
+}
+
+// --- API calls ---
+async function scryGetSets() {
+  const data = await scryFetchJson(`${SCY_BASE}/sets`);
+  return data.data || [];
+}
+
+async function scryGetCardsBySetAndLang(setCode, lang) {
+  const q = encodeURIComponent(`set:${setCode} lang:${lang}`);
+  const url = `${SCY_BASE}/cards/search?q=${q}&unique=prints&order=set`;
+
+  try {
+    return await scryFetchAllPages(url);
+  } catch (err) {
+    // Si no hay cartas (por idioma o set), Scryfall suele devolver 404 not_found
+    if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
+      return [];
+    }
+    throw err;
+  }
+}
+
+// ===============================
+// Scryfall - búsqueda por nombre (EN/ES)
+// ===============================
+
+const SEARCH_LANGS = ["en", "es"];
+const SEARCH_LIMIT = 200; // evita bajar 1000+ prints en cartas hiper reimpresas
+
+async function scryFetchAllPagesLimited(firstUrl, limit = 200) {
+  const all = [];
+  let url = firstUrl;
+
+  while (url && all.length < limit) {
+    const data = await scryFetchJson(url);
+    if (Array.isArray(data.data)) all.push(...data.data);
+    url = (data.has_more && all.length < limit) ? data.next_page : null;
+  }
+  return all;
+}
+
+async function scrySearchPrintsByName(texto) {
+  const qUser = (texto || "").trim();
+  if (!qUser) return [];
+
+  // Solo papel, solo EN/ES, y búsqueda flexible por nombre
+  // Nota: Scryfall usa sintaxis tipo `name:bolt`, `game:paper`, `(lang:en or lang:es)`
+  const query = `game:paper (lang:en or lang:es) name:${qUser}`;
+  const q = encodeURIComponent(query);
+  const url = `${SCY_BASE}/cards/search?q=${q}&unique=prints&order=released&dir=desc`;
+
+  try {
+    return await scryFetchAllPagesLimited(url, SEARCH_LIMIT);
+  } catch (err) {
+    // Si no encuentra nada, Scryfall suele devolver 404 not_found
+    if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
+      return [];
+    }
+    throw err;
+  }
+}
+
+function agruparResultadosBusqueda(cards) {
+  // Agrupar por oracle_id (misma carta a través de reimpresiones y idiomas)
+  const map = new Map();
+
+  for (const card of cards) {
+    // Seguridad: quedarnos solo con en/es
+    if (!SEARCH_LANGS.includes(card.lang)) continue;
+
+    const key = card.oracle_id || card.id;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(card);
+  }
+
+  // Convertimos a grupos ordenados por nombre
+  const grupos = [];
+  for (const [oracleId, versionesRaw] of map.entries()) {
+    // Orden dentro del grupo: primero por nombre de set, luego por collector_number
+    const versiones = versionesRaw
+      .slice()
+      .sort((a, b) => {
+        const aSet = (a.set_name || "").localeCompare(b.set_name || "", "es", { sensitivity: "base" });
+        if (aSet !== 0) return aSet;
+        return compareCollectorNumbers(a.collector_number, b.collector_number);
+      })
+      .map(v => {
+        const setKey = `${v.set}__${v.lang}`;
+        const st = getEstadoCarta(v.id);
+
+        return {
+          id: v.id, // UUID
+          oracle_id: v.oracle_id,
+          nombre: pickCardName(v, v.lang),     // en ES usa printed_name si existe
+          nombreBase: v.name,                  // nombre “base”
+          lang: v.lang,
+          set: v.set,
+          set_name: v.set_name,
+          collector_number: v.collector_number,
+          rareza: mapRarity(v.rarity),
+          setKey,
+          st
+        };
+      });
+
+    // Título del grupo: intenta usar el nombre ES si existe una versión ES
+    // Título del grupo: "ES / EN" si tenemos ambos
+const esCard = versionesRaw.find(x => x.lang === "es" && x.printed_name);
+const enCard = versionesRaw.find(x => x.lang === "en" && x.name);
+
+const nombreES = esCard?.printed_name || null;
+const nombreEN = enCard?.name || null;
+
+// Evita "X / X" si son iguales (o si solo existe uno)
+let titulo = nombreES || nombreEN || versionesRaw[0]?.name || "Carta";
+if (nombreES && nombreEN) {
+  const same = nombreES.trim().toLowerCase() === nombreEN.trim().toLowerCase();
+  titulo = same ? nombreES : `${nombreES} / ${nombreEN}`;
+}
+
+
+    grupos.push({ oracleId, titulo, versiones });
+  }
+
+  grupos.sort((a, b) => a.titulo.localeCompare(b.titulo, "es", { sensitivity: "base" }));
+  return grupos;
+}
+
+
+let catalogoSets = [];
+
+let catalogoColecciones = [];     // lista lista para render
+const setMetaByKey = new Map();   // key -> { key, code, nombre, lang, released_at }
+
+function reconstruirCatalogoColecciones() {
+  catalogoColecciones = [];
+  setMetaByKey.clear();
+
+  for (const s of (catalogoSets || [])) {
+  for (const lang of ["en", "es"]) {
+    const key = `${s.code}__${lang}`;
+
+    const codeLower = String(s.code || "").toLowerCase();
+    const nombreES = setNameEsByCode[codeLower];
+    const nombreMostrar = (lang === "es" && nombreES) ? `${s.name} / ${nombreES}` : s.name;
+
+    const entry = {
+      key,
+      code: s.code,
+      nombre: nombreMostrar,
+      lang,
+      released_at: s.released_at || ""
+    };
+
+    catalogoColecciones.push(entry);
+    setMetaByKey.set(key, entry);
+  }
+}
+
+
+  // Orden: más recientes primero; si empatan, por nombre
+  catalogoColecciones.sort((a, b) => {
+    if (a.released_at !== b.released_at) return (b.released_at || "").localeCompare(a.released_at || "");
+    return a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" });
+  });
+}
+
+const cacheCartasPorSetLang = {}; // key: "khm__es" -> array de cartas internas
+
+async function ensureSetCardsLoaded(setKey) {
+  if (cacheCartasPorSetLang[setKey]) return;
+
+  const [code, lang] = setKey.split("__");
+
+  // Descarga todas las cartas del set en ese idioma
+  const cards = await scryGetCardsBySetAndLang(code, lang);
+
+  // Mapeo al formato de tu app
+  cacheCartasPorSetLang[setKey] = cards.map(card => ({
+    id: card.id, // UUID string
+    nombre: pickCardName(card, lang),
+    numero: card.collector_number, // suele ser string ("123", "123a"...)
+    rareza: mapRarity(card.rarity),
+    lang,
+    // opcional por si luego quieres detalle:
+    _img: pickImage(card),
+    _prices: card.prices || null,
+    _colors: card.colors || null
+  }));
+}
+
+const LS_HIDDEN_EMPTY_SETS = "mtg_hidden_empty_sets_v1";
+let hiddenEmptySetKeys = new Set();
+
+function cargarHiddenEmptySets() {
+  const raw = localStorage.getItem(LS_HIDDEN_EMPTY_SETS);
+  if (!raw) return;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) hiddenEmptySetKeys = new Set(arr);
+  } catch {}
+}
+
+function guardarHiddenEmptySets() {
+  localStorage.setItem(LS_HIDDEN_EMPTY_SETS, JSON.stringify([...hiddenEmptySetKeys]));
+}
+
+// ===============================
+// MTGJSON (solo traducciones de sets)
+// ===============================
+
+const MTGJSON_SETLIST_URL = "https://mtgjson.com/api/v5/SetList.json";
+const LS_SETNAME_ES_BY_CODE = "mtg_setname_es_by_code_v1";
+
+let setNameEsByCode = {}; // { "ons": "Embestida", ... }
+
+function cargarSetNameEsDesdeLocalStorage() {
+  const raw = localStorage.getItem(LS_SETNAME_ES_BY_CODE);
+  if (!raw) return false;
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === "object") {
+      setNameEsByCode = obj;
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+function guardarSetNameEsEnLocalStorage() {
+  localStorage.setItem(LS_SETNAME_ES_BY_CODE, JSON.stringify(setNameEsByCode));
+}
+
+async function cargarSetNameEsDesdeMTGJSON() {
+  // Si ya tenemos cache, no descargamos
+  if (cargarSetNameEsDesdeLocalStorage()) return;
+
+  const data = await fetch(MTGJSON_SETLIST_URL, { headers: { "Accept": "application/json" } })
+    .then(r => {
+      if (!r.ok) throw new Error(`MTGJSON ${r.status}`);
+      return r.json();
+    });
+
+  const sets = data?.data || [];
+  const map = {};
+
+  for (const s of sets) {
+    const code = String(s.code || "").toLowerCase();
+    const esName = s?.translations?.Spanish; // <- clave exacta: "Spanish"
+    if (code && esName) map[code] = esName;
+  }
+
+  setNameEsByCode = map;
+  guardarSetNameEsEnLocalStorage();
+}
+
+// ===============================
 // 3) Navegación de pantallas
 // ===============================
 
@@ -243,11 +565,18 @@ function setFiltroTextoColecciones(texto) {
 
 
 function progresoDeColeccion(setKey) {
-  const cartasDelSet = cartasDeSetKey(setKey);
-  const total = cartasDelSet.length;
-  const tengo = cartasDelSet.filter(c => getEstadoCarta(c.id).qty > 0).length;
+  // Si aún no se ha cargado el set desde Scryfall, total desconocido
+  if (!cacheCartasPorSetLang[setKey]) {
+    return { tengo: 0, total: null };
+  }
+
+  const lista = cartasDeSetKey(setKey);
+  const total = lista.length;
+  const tengo = lista.filter(c => getEstadoCarta(c.id).qty > 0).length;
   return { tengo, total };
 }
+
+
 
 function setFiltroColecciones(lang) {
   filtroIdiomaColecciones = lang;
@@ -273,6 +602,7 @@ function renderColecciones() {
   const cont = document.getElementById("listaColecciones");
 
   let sets = obtenerColecciones();
+  sets = sets.filter(s => !hiddenEmptySetKeys.has(s.key));
 
   if (filtroIdiomaColecciones !== "all") {
     sets = sets.filter(s => s.lang === filtroIdiomaColecciones);
@@ -297,7 +627,7 @@ if (sets.length === 0) {
           <strong>${s.nombre}</strong>
           <span class="lang-pill">${formatLang(s.lang)}</span>
         </div>
-        <div class="badge">${tengo} / ${total} cartas</div>
+        <div class="badge">${tengo} / ${total === null ? "?" : total} cartas</div>
       </div>
     `;
   });
@@ -379,12 +709,38 @@ function getListaSetFiltrada(setKey) {
   return lista;
 }
 
-function abrirSet(setKey) {
+async function abrirSet(setKey) {
   setActualKey = setKey;
 
-  const info = obtenerColecciones().find(s => s.key === setKey) || { nombre: "Set", lang: "en" };
+  const info = setMetaByKey.get(setKey) || { nombre: "Set", lang: "en" };
   document.getElementById("tituloSet").textContent = `${info.nombre} (${formatLang(info.lang)})`;
 
+  // UI rápida de “cargando”
+  document.getElementById("progresoSet").textContent = "Cargando cartas...";
+  document.getElementById("listaCartasSet").innerHTML = `<div class="card"><p>Cargando…</p></div>`;
+  mostrarPantalla("set");
+
+  try {
+    await ensureSetCardsLoaded(setKey);
+    if (cartasDeSetKey(setKey).length === 0) {
+      hiddenEmptySetKeys.add(setKey);
+guardarHiddenEmptySets();
+renderColecciones(); // para que al volver ya no salga
+
+  document.getElementById("progresoSet").textContent = "0 / 0";
+  document.getElementById("listaCartasSet").innerHTML =
+    `<div class="card"><p>No hay cartas para este set en este idioma.</p></div>`;
+  return;
+}
+
+  } catch (err) {
+    document.getElementById("listaCartasSet").innerHTML =
+      `<div class="card"><p>Error cargando este set. Mira la consola.</p></div>`;
+    console.error(err);
+    return;
+  }
+
+  // Ya cargado: progreso real + tabla
   const { tengo, total } = progresoDeColeccion(setKey);
   document.getElementById("progresoSet").textContent = `Progreso: ${tengo} / ${total}`;
 
@@ -393,6 +749,7 @@ function abrirSet(setKey) {
 
   mostrarPantalla("set");
 }
+
 
 function renderTablaSet(setKey) {
   const lista = getListaSetFiltrada(setKey);
@@ -480,7 +837,7 @@ function renderTablaSet(setKey) {
   // cantidad
   cont.querySelectorAll(".btn-qty-minus").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = Number(btn.dataset.id);
+      const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setQty(id, st.qty - 1);
       renderTablaSet(setActualKey);
@@ -490,7 +847,7 @@ function renderTablaSet(setKey) {
 
   cont.querySelectorAll(".btn-qty-plus").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = Number(btn.dataset.id);
+      const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setQty(id, st.qty + 1);
       renderTablaSet(setActualKey);
@@ -500,7 +857,7 @@ function renderTablaSet(setKey) {
 
   cont.querySelectorAll(".inp-qty").forEach(inp => {
     inp.addEventListener("change", () => {
-      const id = Number(inp.dataset.id);
+      const id = inp.dataset.id;
       setQty(id, inp.value);
       renderTablaSet(setActualKey);
       renderColecciones();
@@ -510,7 +867,7 @@ function renderTablaSet(setKey) {
   // played
   cont.querySelectorAll(".btn-played-minus").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = Number(btn.dataset.id);
+      const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setPlayedQty(id, st.playedQty - 1);
       renderTablaSet(setActualKey);
@@ -519,7 +876,7 @@ function renderTablaSet(setKey) {
 
   cont.querySelectorAll(".btn-played-plus").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = Number(btn.dataset.id);
+      const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setPlayedQty(id, st.playedQty + 1);
       renderTablaSet(setActualKey);
@@ -528,7 +885,7 @@ function renderTablaSet(setKey) {
 
   cont.querySelectorAll(".inp-played").forEach(inp => {
     inp.addEventListener("change", () => {
-      const id = Number(inp.dataset.id);
+      const id = inp.dataset.id;
       setPlayedQty(id, inp.value);
       renderTablaSet(setActualKey);
     });
@@ -537,7 +894,7 @@ function renderTablaSet(setKey) {
   // foil / Ri
   cont.querySelectorAll(".chk-foil").forEach(chk => {
     chk.addEventListener("change", () => {
-      const id = Number(chk.dataset.id);
+      const id = chk.dataset.id;
       setFoil(id, chk.checked);
       renderTablaSet(setActualKey);
     });
@@ -545,7 +902,7 @@ function renderTablaSet(setKey) {
 
   cont.querySelectorAll(".chk-want").forEach(chk => {
     chk.addEventListener("change", () => {
-      const id = Number(chk.dataset.id);
+      const id = chk.dataset.id;
       setWantMore(id, chk.checked);
       renderTablaSet(setActualKey);
     });
@@ -579,60 +936,92 @@ function buscarCartasPorNombre(texto) {
   }));
 }
 
-function renderResultadosBuscar(texto) {
+async function renderResultadosBuscar(texto) {
   const cont = document.getElementById("resultadosBuscar");
-  const grupos = buscarCartasPorNombre(texto);
+  const q = (texto || "").trim();
 
-  if (!texto.trim()) {
+  if (!cont) return;
+
+  if (!q) {
     cont.innerHTML = `<div class="card"><p>Escribe un nombre y pulsa “Buscar”.</p></div>`;
     return;
   }
 
-  if (grupos.length === 0) {
-    cont.innerHTML = `<div class="card"><p>No se encontraron cartas para: <strong>${texto}</strong></p></div>`;
+  cont.innerHTML = `<div class="card"><p>Buscando en Scryfall…</p></div>`;
+
+  let cards = [];
+  try {
+    cards = await scrySearchPrintsByName(q);
+  } catch (err) {
+    console.error(err);
+    cont.innerHTML = `<div class="card"><p>Error buscando. Mira la consola.</p></div>`;
     return;
   }
 
-  let html = "";
-  grupos.forEach(g => {
+  const grupos = agruparResultadosBusqueda(cards);
+
+  if (grupos.length === 0) {
+    cont.innerHTML = `<div class="card"><p>No se encontraron cartas para: <strong>${q}</strong></p></div>`;
+    return;
+  }
+
+  // Aviso si recortamos resultados
+  const avisoLimit = (cards.length >= SEARCH_LIMIT)
+    ? `<div class="card"><p class="hint">Nota: se muestran solo las primeras ${SEARCH_LIMIT} ediciones (hay más reimpresiones).</p></div>`
+    : "";
+
+  let html = avisoLimit;
+
+  for (const g of grupos) {
     html += `<div class="card">
-      <h3 style="margin-top:0;">${g.nombre}</h3>
+      <h3 style="margin-top:0;">${g.titulo}</h3>
       <div class="hint">Aparece en:</div>
-      <ul>
+      <ul class="lista-versiones">
     `;
 
-    g.versiones.forEach(v => {
-      const st = getEstadoCarta(v.id);
-      const key = setKeyFromCard(v);
-
-      const qtyTxt = st.qty > 0 ? `✅ x${st.qty}` : `❌ x0`;
-      const foilTxt = st.foil ? " · ✨ Foil" : "";
-      const playedTxt = st.playedQty > 0 ? ` · 🎴 Played:${st.playedQty}` : "";
-      const wantTxt = st.wantMore ? " · 🔎 Ri" : "";
+    for (const v of g.versiones) {
+      const qty = v.st.qty || 0;
+      const tengoTxt = qty > 0 ? `✅ x${qty}` : `❌ 0`;
+      const foilTxt = v.st.foil ? " · ✨ Foil" : "";
+      const playedTxt = (v.st.playedQty || 0) > 0 ? ` · 🧱 Played x${v.st.playedQty}` : "";
+      const riTxt = v.st.wantMore ? " · 🟣 Ri" : "";
 
       html += `
-        <li class="resultado-version">
-          <span>
-            <strong>${v.coleccion}</strong>
-            <span class="lang-pill">${formatLang(getLangFromCard(v))}</span>
-            (#${v.numero}, ${v.rareza}) — ${qtyTxt}${foilTxt}${playedTxt}${wantTxt}
-          </span>
-          <button class="btn-secundario btn-ir-set" data-setkey="${key}">Ir</button>
+        <li class="item-version">
+          <div class="item-version-main">
+            <div>
+              <strong>${v.set_name}</strong>
+              <span class="lang-pill">${formatLang(v.lang)}</span>
+              <span class="hint"> (#${v.collector_number}, ${v.rareza})</span>
+              <div class="hint">${tengoTxt}${foilTxt}${playedTxt}${riTxt}</div>
+            </div>
+            <button class="btn-secundario btn-ir-set" type="button" data-setkey="${v.setKey}">Ir</button>
+          </div>
         </li>
       `;
-    });
+    }
 
     html += `</ul></div>`;
-  });
+  }
 
   cont.innerHTML = html;
 
+  // Botones "Ir"
   cont.querySelectorAll(".btn-ir-set").forEach(btn => {
-    btn.addEventListener("click", () => {
-      abrirSet(btn.dataset.setkey);
+    btn.addEventListener("click", async () => {
+      const setKey = btn.dataset.setkey;
+
+      // Por si lo ocultaste como “vacío” alguna vez, lo reactivamos
+      if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
+        hiddenEmptySetKeys.delete(setKey);
+        if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
+      }
+
+      await abrirSet(setKey);
     });
   });
 }
+
 
 function exportarEstado() {
   const payload = {
@@ -772,23 +1161,23 @@ if (chkSoloFaltanSet) {
 
   // Buscar cartas (botón)
   const btnBuscar = document.getElementById("btnBuscar");
-  if (btnBuscar) {
-    btnBuscar.addEventListener("click", () => {
-      const inputBuscar = document.getElementById("inputBuscar");
-      const texto = inputBuscar ? inputBuscar.value : "";
-      renderResultadosBuscar(texto);
-    });
-  }
+if (btnBuscar) {
+  btnBuscar.addEventListener("click", async () => {
+    const inputBuscar = document.getElementById("inputBuscar");
+    const texto = inputBuscar ? inputBuscar.value : "";
+    await renderResultadosBuscar(texto);
+  });
+}
 
   // Buscar cartas (Enter)
   const inputBuscar = document.getElementById("inputBuscar");
-  if (inputBuscar) {
-    inputBuscar.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        renderResultadosBuscar(inputBuscar.value);
-      }
-    });
-  }
+if (inputBuscar) {
+  inputBuscar.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      await renderResultadosBuscar(inputBuscar.value);
+    }
+  });
+}
 
   // Filtro de idioma en Colecciones
   document.querySelectorAll(".btn-filtro").forEach(btn => {
@@ -849,13 +1238,37 @@ function wireBackupButtons() {
   }
 }
 
-function init() {
+async function init() {
   cargarEstado();
   cargarFiltrosColecciones();
   wireGlobalButtons();
-  wireBackupButtons();          // <-- AÑADE ESTO
+  wireBackupButtons();
+  cargarHiddenEmptySets();
+
+  try {
+    // 1) Sets (Scryfall)
+    catalogoSets = await scryGetSets();
+    console.log("Sets cargados:", catalogoSets.length);
+
+    // 2) Traducciones ES (MTGJSON) - opcional
+    try {
+      await cargarSetNameEsDesdeMTGJSON();
+      console.log("Traducciones ES cargadas:", Object.keys(setNameEsByCode).length);
+    } catch (err) {
+      console.warn("No se pudieron cargar traducciones de MTGJSON:", err);
+    }
+
+    // 3) Reconstruir catálogo para la UI
+    reconstruirCatalogoColecciones();
+
+  } catch (err) {
+    console.error("Error cargando sets de Scryfall:", err);
+  }
+
   renderResultadosBuscar("");
 }
 
 init();
+
+
 

@@ -291,3 +291,25 @@ input[type="text"] {
   display: grid;
   place-items: center;
 }
+
+.lista-versiones {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.item-version {
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.item-version:last-child {
+  border-bottom: none;
+}
+
+.item-version-main {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
