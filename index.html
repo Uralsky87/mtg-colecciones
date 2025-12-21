@@ -38,51 +38,55 @@
       <h2>Colecciones</h2>
     </div>
 
-    <div class="filtros">
-  <button class="btn-filtro active" data-lang="all">Todas</button>
-  <button class="btn-filtro" data-lang="en">EN</button>
-  <button class="btn-filtro" data-lang="es">ES</button>
-</div>
+    <div class="card">
+      <label for="inputBuscarColecciones">Buscar colección:</label>
 
-<div class="card">
-  <label for="inputBuscarColecciones">Buscar colección:</label>
+      <div class="fila fila-busqueda">
+        <input id="inputBuscarColecciones" type="text" placeholder="Ej: Dominaria, Ixalan, Modern..." />
+        <button id="btnLimpiarColecciones" class="btn-secundario" type="button" title="Limpiar">✕</button>
+      </div>
 
-  <div class="fila fila-busqueda">
-    <input id="inputBuscarColecciones" type="text" placeholder="Ej: Dominaria, Ixalan, Modern..." />
-    <button id="btnLimpiarColecciones" class="btn-secundario" type="button" title="Limpiar">✕</button>
-  </div>
+      <small class="hint">Filtra por nombre (según escribes).</small>
+    </div>
 
-  <small class="hint">Filtra por nombre (según escribes).</small>
-</div>
+    <!-- Filtros por tipo (tokens / arte) -->
+    <div class="filtros-colecciones">
+      <button id="btnToggleTokens" class="btn-toggle-filtro" type="button">Ocultar Tokens</button>
+      <button id="btnToggleArte" class="btn-toggle-filtro" type="button">Ocultar Arte</button>
+    </div>
 
-<div id="listaColecciones"></div>
+    <div id="listaColecciones"></div>
   </section>
 
   <!-- =======================
        PANTALLA: SET (CARTAS DE UNA COLECCIÓN)
   ======================= -->
   <section id="pantallaSet" class="pantalla">
-    <div class="topbar">
+    <div class="topbar topbar-set">
       <button class="btn-secundario" data-action="volverColecciones">← Colecciones</button>
       <h2 id="tituloSet">Set</h2>
+
+      <div class="langset">
+        <button id="btnSetLangEn" class="btn-lang-set active" type="button">EN</button>
+        <button id="btnSetLangEs" class="btn-lang-set" type="button">ES</button>
+      </div>
     </div>
 
     <div id="progresoSet" class="progreso-box"></div>
 
     <div class="card">
-  <label for="inputBuscarEnSet">Buscar carta en este set:</label>
+      <label for="inputBuscarEnSet">Buscar carta en este set:</label>
 
-  <div class="fila fila-busqueda">
-    <input id="inputBuscarEnSet" type="text" placeholder="Ej: Bolt, Angel, Duress..." />
-    <button id="btnLimpiarBuscarEnSet" class="btn-secundario" type="button" title="Limpiar">✕</button>
-  </div>
+      <div class="fila fila-busqueda">
+        <input id="inputBuscarEnSet" type="text" placeholder="Ej: Bolt, Angel, Duress..." />
+        <button id="btnLimpiarBuscarEnSet" class="btn-secundario" type="button" title="Limpiar">✕</button>
+      </div>
 
-  <label class="chkline" style="margin-top:10px;">
-  <input id="chkSoloFaltanSet" type="checkbox" />
-  Solo faltan
-</label>
-
-</div>
+      <label class="chkline" style="margin-top:10px;">
+        <input id="chkSoloFaltanSet" type="checkbox" />
+        Solo faltan
+      </label>
+    </div>
 
     <div id="listaCartasSet"></div>
   </section>
@@ -118,18 +122,18 @@
     </div>
 
     <div class="card">
-  <h3 style="margin-top:0;">Copia de seguridad</h3>
-  <p class="hint">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
+      <h3 style="margin-top:0;">Copia de seguridad</h3>
+      <p class="hint">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
 
-  <button id="btnExportarEstado" class="btn-principal" type="button">Exportar (JSON)</button>
+      <button id="btnExportarEstado" class="btn-principal" type="button">Exportar (JSON)</button>
 
-  <div style="height:10px;"></div>
+      <div style="height:10px;"></div>
 
-  <input id="inputImportarEstado" type="file" accept="application/json" style="display:none;" />
-  <button id="btnImportarEstado" class="btn-secundario" type="button">Importar (reemplazar)</button>
+      <input id="inputImportarEstado" type="file" accept="application/json" style="display:none;" />
+      <button id="btnImportarEstado" class="btn-secundario" type="button">Importar (reemplazar)</button>
 
-  <p id="msgBackup" class="hint" style="margin-top:10px;"></p>
-</div>
+      <p id="msgBackup" class="hint" style="margin-top:10px;"></p>
+    </div>
 
     <div class="card">
       <p>Próximamente: totales, porcentajes, rarezas, colores, valor, etc.</p>

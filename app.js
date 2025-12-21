@@ -38,6 +38,17 @@ function formatLang(lang) {
   return (lang || "en").toUpperCase();
 }
 
+function formatMesAnyo(released_at) {
+  if (!released_at) return "";
+  const months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+  // released_at viene como "YYYY-MM-DD"
+  const [y, m] = String(released_at).split("-");
+  const mi = Number(m) - 1;
+  if (!y || mi < 0 || mi > 11) return y ? y : "";
+  return `${months[mi]} ${y}`;
+}
+
 function parseCollectorNumber(value) {
   const raw = String(value ?? "").trim();
   const s = raw.toLowerCase();
@@ -411,26 +422,27 @@ function reconstruirCatalogoColecciones() {
   setMetaByKey.clear();
 
   for (const s of (catalogoSets || [])) {
-  for (const lang of ["en", "es"]) {
-    const key = `${s.code}__${lang}`;
-
     const codeLower = String(s.code || "").toLowerCase();
-    const nombreES = setNameEsByCode[codeLower];
-    const nombreMostrar = (lang === "es" && nombreES) ? `${s.name} / ${nombreES}` : s.name;
+    const nombreES = setNameEsByCode[codeLower] || null;
+    const nombreMostrar = nombreES ? `${s.name} / ${nombreES}` : s.name;
 
+    // OJO: ahora la key de la lista de colecciones será SOLO el code (sin idioma)
     const entry = {
-      key,
+      key: s.code,               // <- base key
       code: s.code,
       nombre: nombreMostrar,
-      lang,
-      released_at: s.released_at || ""
+      name_en: s.name,
+      name_es: nombreES,
+      released_at: s.released_at || "",
+      set_type: s.set_type || ""
     };
 
     catalogoColecciones.push(entry);
-    setMetaByKey.set(key, entry);
-  }
-}
 
+    // Mapeamos meta para los 2 idiomas para que abrirSet(`${code}__en/es`) pueda resolver título
+    setMetaByKey.set(`${s.code}__en`, entry);
+    setMetaByKey.set(`${s.code}__es`, entry);
+  }
 
   // Orden: más recientes primero; si empatan, por nombre
   catalogoColecciones.sort((a, b) => {
@@ -477,6 +489,16 @@ function cargarHiddenEmptySets() {
 
 function guardarHiddenEmptySets() {
   localStorage.setItem(LS_HIDDEN_EMPTY_SETS, JSON.stringify([...hiddenEmptySetKeys]));
+}
+
+let ocultarTokens = false;
+let ocultarArte = false;
+
+function aplicarUIFiltrosTipo() {
+  const bTok = document.getElementById("btnToggleTokens");
+  const bArt = document.getElementById("btnToggleArte");
+  if (bTok) bTok.classList.toggle("active", ocultarTokens);
+  if (bArt) bArt.classList.toggle("active", ocultarArte);
 }
 
 // ===============================
@@ -602,6 +624,21 @@ function renderColecciones() {
   const cont = document.getElementById("listaColecciones");
 
   let sets = obtenerColecciones();
+  // Filtro por tipo de set (tokens / arte)
+if (ocultarTokens) {
+  sets = sets.filter(s => (s.set_type || "") !== "token");
+}
+
+if (ocultarArte) {
+  sets = sets.filter(s => {
+    const t = (s.set_type || "");
+    const n = (s.nombre || "").toLowerCase();
+    const porTipo = (t === "art_series"); // si al probar ves otro string, lo ajustamos
+    const porNombre = n.includes("art series") || n.includes("art card") || n.includes("art cards");
+    return !(porTipo || porNombre);
+  });
+}
+
   sets = sets.filter(s => !hiddenEmptySetKeys.has(s.key));
 
   if (filtroIdiomaColecciones !== "all") {
@@ -619,26 +656,34 @@ if (sets.length === 0) {
 
   let html = "";
   sets.forEach(s => {
-    const { tengo, total } = progresoDeColeccion(s.key);
+    const pEn = progresoDeColeccion(`${s.code}__en`);
+const pEs = progresoDeColeccion(`${s.code}__es`);
 
-    html += `
-      <div class="coleccion-item" data-setkey="${s.key}">
-        <div>
-          <strong>${s.nombre}</strong>
-          <span class="lang-pill">${formatLang(s.lang)}</span>
-        </div>
-        <div class="badge">${tengo} / ${total === null ? "?" : total} cartas</div>
-      </div>
-    `;
+const totalEnTxt = (pEn.total === null ? "?" : pEn.total);
+const totalEsTxt = (pEs.total === null ? "?" : pEs.total);
+
+   const fechaTxt = formatMesAnyo(s.released_at);
+
+html += `
+  <div class="coleccion-item" data-code="${s.code}">
+    <div class="coleccion-titulo">
+      <strong>${s.nombre}</strong>
+      ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
+    </div>
+    <div class="badge">EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt}</div>
+  </div>
+`;
+
   });
 
-  cont.innerHTML = html;
+ cont.innerHTML = html;
 
-  cont.querySelectorAll("[data-setkey]").forEach(item => {
-    item.addEventListener("click", () => {
-      abrirSet(item.dataset.setkey);
-    });
+cont.querySelectorAll("[data-code]").forEach(item => {
+  item.addEventListener("click", () => {
+    const code = item.dataset.code;
+    abrirSet(`${code}__en`); // siempre abre EN por defecto
   });
+});
 }
 
 function guardarFiltrosColecciones() {
@@ -666,6 +711,19 @@ function cargarFiltrosColecciones() {
   } catch {
     // si está corrupto, lo ignoramos
   }
+}
+
+let setActualCode = null;
+let setActualLang = "en";
+
+function aplicarUILangSet() {
+  const btnEn = document.getElementById("btnSetLangEn");
+  const btnEs = document.getElementById("btnSetLangEs");
+
+  if (btnEn) btnEn.classList.toggle("active", setActualLang === "en");
+  if (btnEs) btnEs.classList.toggle("active", setActualLang === "es");
+
+  // Si existe tu mapa de “no existe ES”, puedes desactivar aquí (opcional, lo dejamos simple por ahora)
 }
 
 // ===============================
@@ -712,6 +770,11 @@ function getListaSetFiltrada(setKey) {
 async function abrirSet(setKey) {
   setActualKey = setKey;
 
+  const [code, lang] = setKey.split("__");
+setActualCode = code;
+setActualLang = lang || "en";
+aplicarUILangSet();
+
   const info = setMetaByKey.get(setKey) || { nombre: "Set", lang: "en" };
   document.getElementById("tituloSet").textContent = `${info.nombre} (${formatLang(info.lang)})`;
 
@@ -722,6 +785,7 @@ async function abrirSet(setKey) {
 
   try {
     await ensureSetCardsLoaded(setKey);
+    renderColecciones();
     if (cartasDeSetKey(setKey).length === 0) {
       hiddenEmptySetKeys.add(setKey);
 guardarHiddenEmptySets();
@@ -1103,6 +1167,7 @@ function wireGlobalButtons() {
         aplicarUIFiltrosColecciones();
         renderColecciones();
         mostrarPantalla("colecciones");
+        aplicarUIFiltrosTipo();
         return;
       }
 
@@ -1125,6 +1190,38 @@ if (inputBuscarEnSet) {
   inputBuscarEnSet.addEventListener("input", () => {
     setFiltroTextoSet(inputBuscarEnSet.value);
   });
+  const btnSetLangEn = document.getElementById("btnSetLangEn");
+if (btnSetLangEn) {
+  btnSetLangEn.addEventListener("click", async () => {
+    if (!setActualCode) return;
+    await abrirSet(`${setActualCode}__en`);
+  });
+}
+
+const btnSetLangEs = document.getElementById("btnSetLangEs");
+if (btnSetLangEs) {
+  btnSetLangEs.addEventListener("click", async () => {
+    if (!setActualCode) return;
+    await abrirSet(`${setActualCode}__es`);
+  });
+}
+const btnTok = document.getElementById("btnToggleTokens");
+if (btnTok) {
+  btnTok.addEventListener("click", () => {
+    ocultarTokens = !ocultarTokens;
+    aplicarUIFiltrosTipo();
+    renderColecciones();
+  });
+}
+
+const btnArt = document.getElementById("btnToggleArte");
+if (btnArt) {
+  btnArt.addEventListener("click", () => {
+    ocultarArte = !ocultarArte;
+    aplicarUIFiltrosTipo();
+    renderColecciones();
+  });
+}
 }
 
 const btnLimpiarBuscarEnSet = document.getElementById("btnLimpiarBuscarEnSet");

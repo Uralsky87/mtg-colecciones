@@ -313,3 +313,65 @@ input[type="text"] {
   gap: 10px;
   align-items: center;
 }
+
+.topbar-set {
+  grid-template-columns: auto 1fr auto;
+}
+
+.langset {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-lang-set {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.btn-lang-set.active {
+  background: #e6e6e6;
+}
+
+.btn-lang-set:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.badge { white-space: nowrap; }
+
+.coleccion-titulo{
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.set-date{
+  opacity: 0.65;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.filtros-colecciones{
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.btn-toggle-filtro{
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.btn-toggle-filtro.active{
+  background: #e6e6e6;
+}
