@@ -51,9 +51,20 @@
 
     <!-- Filtros por tipo (tokens / arte) -->
     <div class="filtros-colecciones">
-      <button id="btnToggleTokens" class="btn-toggle-filtro" type="button">Ocultar Tokens</button>
-      <button id="btnToggleArte" class="btn-toggle-filtro" type="button">Ocultar Arte</button>
-    </div>
+  <label class="hint" for="selTipoSet" style="align-self:center;">Tipo:</label>
+  <select id="selTipoSet" class="select-filtro">
+    <option value="all">Todos</option>
+    <option value="expansion">Expansiones</option>
+    <option value="core">Core</option>
+    <option value="commander">Commander</option>
+    <option value="masters">Masters</option>
+    <option value="promo">Promos</option>
+    <option value="token">Tokens</option>
+    <option value="memorabilia">Arte / Memorabilia</option>
+    <option value="other">Otros</option>
+  </select>
+</div>
+
 
     <div id="listaColecciones"></div>
   </section>
@@ -63,14 +74,20 @@
   ======================= -->
   <section id="pantallaSet" class="pantalla">
     <div class="topbar topbar-set">
-      <button class="btn-secundario" data-action="volverColecciones">← Colecciones</button>
-      <h2 id="tituloSet">Set</h2>
+  <button class="btn-secundario" data-action="volverColecciones">← Colecciones</button>
+  <h2 id="tituloSet">Set</h2>
 
-      <div class="langset">
-        <button id="btnSetLangEn" class="btn-lang-set active" type="button">EN</button>
-        <button id="btnSetLangEs" class="btn-lang-set" type="button">ES</button>
-      </div>
+  <div class="set-actions">
+    <div class="langset">
+      <button id="btnSetLangEn" class="btn-lang-set active" type="button">EN</button>
+      <button id="btnSetLangEs" class="btn-lang-set" type="button">ES</button>
     </div>
+
+    <button id="btnActualizarPrecios" class="btn-secundario" type="button" title="Vuelve a descargar este set para refrescar precios">
+      ⟳ Precios
+    </button>
+  </div>
+</div>
 
     <div id="progresoSet" class="progreso-box"></div>
 
@@ -139,6 +156,20 @@
       <p>Próximamente: totales, porcentajes, rarezas, colores, valor, etc.</p>
     </div>
   </section>
+
+  <!-- Modal imagen carta -->
+<div id="modalCarta" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop" data-action="cerrarModal"></div>
+
+  <div class="modal-content">
+    <div class="modal-topbar">
+      <div id="modalCartaTitulo" class="modal-title">Carta</div>
+      <button id="btnCerrarModal" class="btn-secundario" type="button">✕</button>
+    </div>
+
+    <div id="modalCartaBody" class="modal-body"></div>
+  </div>
+</div>
 
   <script src="app.js"></script>
 </body>

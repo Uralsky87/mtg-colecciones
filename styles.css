@@ -1,3 +1,7 @@
+/* =========================
+   Base
+========================= */
+
 body {
   font-family: Arial, sans-serif;
   max-width: 720px;
@@ -16,19 +20,55 @@ h1, h2 {
   margin-bottom: 18px;
 }
 
-.pantalla {
-  display: none;
+.hint {
+  opacity: 0.75;
 }
 
-.pantalla.active {
-  display: block;
-}
+.pantalla { display: none; }
+.pantalla.active { display: block; }
+
+/* =========================
+   Layout y contenedores
+========================= */
 
 .menu {
   display: grid;
   gap: 12px;
   margin-top: 18px;
 }
+
+.topbar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+/* topbar del set con botones idioma */
+.topbar-set {
+  grid-template-columns: auto 1fr auto;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.progreso-box {
+  text-align: center;
+  padding: 10px;
+  border: 1px solid #eee;
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+
+/* =========================
+   Botones
+========================= */
 
 .btn-principal {
   width: 100%;
@@ -70,21 +110,34 @@ h1, h2 {
   cursor: pointer;
 }
 
-.topbar {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 12px;
+/* Botones EN/ES dentro del set */
+.langset {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
-.card {
+.btn-lang-set {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #ddd;
   background: #fff;
-  border: 1px solid #eee;
-  border-radius: 12px;
-  padding: 14px;
-  margin-bottom: 14px;
+  cursor: pointer;
+  font-weight: bold;
 }
+
+.btn-lang-set.active {
+  background: #e6e6e6;
+}
+
+.btn-lang-set:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* =========================
+   Inputs y filas
+========================= */
 
 .fila {
   display: grid;
@@ -99,9 +152,35 @@ input[type="text"] {
   border: 1px solid #ccc;
 }
 
-.hint {
-  opacity: 0.75;
+#inputBuscarColecciones {
+  width: 100%;
+  margin-top: 6px;
 }
+
+/* Filas de búsqueda con botón limpiar */
+.fila-busqueda {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+#btnLimpiarColecciones,
+#btnLimpiarBuscarEnSet {
+  height: 44px;
+  min-width: 44px;
+  display: grid;
+  place-items: center;
+}
+
+/* Checkbox line */
+.chkline {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* =========================
+   Colecciones
+========================= */
 
 .coleccion-item {
   border: 1px solid #eee;
@@ -115,13 +194,60 @@ input[type="text"] {
   background: #fafafa;
 }
 
-.progreso-box {
-  text-align: center;
-  padding: 10px;
+.coleccion-titulo {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.set-date {
+  opacity: 0.65;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
   border: 1px solid #eee;
-  border-radius: 12px;
+  font-size: 0.85rem;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+/* Filtros colecciones (tokens/arte o dropdown) */
+.filtros-colecciones {
+  display: flex;
+  gap: 10px;
   margin-bottom: 12px;
 }
+
+.btn-toggle-filtro {
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid #ddd;
+  background: #fff;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.btn-toggle-filtro.active {
+  background: #e6e6e6;
+}
+
+.select-filtro {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  background: #fff;
+}
+
+/* =========================
+   Tabla de cartas (set)
+========================= */
 
 .tabla {
   width: 100%;
@@ -134,35 +260,7 @@ input[type="text"] {
   text-align: left;
 }
 
-.acciones {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  align-items: center;
-}
-
-.badge {
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid #eee;
-  font-size: 0.85rem;
-  opacity: 0.85;
-}
-
-.resultado-version {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-}
-
-.resultado-version span {
-  flex: 1;
-}
-
-/* --- NUEVO: controles de cantidad / played --- */
-
+/* Controles cantidad/played */
 .acciones-col {
   display: flex;
   flex-direction: column;
@@ -212,85 +310,9 @@ input[type="text"] {
   text-align: center;
 }
 
-.chkline {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-}
-
-/* ya lo tenías para el botón "Ir", pero lo dejamos aquí por si no lo añadiste antes */
-.resultado-version {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-}
-
-.resultado-version span {
-  flex: 1;
-}
-
-/* --- Filtros de idioma en Colecciones --- */
-.filtros {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  margin: 10px 0 14px;
-}
-
-.btn-filtro {
-  padding: 10px 14px;
-  border-radius: 999px;
-  border: 1px solid #ddd;
-  background: #fff;
-  cursor: pointer;
-  font-weight: bold;
-}
-
-.btn-filtro.active {
-  background: #0077cc;
-  color: #fff;
-  border-color: #0077cc;
-}
-
-.lang-pill {
-  margin-left: 8px;
-  font-size: 0.78rem;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid #eee;
-  opacity: 0.85;
-}
-
-#inputBuscarColecciones {
-  width: 100%;
-  margin-top: 6px;
-}
-
-/* Botón limpiar en buscador de colecciones */
-.fila-busqueda {
-  grid-template-columns: 1fr auto;
-  align-items: center;
-}
-
-#btnLimpiarColecciones {
-  height: 44px;          /* similar al input */
-  min-width: 44px;
-  display: grid;
-  place-items: center;
-}
-
-.fila-busqueda {
-  grid-template-columns: 1fr auto;
-  align-items: center;
-}
-
-#btnLimpiarBuscarEnSet {
-  height: 44px;
-  min-width: 44px;
-  display: grid;
-  place-items: center;
-}
+/* =========================
+   Buscar (resultados)
+========================= */
 
 .lista-versiones {
   list-style: none;
@@ -314,64 +336,91 @@ input[type="text"] {
   align-items: center;
 }
 
-.topbar-set {
-  grid-template-columns: auto 1fr auto;
-}
-
-.langset {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.btn-lang-set {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid #ddd;
-  background: #fff;
+/* Botón “título” clicable (para abrir modal) */
+.btn-link-carta {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: bold;
   cursor: pointer;
+  text-align: left;
+}
+
+.btn-link-carta:hover {
+  text-decoration: underline;
+}
+
+/* =========================
+   Modal imagen carta (ARREGLADO)
+========================= */
+
+.modal.hidden { display: none; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+}
+
+.modal-content {
+  position: relative;
+  max-width: 720px;
+  margin: 30px auto;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+
+  /* clave: que quepa en pantalla y permita scroll interno */
+  max-height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-topbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #eee;
+}
+
+.modal-title {
   font-weight: bold;
 }
 
-.btn-lang-set.active {
-  background: #e6e6e6;
+.modal-body {
+  padding: 14px;
+  overflow: auto;
 }
 
-.btn-lang-set:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.modal-body img {
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 160px);
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid #eee;
 }
 
-.badge { white-space: nowrap; }
-
-.coleccion-titulo{
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.set-date{
-  opacity: 0.65;
-  font-size: 0.9rem;
+.precio-cell{
   white-space: nowrap;
+  font-size: 0.9rem;
+  opacity: 0.85;
 }
 
-.filtros-colecciones{
+.set-actions{
   display: flex;
   gap: 10px;
-  margin-bottom: 12px;
-}
-
-.btn-toggle-filtro{
-  padding: 10px 12px;
-  border-radius: 999px;
-  border: 1px solid #ddd;
-  background: #fff;
-  cursor: pointer;
-  font-weight: bold;
-}
-
-.btn-toggle-filtro.active{
-  background: #e6e6e6;
+  align-items: center;
+  justify-content: flex-end;
 }
