@@ -2,28 +2,7 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
-const cartas = [
-  // TestSet A (EN)
-  { id: 1, nombre: "Lightning Bolt",  coleccion: "TestSet A", lang: "en", numero: 101, rareza: "Común" },
-  { id: 2, nombre: "Counterspell",    coleccion: "TestSet A", lang: "en", numero: 102, rareza: "Común" },
-  { id: 3, nombre: "Llanowar Elves",  coleccion: "TestSet A", lang: "en", numero: 103, rareza: "Común" },
-  { id: 4, nombre: "Serra Angel",     coleccion: "TestSet A", lang: "en", numero: 104, rareza: "Rara" },
-  { id: 5, nombre: "Shivan Dragon",   coleccion: "TestSet A", lang: "en", numero: 105, rareza: "Rara" },
-
-  // TestSet A (ES) - clon ejemplo
-  { id: 101, nombre: "Relámpago",        coleccion: "TestSet A", lang: "es", numero: 101, rareza: "Común" },
-  { id: 102, nombre: "Contrahechizo",    coleccion: "TestSet A", lang: "es", numero: 102, rareza: "Común" },
-
-  // TestSet B (EN)
-  { id: 6,  nombre: "Lightning Bolt",  coleccion: "TestSet B", lang: "en", numero: 201, rareza: "Común" },
-  { id: 7,  nombre: "Duress",          coleccion: "TestSet B", lang: "en", numero: 202, rareza: "Común" },
-  { id: 8,  nombre: "Giant Growth",    coleccion: "TestSet B", lang: "en", numero: 203, rareza: "Común" },
-  { id: 9,  nombre: "Thoughtseize",    coleccion: "TestSet B", lang: "en", numero: 204, rareza: "Rara" },
-  { id: 10, nombre: "Wrath of God",    coleccion: "TestSet B", lang: "en", numero: 205, rareza: "Rara" },
-
-  // TestSet B (ES) - clon ejemplo
-  { id: 201, nombre: "Relámpago",       coleccion: "TestSet B", lang: "es", numero: 201, rareza: "Común" }
-];
+const cartas = [];
 
 function getLangFromCard(c) {
   return (c.lang || "en").toLowerCase(); // default en
@@ -73,6 +52,9 @@ function parseCollectorNumber(value) {
   };
 }
 
+let catalogoListo = false;      // <- cuando termine init, pasa a true
+let catalogoError = "";         // <- opcional, para mostrar error bonito
+
 function compareCollectorNumbers(a, b) {
   const A = parseCollectorNumber(a);
   const B = parseCollectorNumber(b);
@@ -88,19 +70,11 @@ function compareCollectorNumbers(a, b) {
 }
 
 function obtenerColecciones() {
-  if (Array.isArray(catalogoColecciones) && catalogoColecciones.length > 0) return catalogoColecciones;
-
-  // Fallback demo: agrupa por coleccion+lang en el array "cartas"
-  const map = new Map();
-  for (const c of cartas) {
-    const key = setKeyFromCard(c);
-    if (!map.has(key)) {
-      map.set(key, { key, code: c.coleccion, nombre: c.coleccion, lang: getLangFromCard(c), released_at: "", set_type: "" });
-    }
+  if (Array.isArray(catalogoColecciones) && catalogoColecciones.length > 0) {
+    return catalogoColecciones;
   }
-  return [...map.values()];
+  return [];
 }
-
 
 function cartasDeSetKey(setKey) {
   return cacheCartasPorSetLang[setKey] || [];
@@ -813,6 +787,22 @@ function aplicarUIFiltrosTipo() {
 
 function renderColecciones() {
   const cont = document.getElementById("listaColecciones");
+
+  function renderColecciones() {
+  const cont = document.getElementById("listaColecciones");
+  if (!cont) return;
+
+  if (!catalogoListo) {
+    cont.innerHTML = `<div class="card"><p>Cargando colecciones…</p></div>`;
+    return;
+  }
+
+  if (catalogoError) {
+    cont.innerHTML = `<div class="card"><p>Error cargando colecciones: ${catalogoError}</p></div>`;
+    return;
+  }
+
+}
 
   let sets = obtenerColecciones();
   if (filtroTipoSet && filtroTipoSet !== "all") {
@@ -1616,12 +1606,16 @@ function wireBackupButtons() {
 }
 
 async function init() {
+  catalogoListo = false;
+  catalogoError = "";
+
   cargarEstado();
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
+  cargarHiddenEmptySets();
+
   wireGlobalButtons();
   wireBackupButtons();
-  cargarHiddenEmptySets();
 
   try {
     // 1) Sets (Scryfall)
@@ -1641,8 +1635,15 @@ async function init() {
 
   } catch (err) {
     console.error("Error cargando sets de Scryfall:", err);
+    catalogoError = (err && err.message) ? err.message : "desconocido";
+  } finally {
+    catalogoListo = true;
+
+    // Si el usuario ya está en la pantalla colecciones, que se refresque
+    renderColecciones();
   }
 
+  // Buscar: pantalla de Buscar en blanco
   renderResultadosBuscar("");
 }
 
