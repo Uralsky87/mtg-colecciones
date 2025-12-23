@@ -155,6 +155,27 @@
     <div class="card">
       <p>Próximamente: totales, porcentajes, rarezas, colores, valor, etc.</p>
     </div>
+    <div class="card" id="authBox">
+  <h3 style="margin-top:0;">Sincronización (Supabase)</h3>
+
+  <div id="authEstado" class="hint">No has iniciado sesión.</div>
+
+  <div class="fila" style="margin-top:10px;">
+    <input id="inputAuthEmail" type="text" placeholder="tuemail@ejemplo.com" />
+    <button id="btnAuthLogin" class="btn-principal" type="button">Entrar</button>
+  </div>
+
+  <div style="height:10px;"></div>
+
+  <button id="btnAuthLogout" class="btn-secundario" type="button" style="display:none;">
+    Cerrar sesión
+  </button>
+
+  <div class="hint" style="margin-top:10px;">
+    Te enviará un enlace al email para entrar.
+  </div>
+</div>
+
   </section>
 
   <!-- Modal imagen carta -->
@@ -171,6 +192,7 @@
   </div>
 </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>

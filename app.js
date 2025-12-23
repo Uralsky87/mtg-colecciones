@@ -4,6 +4,74 @@
 
 const cartas = [];
 
+// === SUPABASE (Auth + Sync) ===
+const SUPABASE_URL = "https://slvpktkrfbsxwagibfjx.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsdnBrdGtyZmJzeHdhZ2liZmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MTE3MTQsImV4cCI6MjA4MTk4NzcxNH0.-U3ijfDUuSFNKG2001QBzSH3pGlgYXLT2Z8TCRvV6rM";
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+async function authRefreshUI() {
+  const { data } = await supabaseClient.auth.getSession();
+  const session = data?.session || null;
+
+  const estadoEl = document.getElementById("authEstado");
+  const btnOut = document.getElementById("btnAuthLogout");
+
+  if (!estadoEl || !btnOut) return;
+
+  if (session?.user) {
+    estadoEl.textContent = `Sesión iniciada: ${session.user.email || session.user.id}`;
+    btnOut.style.display = "inline-block";
+  } else {
+    estadoEl.textContent = "No has iniciado sesión.";
+    btnOut.style.display = "none";
+  }
+}
+
+function wireAuthButtons() {
+  const inp = document.getElementById("inputAuthEmail");
+  const btnIn = document.getElementById("btnAuthLogin");
+  const btnOut = document.getElementById("btnAuthLogout");
+
+  if (btnIn && inp) {
+    btnIn.addEventListener("click", async () => {
+      const email = (inp.value || "").trim();
+      if (!email) return alert("Escribe un email.");
+
+      // ✅ AQUÍ va el options/emailRedirectTo
+      const redirectTo = new URL(".", window.location.href).toString();
+
+      const { error } = await supabaseClient.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: redirectTo }
+      });
+
+      if (error) {
+        console.error(error);
+        alert("Error enviando email de login. Mira consola.");
+        return;
+      }
+
+      alert("Te he enviado un email con el enlace para entrar.");
+    });
+  }
+
+  if (btnOut) {
+    btnOut.addEventListener("click", async () => {
+      await supabaseClient.auth.signOut();
+      await authRefreshUI();
+    });
+  }
+}
+
+async function initAuth() {
+  wireAuthButtons();
+  await authRefreshUI();
+
+  supabaseClient.auth.onAuthStateChange(async () => {
+    await authRefreshUI();
+  });
+}
+
 function getLangFromCard(c) {
   return (c.lang || "en").toLowerCase(); // default en
 }
@@ -1613,7 +1681,7 @@ async function init() {
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
   cargarHiddenEmptySets();
-
+  await initAuth();
   wireGlobalButtons();
   wireBackupButtons();
 
