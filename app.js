@@ -27,6 +27,9 @@ let sbDirty = false;
 let sbAutoSaveTimer = null;
 let sbKnownCloudUpdatedAt = null;
 let sbLoginInFlight = false;
+let sbPullInFlight = false;
+let sbExchangeInFlight = false;
+let sbJustExchanged = false;
 
 function uiSetSyncStatus(msg) {
   const el = document.getElementById("syncStatus");
@@ -146,34 +149,42 @@ async function sbGetCloudMeta() {
 }
 
 async function sbPullNow() {
-  if (!sbUser?.id) { uiSetSyncStatus("Inicia sesión primero."); return; }
+  // ✅ Evita 2 descargas a la vez (muy importante con 2 pestañas o clicks dobles)
+  if (sbPullInFlight) return;
+  sbPullInFlight = true;
 
-  uiSetSyncStatus("Descargando desde la nube…");
+  try {
+    if (!sbUser?.id) { uiSetSyncStatus("Inicia sesión primero."); return; }
 
-  const { data, error } = await supabaseClient
-    .from(SB_TABLE)
-    .select("data, updated_at")
-    .eq("user_id", sbUser.id)
-    .maybeSingle();
+    uiSetSyncStatus("Descargando desde la nube…");
 
-  if (error) {
-    console.error(error);
-    uiSetSyncStatus("Error descargando (mira consola).");
-    return;
+    const { data, error } = await supabaseClient
+      .from(SB_TABLE)
+      .select("data, updated_at")
+      .eq("user_id", sbUser.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error(error);
+      uiSetSyncStatus("Error descargando (mira consola).");
+      return;
+    }
+
+    // Primera vez: nube vacía
+    if (!data) {
+      sbKnownCloudUpdatedAt = null;
+      uiSetSyncStatus("Nube vacía. Pulsa “Guardar cambios” para subir tu colección por primera vez.");
+      return;
+    }
+
+    sbKnownCloudUpdatedAt = data.updated_at || null;
+    sbApplyCloudPayload(data.data || {});
+    sbDirty = false;
+
+    uiSetSyncStatus("Descargado ✅");
+  } finally {
+    sbPullInFlight = false;
   }
-
-  // Primera vez: nube vacía
-  if (!data) {
-    sbKnownCloudUpdatedAt = null;
-    uiSetSyncStatus("Nube vacía. Pulsa “Guardar cambios” para subir tu colección por primera vez.");
-    return;
-  }
-
-  sbKnownCloudUpdatedAt = data.updated_at || null;
-  sbApplyCloudPayload(data.data || {});
-  sbDirty = false;
-
-  uiSetSyncStatus("Descargado ✅");
 }
 
 async function sbPushNow() {
@@ -234,21 +245,35 @@ async function sbLogout() {
 let sbInitDone = false;
 
 async function sbCompleteMagicLinkIfPresent() {
-  const url = new URL(window.location.href);
-  const code = url.searchParams.get("code");
-  if (!code) return;
+  if (sbExchangeInFlight) return;
+  sbExchangeInFlight = true;
 
-  uiSetSyncStatus("Completando inicio de sesión…");
+  try {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    if (!code) return;
 
-  const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
-  if (error) {
-    console.error("exchangeCodeForSession:", error);
-    uiSetSyncStatus("Error completando el login (mira consola).");
-    return;
+    uiSetSyncStatus("Completando inicio de sesión…");
+
+    const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
+
+    if (error) {
+      // Si se abrió 2 veces, el code puede estar "used/invalid" en la segunda pestaña.
+      console.error("exchangeCodeForSession:", error);
+
+      // En vez de quedarnos "colgados", lo tratamos como "ya se completó en otra pestaña"
+      uiSetSyncStatus("Login ya completado en otra pestaña. Actualizando sesión…");
+    } else {
+      sbJustExchanged = true;
+      setTimeout(() => { sbJustExchanged = false; }, 1500);
+    }
+
+    // Limpia ?code=... para que al refrescar no lo reintente
+    url.searchParams.delete("code");
+    window.history.replaceState({}, document.title, url.toString());
+  } finally {
+    sbExchangeInFlight = false;
   }
-
-  url.searchParams.delete("code");
-  window.history.replaceState({}, document.title, url.toString());
 }
 
 function onClickOnce(el, handler) {
@@ -264,11 +289,11 @@ function sbMarkDirty() {
 }
 
 async function sbInit() {
+  await sbCompleteMagicLinkIfPresent();
   // Evita doble init (y doble wiring) si por lo que sea se llama 2 veces
   if (sbInitDone) return;
   sbInitDone = true;
-  await sbCompleteMagicLinkIfPresent();
-
+  
   // 1) sesión actual al cargar
   const { data } = await supabaseClient.auth.getSession();
   sbUser = data?.session?.user || null;
