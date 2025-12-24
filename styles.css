@@ -429,7 +429,7 @@ input[type="text"] {
    UI POLISH PACK (pégalo al final del CSS)
    ========================================= */
 
-:root{
+:root[data-theme="dark"]{
   --bg: #0b0f19;
   --panel: rgba(255,255,255,.06);
   --panel-2: rgba(255,255,255,.08);
@@ -1338,3 +1338,37 @@ body { max-width: none; padding: 0; }
 
 /* FIX extra: si alguna vez una tabla no cabe, que haga scroll horizontal en vez de “cortarse” */
 #listaCartasSet { overflow-x: auto; }
+
+/* FIX dropdown: cuando se abre el menú (options), que se lea bien */
+select option,
+select optgroup{
+  color: #111;
+  background: #fff;
+}
+
+/* =========================
+   THEME: Light
+========================= */
+:root[data-theme="light"]{
+  --bg: #f4f6fb;
+
+  --panel: rgba(0,0,0,.04);
+  --panel-2: rgba(0,0,0,.06);
+
+  --text: rgba(0,0,0,.88);
+  --muted: rgba(0,0,0,.60);
+  --muted-2: rgba(0,0,0,.45);
+
+  --border: rgba(0,0,0,.10);
+  --shadow: 0 10px 30px rgba(0,0,0,.10);
+
+  --accent: #2f6cff;
+  --accent-2: #0aa06e;
+}
+
+/* En modo claro, inputs/select con fondo claro */
+:root[data-theme="light"] input[type="text"],
+:root[data-theme="light"] input[type="number"],
+:root[data-theme="light"] select{
+  background: rgba(255,255,255,.85);
+}

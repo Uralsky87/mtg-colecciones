@@ -19,6 +19,23 @@ function getEmailRedirectTo() {
   return location.origin + location.pathname;
 }
 
+const LS_THEME = "mtg_theme_v1";
+
+function applyTheme(theme) {
+  const t = (theme === "light") ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", t);
+  localStorage.setItem(LS_THEME, t);
+
+  const bD = document.getElementById("btnThemeDark");
+  const bL = document.getElementById("btnThemeLight");
+  if (bD) bD.classList.toggle("active", t === "dark");
+  if (bL) bL.classList.toggle("active", t === "light");
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(LS_THEME);
+  applyTheme(saved || "dark");
+}
 
 const SB_TABLE = "mtg_user_data";
 
@@ -2040,7 +2057,12 @@ function importarEstadoDesdeTexto(jsonText) {
 // ===============================
 
 function wireGlobalButtons() {
-  // Entrar
+  const btnThemeDark = document.getElementById("btnThemeDark");
+const btnThemeLight = document.getElementById("btnThemeLight");
+if (btnThemeDark) btnThemeDark.addEventListener("click", () => applyTheme("dark"));
+if (btnThemeLight) btnThemeLight.addEventListener("click", () => applyTheme("light"));
+
+// Entrar
   const btnEntrar = document.getElementById("btnEntrar");
   if (btnEntrar) btnEntrar.addEventListener("click", () => mostrarPantalla("menu"));
 
@@ -2253,6 +2275,7 @@ async function init() {
   catalogoListo = false;
   catalogoError = "";
 
+  initTheme();
   cargarEstado();
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
