@@ -1332,3 +1332,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   /* checkboxes algo más “integradas” */
   input[type="checkbox"]{ accent-color: #7aa6ff; }
 }
+
+/* FIX PC: el body no debe estar limitado a 720px (legacy del CSS base) */
+body { max-width: none; padding: 0; }
+
+/* FIX extra: si alguna vez una tabla no cabe, que haga scroll horizontal en vez de “cortarse” */
+#listaCartasSet { overflow-x: auto; }
