@@ -897,7 +897,8 @@ function reconstruirCatalogoColecciones() {
       name_en: s.name,
       name_es: nombreES,
       released_at: s.released_at || "",
-      set_type: s.set_type || ""
+      set_type: s.set_type || "",
+      icon_svg_uri: s.icon_svg_uri || ""
     };
 
     catalogoColecciones.push(entry);
@@ -1262,15 +1263,20 @@ function renderColecciones() {
 
     const fechaTxt = formatMesAnyo(s.released_at);
 
+    // ✅ Icono (si existe)
+    const iconHtml = s.icon_svg_uri
+  ? `<img class="set-icon" src="${s.icon_svg_uri}" alt="" loading="lazy" />`
+  : "";
+
     html += `
-      <div class="coleccion-item" data-code="${s.code}">
-        <div class="coleccion-titulo">
-          <strong>${s.nombre}</strong>
-          ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
-        </div>
-        <div class="badge">EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt}</div>
-      </div>
-    `;
+  <div class="coleccion-item" data-code="${s.code}">
+    <div class="coleccion-titulo">
+      <strong>${iconHtml}${s.nombre}</strong>
+      ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
+    </div>
+    <div class="badge">EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt}</div>
+  </div>
+`;
   }
 
   cont.innerHTML = html;

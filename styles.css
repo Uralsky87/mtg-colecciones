@@ -1372,3 +1372,44 @@ select optgroup{
 :root[data-theme="light"] select{
   background: rgba(255,255,255,.85);
 }
+
+.coleccion-title-left{
+  display:flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.set-icon{
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  opacity: .9;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.35));
+}
+
+.set-icon{
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  vertical-align: -3px;
+  display: inline-block;
+  opacity: .95;
+  pointer-events: none; /* para que el click siga siendo del item */
+}
+
+/* Si tu body usa clases */
+body.theme-dark .set-icon{
+  filter: invert(1) brightness(1.6);
+}
+body.theme-light .set-icon{
+  filter: none;
+}
+
+/* Por si en tu proyecto usas data-theme en vez de clases */
+body[data-theme="dark"] .set-icon{
+  filter: invert(1) brightness(1.6);
+}
+body[data-theme="light"] .set-icon{
+  filter: none;
+}
