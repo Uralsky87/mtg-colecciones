@@ -104,6 +104,9 @@ function sbApplyCloudPayload(payload) {
 
   renderColecciones();
   if (setActualKey) renderTablaSet(setActualKey);
+
+  // ✅ Bonus: refresca estadísticas tras sincronizar
+  try { renderEstadisticas(); } catch {}
 }
 
 async function sbLoginWithEmail(email) {
@@ -897,6 +900,7 @@ async function ensureSetCardsLoaded(setKey) {
 
   cacheCartasPorSetLang[setKey] = cards.map(card => ({
     id: card.id, // UUID string
+    oracle_id: card.oracle_id,
     nombre: pickCardName(card, lang),
     numero: card.collector_number,
     rareza: mapRarity(card.rarity),
@@ -1250,6 +1254,243 @@ function renderColecciones() {
       abrirSet(`${code}__en`);
     });
   });
+}
+
+function calcStatsFromEstado() {
+  let totalCopias = 0;
+  let unicasTengo = 0;
+  let unicasFoil = 0;
+  let totalPlayed = 0;
+  let wantMore = 0;
+
+  for (const id of Object.keys(estado || {})) {
+    const st = getEstadoCarta(id); // ya normaliza
+    const qty = Number(st.qty || 0);
+    if (qty > 0) {
+      unicasTengo += 1;
+      totalCopias += qty;
+      if (st.foil) unicasFoil += 1;
+    }
+    totalPlayed += Number(st.playedQty || 0);
+    if (st.wantMore) wantMore += 1;
+  }
+
+  return { totalCopias, unicasTengo, unicasFoil, totalPlayed, wantMore };
+}
+
+function calcSetStatsFromProgreso() {
+  const rows = [];
+  for (const k of Object.keys(progresoPorSet || {})) {
+    const p = progresoPorSet[k];
+    if (!p || typeof p.total !== "number") continue;
+    const tengo = Number(p.tengo || 0);
+    const total = Number(p.total || 0);
+    const pct = total > 0 ? (tengo / total) : 0;
+    rows.push({ key: k, tengo, total, pct });
+  }
+  rows.sort((a,b) => (b.pct - a.pct) || (b.tengo - a.tengo));
+  return rows;
+}
+
+function renderEstadisticas() {
+  const elResumen = document.getElementById("statsResumen");
+  const elSets = document.getElementById("statsSets");
+  if (!elResumen || !elSets) return;
+
+  // Helpers
+  const toNum = (x) => {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const fmtEUR = (n) => {
+    try {
+      return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
+    } catch {
+      return `€${(Math.round(n * 100) / 100).toFixed(2)}`;
+    }
+  };
+  const parsePrice = (prices, key) => {
+    const v = prices?.[key];
+    if (v == null || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // 1) Resumen básico desde estado
+  let totalDistintasConQty = 0; // "Total de cartas en colección"
+  let totalCopias = 0;          // "Total de cartas unitarias"
+  let totalFoil = 0;            // "Foil"
+  let totalPlayed = 0;          // "Played"
+  let totalRi = 0;              // "Ri:"
+
+  for (const id of Object.keys(estado || {})) {
+    const st = estado[id];
+    if (!st) continue;
+
+    const qty = toNum(st.qty);
+    const played = toNum(st.playedQty);
+
+    if (qty > 0) totalDistintasConQty += 1;
+    totalCopias += Math.max(0, qty);
+    if (qty > 0 && st.foil) totalFoil += 1;
+    totalPlayed += Math.max(0, played);
+    if (st.wantMore) totalRi += 1;
+  }
+
+  // 2) Índices de precios desde caché (preferencia EN)
+  // Necesita que en caché exista oracle_id (ver ajuste A)
+  const priceByOracle = new Map(); // oracle_id -> { en:{eur,eurFoil}, any:{eur,eurFoil} }
+  const metaById = new Map();      // id -> { oracle_id, lang, prices }
+
+  for (const [setKey, list] of Object.entries(cacheCartasPorSetLang || {})) {
+    if (!Array.isArray(list)) continue;
+
+    for (const c of list) {
+      if (!c?.id) continue;
+
+      metaById.set(c.id, {
+        oracle_id: c.oracle_id || null,
+        lang: c.lang || (String(setKey).split("__")[1] || "en"),
+        prices: c._prices || null
+      });
+
+      const oid = c.oracle_id;
+      if (!oid) continue;
+
+      const eur = parsePrice(c._prices, "eur");
+      const eurFoil = parsePrice(c._prices, "eur_foil");
+
+      if (eur == null && eurFoil == null) continue;
+
+      if (!priceByOracle.has(oid)) {
+        priceByOracle.set(oid, { en: { eur: null, eurFoil: null }, any: { eur: null, eurFoil: null } });
+      }
+
+      const slot = priceByOracle.get(oid);
+      const isEn = String(c.lang || "").toLowerCase() === "en";
+
+      // any
+      if (slot.any.eur == null && eur != null) slot.any.eur = eur;
+      if (slot.any.eurFoil == null && eurFoil != null) slot.any.eurFoil = eurFoil;
+
+      // en preferente
+      if (isEn) {
+        if (slot.en.eur == null && eur != null) slot.en.eur = eur;
+        if (slot.en.eurFoil == null && eurFoil != null) slot.en.eurFoil = eurFoil;
+      }
+    }
+  }
+
+  // 3) Agrupar lo poseído por oracle_id para NO mezclar ES/EN (EN manda)
+  // Aproximación: si una entrada está marcada foil, asumimos todas sus copias foil.
+  const ownedByOracle = new Map(); // key -> { qty: n, foilQty: n, nonFoilQty: n }
+  for (const [id, st] of Object.entries(estado || {})) {
+    const qty = toNum(st?.qty);
+    if (qty <= 0) continue;
+
+    const meta = metaById.get(id);
+    const key = meta?.oracle_id || id; // fallback si no sabemos oracle_id
+    if (!ownedByOracle.has(key)) ownedByOracle.set(key, { qty: 0, foilQty: 0, nonFoilQty: 0 });
+
+    const g = ownedByOracle.get(key);
+    g.qty += qty;
+
+    if (st?.foil) g.foilQty += qty;
+    else g.nonFoilQty += qty;
+  }
+
+  // 4) Calcular valor aproximado con preferencia EN
+  let totalValueEUR = 0;
+  let pricedGroups = 0;
+  let totalGroups = ownedByOracle.size;
+
+  for (const [oid, g] of ownedByOracle.entries()) {
+    // si oid es realmente un id (fallback), miramos precio por id si existiera
+    let eur = null;
+    let eurFoil = null;
+
+    const slot = priceByOracle.get(oid);
+    if (slot) {
+      // EN manda, si no hay EN, usa any
+      eur = slot.en.eur ?? slot.any.eur;
+      eurFoil = slot.en.eurFoil ?? slot.any.eurFoil;
+    } else {
+      // fallback por id (si no tenemos oracle_id y justo tenemos meta)
+      const meta = metaById.get(oid);
+      eur = parsePrice(meta?.prices, "eur");
+      eurFoil = parsePrice(meta?.prices, "eur_foil");
+    }
+
+    // Si no hay ningún precio en EUR, no contamos este grupo
+    const base = (eur != null) ? eur : null;
+    const foil = (eurFoil != null) ? eurFoil : base;
+
+    if (base == null && foil == null) continue;
+
+    pricedGroups += 1;
+
+    const nonFoilVal = (base != null) ? g.nonFoilQty * base : 0;
+    const foilVal = (foil != null) ? g.foilQty * foil : 0;
+
+    totalValueEUR += nonFoilVal + foilVal;
+  }
+
+  const coverageTxt = totalGroups > 0
+    ? `${pricedGroups}/${totalGroups} cartas (oracle) con precio`
+    : `0/0`;
+
+  // 5) Pintar resumen con labels como quieres
+  elResumen.innerHTML = `
+    <div><strong>Total de cartas en colección:</strong> ${totalDistintasConQty}</div>
+    <div><strong>Total de cartas unitarias:</strong> ${totalCopias}</div>
+    <div><strong>Foil:</strong> ${totalFoil}</div>
+    <div><strong>Played:</strong> ${totalPlayed}</div>
+    <div><strong>Ri:</strong> ${totalRi}</div>
+    <div style="margin-top:8px;">
+      <strong>Valor total aproximado:</strong> ${fmtEUR(totalValueEUR)}
+      <div class="hint">Cobertura: ${coverageTxt} (solo con precios en € disponibles en caché).</div>
+    </div>
+  `;
+
+  // 6) Top sets por % (tu parte que ya te iba bien)
+  const items = [];
+  for (const [setKey, p] of Object.entries(progresoPorSet || {})) {
+    const total = toNum(p?.total);
+    const tengo = toNum(p?.tengo);
+    if (!total) continue;
+    items.push({ setKey, tengo, total, ratio: tengo / total });
+  }
+  items.sort((a, b) => b.ratio - a.ratio);
+
+  if (items.length === 0) {
+    elSets.innerHTML = `Aún no hay progreso guardado. Entra en algún set para que la app calcule totales.`;
+    return;
+  }
+
+  const top = items.slice(0, 30);
+  let html = `<div class="hint" style="margin-bottom:8px;">Top sets (por % completado)</div>`;
+
+  for (const it of top) {
+    const [code, lang] = String(it.setKey).split("__");
+    let nombre = code?.toUpperCase() || "SET";
+    try {
+      const meta = (typeof setMetaByKey !== "undefined") ? setMetaByKey.get(it.setKey) : null;
+      if (meta?.nombre) nombre = meta.nombre;
+    } catch {}
+
+    const pct = Math.round(it.ratio * 100);
+    html += `
+      <div class="card" style="margin:8px 0;">
+        <div style="display:flex; justify-content:space-between; gap:10px;">
+          <div><strong>${nombre}</strong> <span class="hint">(${(lang || "en").toUpperCase()})</span></div>
+          <div><strong>${pct}%</strong></div>
+        </div>
+        <div class="hint">${it.tengo} / ${it.total}</div>
+      </div>
+    `;
+  }
+
+  elSets.innerHTML = html;
 }
 
 function guardarFiltrosColecciones() {
@@ -1789,6 +2030,14 @@ function wireGlobalButtons() {
   const btnEntrar = document.getElementById("btnEntrar");
   if (btnEntrar) btnEntrar.addEventListener("click", () => mostrarPantalla("menu"));
 
+  // Stats: recalcular
+  const btnStatsRecalcular = document.getElementById("btnStatsRecalcular");
+  if (btnStatsRecalcular) {
+    btnStatsRecalcular.addEventListener("click", () => {
+      if (typeof renderEstadisticas === "function") renderEstadisticas();
+    });
+  }
+
   // Menú principal
   document.querySelectorAll(".btn-menu").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -1811,14 +2060,15 @@ function wireGlobalButtons() {
       }
 
       if (destino === "estadisticas") {
+        if (typeof renderEstadisticas === "function") renderEstadisticas();
         mostrarPantalla("estadisticas");
         return;
       }
 
       if (destino === "cuenta") {
-  mostrarPantalla("cuenta");
-  return;
-}
+        mostrarPantalla("cuenta");
+        return;
+      }
     });
   });
 
@@ -1947,10 +2197,9 @@ function wireGlobalButtons() {
     if (e.key === "Escape") cerrarModalCarta();
   });
 
+  // Actualizar precios
   const btnActualizarPrecios = document.getElementById("btnActualizarPrecios");
-if (btnActualizarPrecios) {
-  btnActualizarPrecios.addEventListener("click", refrescarPreciosSetActual);
-}
+  if (btnActualizarPrecios) btnActualizarPrecios.addEventListener("click", refrescarPreciosSetActual);
 }
 
 function wireBackupButtons() {
