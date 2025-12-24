@@ -361,6 +361,9 @@ async function sbInit() {
       }
     });
   }
+  function formatLang(lang) {
+  return String(lang || "en").toUpperCase(); // "EN" / "ES"
+}
 }
 
 function sbStartAutoSave() {
@@ -388,8 +391,15 @@ function setKeyFromCard(c) {
   return `${c.coleccion}__${lang}`;
 }
 
+function langFlag(lang) {
+  const l = (lang || "").toLowerCase();
+  if (l === "es") return "🇪🇸";
+  if (l === "en") return "🇬🇧";
+  return "🏳️";
+}
+
 function formatLang(lang) {
-  return (lang || "en").toUpperCase();
+  return String(lang || "en").toUpperCase(); // "EN" / "ES"
 }
 
 function formatMesAnyo(released_at) {
