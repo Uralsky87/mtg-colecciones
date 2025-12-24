@@ -1134,3 +1134,150 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     color: rgba(255,255,255,0.95);
   }
 }
+
+/* =========================================================
+   PARCHE MÓVIL: tabla -> cards + evitar overflow por palabras largas
+   + stepper visible siempre
+   (PÉGALO AL FINAL)
+========================================================= */
+
+@media (max-width: 520px) {
+
+  /* 1) Nunca permitir que un nombre "reviente" el ancho */
+  #pantallaSet .btn-link-carta,
+  #pantallaSet td,
+  #pantallaSet th {
+    overflow-wrap: anywhere;   /* clave */
+    word-break: break-word;
+    hyphens: auto;
+  }
+
+  /* 2) Tabla -> filas en formato "tarjeta" */
+  #pantallaSet .tabla thead { display: none !important; }
+
+  #pantallaSet .tabla,
+  #pantallaSet .tabla tbody,
+  #pantallaSet .tabla tr,
+  #pantallaSet .tabla td {
+    display: block;
+    width: 100%;
+  }
+
+  #pantallaSet .tabla {
+    border: none !important;
+    background: transparent !important;
+  }
+
+  #pantallaSet .tabla tr {
+    position: relative;
+    margin: 10px 0;
+    padding: 12px;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 16px;
+    background: rgba(0,0,0,.18);
+  }
+
+  #pantallaSet .tabla td {
+    border: none !important;
+    padding: 0 !important;
+  }
+
+  /* Oculta columnas antiguas (rareza/precio como columnas) */
+  #pantallaSet .tabla td:nth-child(3),
+  #pantallaSet .tabla td:nth-child(4) {
+    display: none !important;
+  }
+
+  /* Nombre arriba + espacio para el # */
+  #pantallaSet .tabla td:nth-child(1) {
+    padding-right: 44px !important;
+  }
+
+  /* # como "badge" arriba a la derecha */
+  #pantallaSet .tabla td:nth-child(2) {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: auto !important;
+    padding: 2px 8px !important;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(0,0,0,.25);
+    color: rgba(255,255,255,.75);
+    font-size: 12px;
+  }
+
+  /* Info debajo del nombre (tu .subinfo-movil) */
+  #pantallaSet .subinfo-movil {
+    display: block !important;
+    margin-top: 6px;
+    font-size: 12px;
+    opacity: .85;
+  }
+
+  /* Estado debajo, a todo ancho */
+  #pantallaSet .tabla td:nth-child(5) {
+    margin-top: 10px;
+  }
+
+  /* 3) Stepper: +/− SIEMPRE visibles (sin hover) */
+  #pantallaSet .btn-step {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 10px;
+
+    background: rgba(255,255,255,0.10) !important;
+    border: 1px solid rgba(255,255,255,0.22) !important;
+
+    color: rgba(255,255,255,0.95) !important; /* <- clave */
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 32px;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #pantallaSet .btn-step:active {
+    transform: translateY(1px);
+  }
+
+  #pantallaSet .btn-step:disabled {
+    opacity: 0.35 !important;
+  }
+
+  #pantallaSet .inp-num {
+    width: 46px !important;
+    height: 32px;
+    padding: 0 6px;
+    border-radius: 10px;
+
+    background: rgba(0,0,0,0.22) !important;
+    border: 1px solid rgba(255,255,255,0.18) !important;
+    color: rgba(255,255,255,0.95) !important;
+    text-align: center;
+    font-size: 14px;
+  }
+
+  /* Estado: compactar un poco */
+  #pantallaSet .fila-accion {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    align-items: center;
+    margin-top: 6px;
+  }
+
+  #pantallaSet .lbl {
+    font-size: 12px;
+    opacity: .85;
+  }
+
+  #pantallaSet .stepper {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+}
