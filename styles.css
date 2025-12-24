@@ -1281,3 +1281,90 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     gap: 6px;
   }
 }
+
+/* =========================================================
+   FIX CLIP + FIX ACCIONES (pégalo al final)
+========================================================= */
+
+/* 1) Nunca cortar el contenido de la tabla */
+#pantallaSet .tabla{
+  overflow: visible !important;   /* <- quita el “corte” del + */
+}
+
+/* 2) La columna de acciones NO debe forzar ancho */
+#pantallaSet .acciones-col{
+  min-width: 0 !important;        /* <- adiós empuje horizontal */
+}
+
+/* 3) Por si algo aún se pasa: permitir scroll horizontal en el contenedor */
+#pantallaSet #listaCartasSet{
+  overflow-x: auto;
+}
+
+/* 4) En móvil, la fila se vuelve “card” y todo va debajo del nombre */
+@media (max-width: 520px){
+
+  #pantallaSet .tabla thead{ display:none !important; }
+
+  #pantallaSet .tabla,
+  #pantallaSet .tabla tbody,
+  #pantallaSet .tabla tr,
+  #pantallaSet .tabla td{
+    display:block !important;
+    width:100% !important;
+  }
+
+  #pantallaSet .tabla{
+    border:none !important;
+    background:transparent !important;
+  }
+
+  #pantallaSet .tabla tr{
+    position: relative;
+    margin: 10px 0;
+    padding: 12px;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 16px;
+    background: rgba(0,0,0,.18);
+  }
+
+  #pantallaSet .tabla td{
+    border:none !important;
+    padding: 0 !important;
+  }
+
+  /* El # como pill arriba derecha */
+  #pantallaSet .tabla td:nth-child(2){
+    position:absolute;
+    top:10px;
+    right:10px;
+    width:auto !important;
+    padding: 2px 8px !important;
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,.12);
+    background: rgba(0,0,0,.25);
+    color: rgba(255,255,255,.75);
+    font-size: 12px;
+  }
+
+  /* Estado debajo (col 5) */
+  #pantallaSet .tabla td:nth-child(5){
+    margin-top: 10px;
+  }
+
+  /* Paso importante: palabras largas no ensanchan nada */
+  #pantallaSet .btn-link-carta{
+    overflow-wrap:anywhere;
+    word-break:break-word;
+    hyphens:auto;
+  }
+
+  /* Botones +/− visibles siempre */
+  #pantallaSet .btn-step{
+    background: rgba(255,255,255,0.10) !important;
+    border: 1px solid rgba(255,255,255,0.22) !important;
+    color: rgba(255,255,255,0.95) !important;
+    font-size: 18px;
+    font-weight: 900;
+  }
+}
