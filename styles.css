@@ -620,7 +620,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   width:100%;
   border-collapse: separate;
   border-spacing: 0;
-  overflow:hidden;
+  overflow:visible;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: rgba(0,0,0,.15);
@@ -797,53 +797,6 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   cursor: not-allowed;
 }
 
-/* =========================
-   SET: responsive móvil
-========================= */
-@media (max-width: 520px) {
-
-  /* Topbar del set: permitir wrap y 2 filas */
-  .topbar-set {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-  }
-
-  /* Botón volver: que no empuje todo fuera */
-  .topbar-set .btn-secundario {
-    padding: 6px 8px;
-    white-space: nowrap;
-    flex: 0 0 auto;
-  }
-
-  /* Título: más pequeño y con ellipsis */
-  #tituloSet {
-    font-size: 16px;
-    line-height: 1.1;
-    flex: 1 1 auto;
-    min-width: 140px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* Acciones (EN/ES + Precios) en 2ª fila */
-  .topbar-set .set-actions {
-    width: 100%;
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-  }
-
-  /* Botones de idioma y precios más compactos */
-  .topbar-set .btn-lang-set,
-  .topbar-set #btnActualizarPrecios {
-    padding: 6px 8px;
-    font-size: 13px;
-  }
-}
-
 /* Por defecto (PC): oculto */
 .subinfo-movil { display: none; }
 
@@ -869,11 +822,6 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     padding: 8px 6px;
     vertical-align: top;
   }
-}
-@media (max-width: 520px) {
-  .stepper .btn-step { padding: 4px 8px; min-width: 32px; }
-  .stepper .inp-num { width: 52px; padding: 4px 6px; }
-  .fila-accion .lbl { font-size: 12px; opacity: 0.85; }
 }
 
 /* --- Pantalla SET: todo alineado al mismo ancho --- */
@@ -908,26 +856,6 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   min-width: 0;
 }
 
-@media (max-width: 520px) {
-  .topbar-set {
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  #tituloSet {
-    flex: 1 1 100%;
-    text-align: center;
-    font-size: 18px;
-    line-height: 1.2;
-  }
-
-  .set-actions {
-    width: 100%;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-}
 
 /* =========================================================
    FIX FINAL (sin duplicados): SET móvil + stepper + tabla
@@ -973,96 +901,6 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   align-items: flex-end;
   min-width: 0; /* importante para fixed layout */
 }
-
-/* =========================================================
-   MÓVIL
-========================================================= */
-@media (max-width: 520px) {
-
-  /* ============ Topbar del set (2 filas) ============ */
-  #pantallaSet .topbar-set {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-  }
-
-  /* Botón volver compacto */
-  #pantallaSet .topbar-set [data-action="volverColecciones"],
-  #pantallaSet .topbar-set .btn-secundario {
-    padding: 6px 10px;
-    white-space: nowrap;
-    flex: 0 0 auto;
-  }
-
-  /* Título: 1 línea, centrado, sin empujar */
-  #pantallaSet #tituloSet {
-    flex: 1 1 100%;
-    text-align: center;
-    font-size: 18px;
-    line-height: 1.15;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* Acciones (EN/ES + Precios) en segunda fila centrada */
-  #pantallaSet .set-actions {
-    width: 100%;
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  #pantallaSet .btn-lang-set,
-  #pantallaSet #btnActualizarPrecios {
-    padding: 6px 10px;
-    font-size: 13px;
-  }
-
-  /* ============ Tabla: 3 columnas (Carta / # / Estado) ============ */
-  #pantallaSet .tabla { table-layout: fixed; }
-
-  /* Oculta Rareza y Precio como columnas (porque ya lo pones debajo del nombre) */
-  #pantallaSet .tabla th:nth-child(3),
-  #pantallaSet .tabla td:nth-child(3),
-  #pantallaSet .tabla th:nth-child(4),
-  #pantallaSet .tabla td:nth-child(4) {
-    display: none !important;
-  }
-
-  /* Padding algo menor */
-  #pantallaSet .tabla th,
-  #pantallaSet .tabla td {
-    padding: 8px 6px;
-    vertical-align: top;
-  }
-
-  /* Anchuras: Carta / # / Estado */
-  #pantallaSet .tabla th:nth-child(1),
-  #pantallaSet .tabla td:nth-child(1) { width: 48%; }
-
-  #pantallaSet .tabla th:nth-child(2),
-  #pantallaSet .tabla td:nth-child(2) { width: 8%; }
-
-  #pantallaSet .tabla th:nth-child(5),
-  #pantallaSet .tabla td:nth-child(5) { width: 44%; }
-
-  /* Nombre clicable: permitir 2 líneas */
-  #pantallaSet .btn-link-carta {
-    display: block;
-    white-space: normal;
-    line-height: 1.12;
-  }
-
-  /* Info debajo del nombre (rareza + precio) */
-  #pantallaSet .subinfo-movil {
-    display: block;
-    margin-top: 4px;
-    font-size: 12px;
-    opacity: 0.85;
-  }
 
   /* ============ Estado: compactar layout ============ */
   #pantallaSet .acciones-col {
@@ -1133,7 +971,6 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     border: 1px solid rgba(255,255,255,0.18);
     color: rgba(255,255,255,0.95);
   }
-}
 
 /* =========================================================
    PARCHE MÓVIL: tabla -> cards + evitar overflow por palabras largas
@@ -1367,4 +1204,131 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     font-size: 18px;
     font-weight: 900;
   }
+}
+
+/* =========================================================
+   SET (móvil): nombre arriba, estado debajo + stepper compacto
+========================================================= */
+@media (max-width: 520px){
+
+  /* TOPBAR SET: que no empuje */
+  .topbar-set{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    align-items:center;
+  }
+  .topbar-set .btn-secundario{ padding: 6px 10px; }
+  #tituloSet{
+    flex: 1 1 100%;
+    text-align:center;
+    font-size: 18px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .set-actions{
+    width:100%;
+    display:flex;
+    justify-content:center;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+  .btn-lang-set, #btnActualizarPrecios{
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  /* TABLA -> layout tipo “tarjeta” por fila, SIN romper el HTML */
+  .tabla thead{ display:none; }
+
+  .tabla tr{
+    display:grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "name num"
+      "state state";
+    gap: 8px 10px;
+    padding: 12px;
+  }
+
+  .tabla td{ border: none !important; padding: 0 !important; }
+
+  /* nombre arriba */
+  .tabla td:nth-child(1){
+    grid-area: name;
+    min-width: 0;
+  }
+
+  /* # arriba derecha */
+  .tabla td:nth-child(2){
+    grid-area: num;
+    justify-self:end;
+    align-self:start;
+    padding: 2px 8px !important;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(0,0,0,.25);
+    color: rgba(255,255,255,.75);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  /* ocultamos columnas 3 y 4 en móvil (rareza/precio ya lo pones debajo del nombre) */
+  .tabla td:nth-child(3),
+  .tabla td:nth-child(4){ display:none; }
+
+  /* estado debajo */
+  .tabla td:nth-child(5){
+    grid-area: state;
+    margin-top: 2px;
+  }
+
+  /* palabras largas no “ensancharán” el bloque */
+  .btn-link-carta{
+    overflow-wrap:anywhere;
+    word-break:break-word;
+    hyphens:auto;
+  }
+
+  /* ACCIONES: compactas y SIN forzar ancho */
+  .acciones-col{ min-width: 0 !important; gap: 8px; }
+  .fila-accion{ gap: 8px; }
+  .lbl{ font-size: 12px; }
+
+  .stepper{
+    display:flex;
+    align-items:center;
+    gap: 6px;
+    flex-wrap: nowrap; /* importante: todo cabe */
+    justify-content:flex-end;
+  }
+
+  /* BOTONES + y -: visibles SIEMPRE */
+  .btn-step{
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.22);
+    color: rgba(255,255,255,0.95);
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .inp-num{
+    width: 56px !important;
+    padding: 6px 8px;
+    border-radius: 10px;
+    text-align:center;
+  }
+
+  /* checkboxes algo más “integradas” */
+  input[type="checkbox"]{ accent-color: #7aa6ff; }
 }
