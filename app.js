@@ -1656,7 +1656,7 @@ function renderTablaSet(setKey) {
 
     html += `
       <tr>
-        <td>
+        <td class="cell-nombre">
   <button
     class="btn-link-carta"
     type="button"
@@ -1665,6 +1665,10 @@ function renderTablaSet(setKey) {
   >
     ${c.nombre}
   </button>
+
+  <div class="subinfo-movil">
+    ${c.rareza} · ${formatPrecioEUR(c._prices)}
+  </div>
 </td>
         <td>${c.numero}</td>
 <td>${c.rareza}</td>
