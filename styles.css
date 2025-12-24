@@ -907,3 +907,230 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 #pantallaSet .topbar-set * {
   min-width: 0;
 }
+
+@media (max-width: 520px) {
+  .topbar-set {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  #tituloSet {
+    flex: 1 1 100%;
+    text-align: center;
+    font-size: 18px;
+    line-height: 1.2;
+  }
+
+  .set-actions {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+/* =========================================================
+   FIX FINAL (sin duplicados): SET móvil + stepper + tabla
+   PÉGALO AL FINAL del CSS
+========================================================= */
+
+/* --- SET: mismo ancho para topbar, progreso, filtros y tabla --- */
+#pantallaSet {
+  padding-left: 12px;
+  padding-right: 12px;
+  box-sizing: border-box;
+}
+#pantallaSet > .topbar,
+#pantallaSet > #progresoSet,
+#pantallaSet > .card,
+#pantallaSet > #listaCartasSet {
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+
+/* Evita overflow por flex */
+#pantallaSet .topbar-set,
+#pantallaSet .topbar-set * {
+  min-width: 0;
+}
+
+/* --- Tabla: base estable --- */
+#pantallaSet .tabla {
+  width: 100%;
+  table-layout: fixed; /* clave para móvil */
+}
+#pantallaSet #listaCartasSet {
+  overflow-x: hidden; /* evita scroll/zoom horizontal */
+}
+
+/* --- Estado (columna derecha): base más controlada --- */
+#pantallaSet .acciones-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  min-width: 0; /* importante para fixed layout */
+}
+
+/* =========================================================
+   MÓVIL
+========================================================= */
+@media (max-width: 520px) {
+
+  /* ============ Topbar del set (2 filas) ============ */
+  #pantallaSet .topbar-set {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* Botón volver compacto */
+  #pantallaSet .topbar-set [data-action="volverColecciones"],
+  #pantallaSet .topbar-set .btn-secundario {
+    padding: 6px 10px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  /* Título: 1 línea, centrado, sin empujar */
+  #pantallaSet #tituloSet {
+    flex: 1 1 100%;
+    text-align: center;
+    font-size: 18px;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Acciones (EN/ES + Precios) en segunda fila centrada */
+  #pantallaSet .set-actions {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  #pantallaSet .btn-lang-set,
+  #pantallaSet #btnActualizarPrecios {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  /* ============ Tabla: 3 columnas (Carta / # / Estado) ============ */
+  #pantallaSet .tabla { table-layout: fixed; }
+
+  /* Oculta Rareza y Precio como columnas (porque ya lo pones debajo del nombre) */
+  #pantallaSet .tabla th:nth-child(3),
+  #pantallaSet .tabla td:nth-child(3),
+  #pantallaSet .tabla th:nth-child(4),
+  #pantallaSet .tabla td:nth-child(4) {
+    display: none !important;
+  }
+
+  /* Padding algo menor */
+  #pantallaSet .tabla th,
+  #pantallaSet .tabla td {
+    padding: 8px 6px;
+    vertical-align: top;
+  }
+
+  /* Anchuras: Carta / # / Estado */
+  #pantallaSet .tabla th:nth-child(1),
+  #pantallaSet .tabla td:nth-child(1) { width: 48%; }
+
+  #pantallaSet .tabla th:nth-child(2),
+  #pantallaSet .tabla td:nth-child(2) { width: 8%; }
+
+  #pantallaSet .tabla th:nth-child(5),
+  #pantallaSet .tabla td:nth-child(5) { width: 44%; }
+
+  /* Nombre clicable: permitir 2 líneas */
+  #pantallaSet .btn-link-carta {
+    display: block;
+    white-space: normal;
+    line-height: 1.12;
+  }
+
+  /* Info debajo del nombre (rareza + precio) */
+  #pantallaSet .subinfo-movil {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    opacity: 0.85;
+  }
+
+  /* ============ Estado: compactar layout ============ */
+  #pantallaSet .acciones-col {
+    display: grid;
+    gap: 8px;
+    align-items: start;
+  }
+
+  #pantallaSet .fila-accion {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    align-items: center;
+    justify-content: initial;
+    width: 100%;
+  }
+
+  #pantallaSet .fila-accion .lbl {
+    font-size: 12px;
+    opacity: 0.85;
+  }
+
+  /* Checkboxes (Foil / Ri) más compactos */
+  #pantallaSet .chkline {
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  /* ============ Stepper: + / - visibles y compactos ============ */
+  #pantallaSet .stepper {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    width: 100%;
+  }
+
+  #pantallaSet .btn-step {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 28px;
+
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.22);
+    color: rgba(255,255,255,0.95);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #pantallaSet .btn-step:disabled {
+    opacity: 0.35;
+  }
+
+  #pantallaSet .inp-num {
+    width: 44px !important;
+    height: 30px;
+    padding: 0 6px;
+    border-radius: 10px;
+    font-size: 14px;
+    text-align: center;
+
+    background: rgba(0,0,0,0.22);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: rgba(255,255,255,0.95);
+  }
+}
