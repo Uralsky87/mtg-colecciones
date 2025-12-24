@@ -9,67 +9,346 @@ const SUPABASE_URL = "https://slvpktkrfbsxwagibfjx.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsdnBrdGtyZmJzeHdhZ2liZmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MTE3MTQsImV4cCI6MjA4MTk4NzcxNH0.-U3ijfDUuSFNKG2001QBzSH3pGlgYXLT2Z8TCRvV6rM";
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-async function authRefreshUI() {
-  const { data } = await supabaseClient.auth.getSession();
-  const session = data?.session || null;
 
-  const estadoEl = document.getElementById("authEstado");
-  const btnOut = document.getElementById("btnAuthLogout");
+function getEmailRedirectTo() {
+  // En GH Pages forzamos la URL final “limpia”
+  if (location.hostname.endsWith("github.io")) {
+    return "https://uralsky87.github.io/mtg-colecciones/";
+  }
+  // En local (Live Server) usamos la actual
+  return location.origin + location.pathname;
+}
 
-  if (!estadoEl || !btnOut) return;
 
-  if (session?.user) {
-    estadoEl.textContent = `Sesión iniciada: ${session.user.email || session.user.id}`;
-    btnOut.style.display = "inline-block";
+const SB_TABLE = "mtg_user_data";
+
+let sbUser = null;
+let sbDirty = false;
+let sbAutoSaveTimer = null;
+let sbKnownCloudUpdatedAt = null;
+let sbLoginInFlight = false;
+
+function uiSetSyncStatus(msg) {
+  const el = document.getElementById("syncStatus");
+  if (el) el.textContent = msg || "";
+}
+
+function sbUpdateAuthUI() {
+  const inputEmail = document.getElementById("inputEmail");
+  const btnLogin = document.getElementById("btnLogin");
+  const btnLogout = document.getElementById("btnLogout");
+  const btnSyncNow = document.getElementById("btnSyncNow");   // Actualizar
+  const btnPushNow = document.getElementById("btnPushNow");   // Guardar
+
+  if (sbUser) {
+    if (inputEmail) inputEmail.value = sbUser.email || "";
+    if (btnLogin) btnLogin.disabled = true;
+    if (btnLogout) btnLogout.style.display = "inline-block";
+    if (btnSyncNow) btnSyncNow.disabled = false;
+    if (btnPushNow) btnPushNow.disabled = false;
+    uiSetSyncStatus(`Conectado como ${sbUser.email || "usuario"} ✅`);
   } else {
-    estadoEl.textContent = "No has iniciado sesión.";
-    btnOut.style.display = "none";
+    if (btnLogin) btnLogin.disabled = false;
+    if (btnLogout) btnLogout.style.display = "none";
+    if (btnSyncNow) btnSyncNow.disabled = true;
+    if (btnPushNow) btnPushNow.disabled = true;
+    uiSetSyncStatus("No has iniciado sesión.");
   }
 }
 
-function wireAuthButtons() {
-  const inp = document.getElementById("inputAuthEmail");
-  const btnIn = document.getElementById("btnAuthLogin");
-  const btnOut = document.getElementById("btnAuthLogout");
+function sbBuildCloudPayload() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    estado: estado || {},
+    progresoPorSet: progresoPorSet || {},
+    hiddenEmptySetKeys: [...(hiddenEmptySetKeys || new Set())],
+    filtros: {
+      filtroIdiomaColecciones: filtroIdiomaColecciones ?? "all",
+      filtroTextoColecciones: filtroTextoColecciones ?? "",
+      filtroTipoSet: filtroTipoSet ?? "all",
+      ocultarTokens: !!ocultarTokens,
+      ocultarArte: !!ocultarArte
+    }
+  };
+}
 
-  if (btnIn && inp) {
-    btnIn.addEventListener("click", async () => {
-      const email = (inp.value || "").trim();
-      if (!email) return alert("Escribe un email.");
+function sbApplyCloudPayload(payload) {
+  if (!payload || typeof payload !== "object") return;
 
-      // ✅ AQUÍ va el options/emailRedirectTo
-      const redirectTo = new URL(".", window.location.href).toString();
-
-      const { error } = await supabaseClient.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: redirectTo }
-      });
-
-      if (error) {
-        console.error(error);
-        alert("Error enviando email de login. Mira consola.");
-        return;
-      }
-
-      alert("Te he enviado un email con el enlace para entrar.");
-    });
+  if (payload.estado && typeof payload.estado === "object") {
+    estado = payload.estado;
+    migrarEstadoSiHaceFalta();
+    guardarEstado();
   }
 
-  if (btnOut) {
-    btnOut.addEventListener("click", async () => {
-      await supabaseClient.auth.signOut();
-      await authRefreshUI();
+  if (payload.progresoPorSet && typeof payload.progresoPorSet === "object") {
+    progresoPorSet = payload.progresoPorSet;
+    guardarProgresoPorSet();
+  }
+
+  if (Array.isArray(payload.hiddenEmptySetKeys)) {
+    hiddenEmptySetKeys = new Set(payload.hiddenEmptySetKeys);
+    guardarHiddenEmptySets();
+  }
+
+  const f = payload.filtros || {};
+  if (typeof f.filtroIdiomaColecciones === "string") filtroIdiomaColecciones = f.filtroIdiomaColecciones;
+  if (typeof f.filtroTextoColecciones === "string") filtroTextoColecciones = f.filtroTextoColecciones;
+  if (typeof f.filtroTipoSet === "string") filtroTipoSet = f.filtroTipoSet;
+  if (typeof f.ocultarTokens === "boolean") ocultarTokens = f.ocultarTokens;
+  if (typeof f.ocultarArte === "boolean") ocultarArte = f.ocultarArte;
+
+  renderColecciones();
+  if (setActualKey) renderTablaSet(setActualKey);
+}
+
+async function sbLoginWithEmail(email) {
+  if (sbLoginInFlight) return;
+  sbLoginInFlight = true;
+
+  const btnLogin = document.getElementById("btnLogin");
+  if (btnLogin) btnLogin.disabled = true;
+
+  try {
+    const clean = String(email || "").trim();
+    if (!clean) { uiSetSyncStatus("Escribe un email."); return; }
+
+    uiSetSyncStatus("Enviando enlace al email…");
+
+    const { error } = await supabaseClient.auth.signInWithOtp({
+      email: clean,
+      options: { emailRedirectTo: getEmailRedirectTo() }
     });
+
+    if (error) {
+      console.error(error);
+      uiSetSyncStatus("Error enviando enlace (mira consola).");
+      return;
+    }
+
+    uiSetSyncStatus("Mira tu email y pulsa el enlace para entrar ✅");
+  } finally {
+    sbLoginInFlight = false;
+    if (btnLogin) btnLogin.disabled = false;
   }
 }
 
-async function initAuth() {
-  wireAuthButtons();
-  await authRefreshUI();
+async function sbGetCloudMeta() {
+  const { data, error } = await supabaseClient
+    .from(SB_TABLE)
+    .select("updated_at")
+    .eq("user_id", sbUser.id)
+    .maybeSingle();
 
-  supabaseClient.auth.onAuthStateChange(async () => {
-    await authRefreshUI();
+  if (error) throw error;
+  return data?.updated_at || null;
+}
+
+async function sbPullNow() {
+  if (!sbUser?.id) { uiSetSyncStatus("Inicia sesión primero."); return; }
+
+  uiSetSyncStatus("Descargando desde la nube…");
+
+  const { data, error } = await supabaseClient
+    .from(SB_TABLE)
+    .select("data, updated_at")
+    .eq("user_id", sbUser.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error(error);
+    uiSetSyncStatus("Error descargando (mira consola).");
+    return;
+  }
+
+  // Primera vez: nube vacía
+  if (!data) {
+    sbKnownCloudUpdatedAt = null;
+    uiSetSyncStatus("Nube vacía. Pulsa “Guardar cambios” para subir tu colección por primera vez.");
+    return;
+  }
+
+  sbKnownCloudUpdatedAt = data.updated_at || null;
+  sbApplyCloudPayload(data.data || {});
+  sbDirty = false;
+
+  uiSetSyncStatus("Descargado ✅");
+}
+
+async function sbPushNow() {
+  if (!sbUser?.id) { uiSetSyncStatus("Inicia sesión primero."); return; }
+  if (!sbDirty) { uiSetSyncStatus("No hay cambios que guardar."); return; }
+
+  // Anti-pisado
+  let cloudUpdatedAt = null;
+  try { cloudUpdatedAt = await sbGetCloudMeta(); } catch {}
+
+  if (sbKnownCloudUpdatedAt && cloudUpdatedAt && cloudUpdatedAt > sbKnownCloudUpdatedAt) {
+    uiSetSyncStatus("⚠️ La nube tiene cambios de otro dispositivo. Pulsa “Actualizar” antes de guardar.");
+    return;
+  }
+
+  uiSetSyncStatus("Subiendo a la nube…");
+
+  const payload = sbBuildCloudPayload();
+  const { error } = await supabaseClient
+    .from(SB_TABLE)
+    .upsert({ user_id: sbUser.id, data: payload }, { onConflict: "user_id" });
+
+  if (error) {
+    console.error(error);
+    uiSetSyncStatus("Error subiendo (mira consola).");
+    return;
+  }
+
+  sbDirty = false;
+
+  // refrescar meta
+  try { sbKnownCloudUpdatedAt = await sbGetCloudMeta(); } catch {}
+
+  uiSetSyncStatus("Guardado ✅");
+}
+
+function sbStartAutoSave() {
+  sbStopAutoSave();
+  sbAutoSaveTimer = setInterval(async () => {
+    if (!sbUser?.id) return;
+    if (!sbDirty) return;
+    await sbPushNow();
+  }, 30000);
+}
+
+function sbStopAutoSave() {
+  if (sbAutoSaveTimer) {
+    clearInterval(sbAutoSaveTimer);
+    sbAutoSaveTimer = null;
+  }
+}
+
+async function sbLogout() {
+  await supabaseClient.auth.signOut();
+  // onAuthStateChange se encargará de UI
+}
+
+let sbInitDone = false;
+
+async function sbCompleteMagicLinkIfPresent() {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("code");
+  if (!code) return;
+
+  uiSetSyncStatus("Completando inicio de sesión…");
+
+  const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
+  if (error) {
+    console.error("exchangeCodeForSession:", error);
+    uiSetSyncStatus("Error completando el login (mira consola).");
+    return;
+  }
+
+  url.searchParams.delete("code");
+  window.history.replaceState({}, document.title, url.toString());
+}
+
+function onClickOnce(el, handler) {
+  if (!el) return;
+  if (el.dataset.wired === "1") return;
+  el.dataset.wired = "1";
+  el.addEventListener("click", handler);
+}
+
+function sbMarkDirty() {
+  sbDirty = true;
+  uiSetSyncStatus("Cambios sin guardar…");
+}
+
+async function sbInit() {
+  // Evita doble init (y doble wiring) si por lo que sea se llama 2 veces
+  if (sbInitDone) return;
+  sbInitDone = true;
+  await sbCompleteMagicLinkIfPresent();
+
+  // 1) sesión actual al cargar
+  const { data } = await supabaseClient.auth.getSession();
+  sbUser = data?.session?.user || null;
+  sbUpdateAuthUI();
+
+  // 2) wire botones (una sola vez)
+  const btnLogin = document.getElementById("btnLogin");
+  const btnLogout = document.getElementById("btnLogout");
+  const btnSyncNow = document.getElementById("btnSyncNow");   // "Actualizar"
+  const btnPushNow = document.getElementById("btnPushNow");   // "Guardar cambios"
+  const inputEmail = document.getElementById("inputEmail");
+
+  onClickOnce(btnLogin, async () => {
+    await sbLoginWithEmail(inputEmail ? inputEmail.value : "");
   });
+
+  onClickOnce(btnLogout, sbLogout);
+
+  // ✅ Actualizar desde nube
+  onClickOnce(btnSyncNow, sbPullNow);
+
+  // ✅ Guardar a nube
+  onClickOnce(btnPushNow, sbPushNow);
+
+  // 3) Si ya estaba logueado, hacemos pull y arrancamos autosave
+  if (sbUser) {
+    await sbPullNow();        // PULL
+    sbStartAutoSave();        // autosave cada 30s si hay cambios
+  } else {
+    sbStopAutoSave();
+  }
+
+  // 4) escuchar cambios de sesión (login/logout) (solo una vez)
+  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    sbUser = session?.user || null;
+    sbUpdateAuthUI();
+
+    if (sbUser) {
+      await sbPullNow();      // PULL automático al loguear
+      sbStartAutoSave();      // empieza autosave
+    } else {
+      sbStopAutoSave();       // parar autosave al desloguear
+      sbDirty = false;        // opcional
+    }
+  });
+
+  // 5) Cuando una pestaña termina el login, otras pestañas reciben un "storage event"
+  // Aseguramos que este listener no se registra 2 veces.
+  if (!window.__sbStorageWired) {
+    window.__sbStorageWired = true;
+
+    window.addEventListener("storage", async (e) => {
+      const k = String(e.key || "");
+      if (!k) return;
+
+      if (k.includes("supabase") || k.includes("auth-token")) {
+        const { data } = await supabaseClient.auth.getSession();
+        sbUser = data?.session?.user || null;
+        sbUpdateAuthUI();
+
+        if (sbUser) await sbPullNow();
+      }
+    });
+  }
+}
+
+function sbStartAutoSave() {
+  sbStopAutoSave();
+  sbAutoSaveTimer = setInterval(async () => {
+    if (!sbUser?.id) return;
+    if (!sbDirty) return;
+    await sbPushNow(); // usa la protección anti-pisado
+  }, 30000);
+}
+
+function sbStopAutoSave() {
+  if (sbAutoSaveTimer) {
+    clearInterval(sbAutoSaveTimer);
+    sbAutoSaveTimer = null;
+  }
 }
 
 function getLangFromCard(c) {
@@ -162,6 +441,7 @@ function cargarProgresoPorSet() {
 
 function guardarProgresoPorSet() {
   localStorage.setItem(LS_SET_PROGRESS, JSON.stringify(progresoPorSet));
+  sbMarkDirty(); 
 }
 
 function actualizarProgresoGuardado(setKey) {
@@ -243,6 +523,7 @@ function cargarEstado() {
 
 function guardarEstado() {
   localStorage.setItem(LS_KEY, JSON.stringify(estado));
+  if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
 function normalizarEstadoCarta(st) {
@@ -288,24 +569,28 @@ function setQty(id, value) {
     st.playedQty = 0;
   }
   guardarEstado();
+  sbMarkDirty(); 
 }
 
 function setPlayedQty(id, value) {
   const st = ensureEstadoCarta(id);
   st.playedQty = clampInt(Number(value), 0, st.qty);
   guardarEstado();
+  sbMarkDirty(); 
 }
 
 function setFoil(id, value) {
   const st = ensureEstadoCarta(id);
   st.foil = st.qty > 0 ? !!value : false;
   guardarEstado();
+  sbMarkDirty(); 
 }
 
 function setWantMore(id, value) {
   const st = ensureEstadoCarta(id);
   st.wantMore = !!value;
   guardarEstado();
+  sbMarkDirty(); 
 }
 
 
@@ -653,6 +938,7 @@ function cargarHiddenEmptySets() {
 
 function guardarHiddenEmptySets() {
   localStorage.setItem(LS_HIDDEN_EMPTY_SETS, JSON.stringify([...hiddenEmptySetKeys]));
+  if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
 // ===============================
@@ -770,7 +1056,8 @@ const pantallas = {
   colecciones: document.getElementById("pantallaColecciones"),
   set: document.getElementById("pantallaSet"),
   buscar: document.getElementById("pantallaBuscar"),
-  estadisticas: document.getElementById("pantallaEstadisticas")
+  estadisticas: document.getElementById("pantallaEstadisticas"),
+  cuenta: document.getElementById("pantallaCuenta") // <- AÑADE ESTA
 };
 
 function mostrarPantalla(nombre) {
@@ -855,9 +1142,6 @@ function aplicarUIFiltrosTipo() {
 
 function renderColecciones() {
   const cont = document.getElementById("listaColecciones");
-
-  function renderColecciones() {
-  const cont = document.getElementById("listaColecciones");
   if (!cont) return;
 
   if (!catalogoListo) {
@@ -870,79 +1154,77 @@ function renderColecciones() {
     return;
   }
 
-}
-
   let sets = obtenerColecciones();
+
+  // filtro tipo set
   if (filtroTipoSet && filtroTipoSet !== "all") {
-  if (filtroTipoSet === "other") {
-    const allowed = new Set(["expansion","core","commander","masters","promo","token","memorabilia"]);
-    sets = sets.filter(s => !allowed.has((s.set_type || "").toLowerCase()));
-  } else {
-    sets = sets.filter(s => (s.set_type || "").toLowerCase() === filtroTipoSet);
+    if (filtroTipoSet === "other") {
+      const allowed = new Set(["expansion","core","commander","masters","promo","token","memorabilia"]);
+      sets = sets.filter(s => !allowed.has((s.set_type || "").toLowerCase()));
+    } else {
+      sets = sets.filter(s => (s.set_type || "").toLowerCase() === filtroTipoSet);
+    }
   }
-}
 
-  // Filtro por tipo de set (tokens / arte)
-if (ocultarTokens) {
-  sets = sets.filter(s => (s.set_type || "").toLowerCase() !== "token");
-}
+  // ocultar tokens/arte
+  if (ocultarTokens) sets = sets.filter(s => (s.set_type || "").toLowerCase() !== "token");
 
-if (ocultarArte) {
+  if (ocultarArte) {
+    sets = sets.filter(s => {
+      const t = (s.set_type || "");
+      const n = (s.nombre || "").toLowerCase();
+      const porTipo = (t === "art_series");
+      const porNombre = n.includes("art series") || n.includes("art card") || n.includes("art cards");
+      return !(porTipo || porNombre);
+    });
+  }
+
+  // ocultar sets vacíos (si ambos idiomas están marcados vacíos)
   sets = sets.filter(s => {
-    const t = (s.set_type || "");
-    const n = (s.nombre || "").toLowerCase();
-    const porTipo = (t === "art_series"); // si al probar ves otro string, lo ajustamos
-    const porNombre = n.includes("art series") || n.includes("art card") || n.includes("art cards");
-    return !(porTipo || porNombre);
+    const enKey = `${s.code}__en`;
+    const esKey = `${s.code}__es`;
+    return !(hiddenEmptySetKeys.has(enKey) && hiddenEmptySetKeys.has(esKey));
   });
-}
 
-  sets = sets.filter(s => {
-  const enKey = `${s.code}__en`;
-  const esKey = `${s.code}__es`;
-  return !(hiddenEmptySetKeys.has(enKey) && hiddenEmptySetKeys.has(esKey));
-});
+  // filtro texto
+  if (filtroTextoColecciones) {
+    sets = sets.filter(s => (s.nombre || "").toLowerCase().includes(filtroTextoColecciones));
+  }
 
-
-   if (filtroTextoColecciones) {
-  sets = sets.filter(s => s.nombre.toLowerCase().includes(filtroTextoColecciones));
-}
-
-if (sets.length === 0) {
-  cont.innerHTML = `<div class="card"><p>No hay colecciones que coincidan con el filtro.</p></div>`;
-  return;
-}
+  if (sets.length === 0) {
+    cont.innerHTML = `<div class="card"><p>No hay colecciones que coincidan con el filtro.</p></div>`;
+    return;
+  }
 
   let html = "";
-  sets.forEach(s => {
+  for (const s of sets) {
     const pEn = progresoDeColeccion(`${s.code}__en`);
-const pEs = progresoDeColeccion(`${s.code}__es`);
+    const pEs = progresoDeColeccion(`${s.code}__es`);
 
-const totalEnTxt = (pEn.total === null ? "?" : pEn.total);
-const totalEsTxt = (pEs.total === null ? "?" : pEs.total);
+    const totalEnTxt = (pEn.total === null ? "?" : pEn.total);
+    const totalEsTxt = (pEs.total === null ? "?" : pEs.total);
 
-   const fechaTxt = formatMesAnyo(s.released_at);
+    const fechaTxt = formatMesAnyo(s.released_at);
 
-html += `
-  <div class="coleccion-item" data-code="${s.code}">
-    <div class="coleccion-titulo">
-      <strong>${s.nombre}</strong>
-      ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
-    </div>
-    <div class="badge">EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt}</div>
-  </div>
-`;
+    html += `
+      <div class="coleccion-item" data-code="${s.code}">
+        <div class="coleccion-titulo">
+          <strong>${s.nombre}</strong>
+          ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
+        </div>
+        <div class="badge">EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt}</div>
+      </div>
+    `;
+  }
 
+  cont.innerHTML = html;
+
+  cont.querySelectorAll("[data-code]").forEach(item => {
+    item.addEventListener("click", () => {
+      const code = item.dataset.code;
+      abrirSet(`${code}__en`);
+    });
   });
-
- cont.innerHTML = html;
-
-cont.querySelectorAll("[data-code]").forEach(item => {
-  item.addEventListener("click", () => {
-    const code = item.dataset.code;
-    abrirSet(`${code}__en`); // siempre abre EN por defecto
-  });
-});
 }
 
 function guardarFiltrosColecciones() {
@@ -951,6 +1233,7 @@ function guardarFiltrosColecciones() {
     texto: filtroTextoColecciones
   };
   localStorage.setItem(LS_FILTERS_KEY, JSON.stringify(data));
+  sbMarkDirty(); // <-- AÑADIR
 }
 
 function cargarFiltrosColecciones() {
@@ -1506,6 +1789,11 @@ function wireGlobalButtons() {
         mostrarPantalla("estadisticas");
         return;
       }
+
+      if (destino === "cuenta") {
+  mostrarPantalla("cuenta");
+  return;
+}
     });
   });
 
@@ -1681,9 +1969,17 @@ async function init() {
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
   cargarHiddenEmptySets();
-  await initAuth();
+
   wireGlobalButtons();
   wireBackupButtons();
+
+  // ✅ Supabase (nuevo): sesión + listeners + pull + autosave
+    try { 
+    await sbInit(); 
+  } catch (e) {
+    console.error("Supabase init error:", e);
+    uiSetSyncStatus("Sync desactivada (error).");
+  }
 
   try {
     // 1) Sets (Scryfall)
@@ -1706,13 +2002,11 @@ async function init() {
     catalogoError = (err && err.message) ? err.message : "desconocido";
   } finally {
     catalogoListo = true;
-
-    // Si el usuario ya está en la pantalla colecciones, que se refresque
     renderColecciones();
   }
 
-  // Buscar: pantalla de Buscar en blanco
   renderResultadosBuscar("");
 }
 
 init();
+

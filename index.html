@@ -26,6 +26,7 @@
       <button class="btn-menu" data-pantalla="colecciones">Colecciones</button>
       <button class="btn-menu" data-pantalla="buscar">Buscar</button>
       <button class="btn-menu" data-pantalla="estadisticas">Estadísticas</button>
+      <button class="btn-menu" data-pantalla="cuenta">Cuenta</button>
     </div>
   </section>
 
@@ -49,22 +50,21 @@
       <small class="hint">Filtra por nombre (según escribes).</small>
     </div>
 
-    <!-- Filtros por tipo (tokens / arte) -->
+    <!-- Selector tipo set -->
     <div class="filtros-colecciones">
-  <label class="hint" for="selTipoSet" style="align-self:center;">Tipo:</label>
-  <select id="selTipoSet" class="select-filtro">
-    <option value="all">Todos</option>
-    <option value="expansion">Expansiones</option>
-    <option value="core">Core</option>
-    <option value="commander">Commander</option>
-    <option value="masters">Masters</option>
-    <option value="promo">Promos</option>
-    <option value="token">Tokens</option>
-    <option value="memorabilia">Arte / Memorabilia</option>
-    <option value="other">Otros</option>
-  </select>
-</div>
-
+      <label class="hint" for="selTipoSet" style="align-self:center;">Tipo:</label>
+      <select id="selTipoSet" class="select-filtro">
+        <option value="all">Todos</option>
+        <option value="expansion">Expansiones</option>
+        <option value="core">Core</option>
+        <option value="commander">Commander</option>
+        <option value="masters">Masters</option>
+        <option value="promo">Promos</option>
+        <option value="token">Tokens</option>
+        <option value="memorabilia">Arte / Memorabilia</option>
+        <option value="other">Otros</option>
+      </select>
+    </div>
 
     <div id="listaColecciones"></div>
   </section>
@@ -74,20 +74,21 @@
   ======================= -->
   <section id="pantallaSet" class="pantalla">
     <div class="topbar topbar-set">
-  <button class="btn-secundario" data-action="volverColecciones">← Colecciones</button>
-  <h2 id="tituloSet">Set</h2>
+      <button class="btn-secundario" data-action="volverColecciones">← Colecciones</button>
+      <h2 id="tituloSet">Set</h2>
 
-  <div class="set-actions">
-    <div class="langset">
-      <button id="btnSetLangEn" class="btn-lang-set active" type="button">EN</button>
-      <button id="btnSetLangEs" class="btn-lang-set" type="button">ES</button>
+      <div class="set-actions">
+        <div class="langset">
+          <button id="btnSetLangEn" class="btn-lang-set active" type="button">EN</button>
+          <button id="btnSetLangEs" class="btn-lang-set" type="button">ES</button>
+        </div>
+
+        <button id="btnActualizarPrecios" class="btn-secundario" type="button"
+                title="Vuelve a descargar este set para refrescar precios">
+          ⟳ Precios
+        </button>
+      </div>
     </div>
-
-    <button id="btnActualizarPrecios" class="btn-secundario" type="button" title="Vuelve a descargar este set para refrescar precios">
-      ⟳ Precios
-    </button>
-  </div>
-</div>
 
     <div id="progresoSet" class="progreso-box"></div>
 
@@ -121,7 +122,7 @@
       <label for="inputBuscar">Nombre de carta:</label>
       <div class="fila">
         <input id="inputBuscar" type="text" placeholder="Ej: Lightning Bolt" />
-        <button id="btnBuscar" class="btn-principal">Buscar</button>
+        <button id="btnBuscar" class="btn-principal" type="button">Buscar</button>
       </div>
       <small class="hint">Puedes escribir solo una parte del nombre.</small>
     </div>
@@ -139,6 +140,38 @@
     </div>
 
     <div class="card">
+      <p>Próximamente: totales, porcentajes, rarezas, colores, valor, etc.</p>
+    </div>
+  </section>
+
+  <!-- =======================
+       PANTALLA: CUENTA
+  ======================= -->
+  <section id="pantallaCuenta" class="pantalla">
+    <div class="topbar">
+      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <h2>Cuenta</h2>
+    </div>
+
+    <!-- Login + Sync (ÚNICO, sin duplicados) -->
+    <div class="card">
+      <h3 style="margin-top:0;">Cuenta y sincronización</h3>
+
+      <div class="fila">
+        <input id="inputEmail" type="text" placeholder="tu@email.com" />
+        <button id="btnLogin" class="btn-principal" type="button">Entrar</button>
+      </div>
+
+      <div class="acciones" style="margin-top:10px;">
+        <button id="btnSyncNow" class="btn-secundario" type="button">Actualizar ahora</button>
+        <button id="btnLogout" class="btn-secundario" type="button">Salir</button>
+      </div>
+
+      <p id="syncStatus" class="hint" style="margin-top:10px;"></p>
+    </div>
+
+    <!-- Backup JSON (ÚNICO, sin duplicados) -->
+    <div class="card">
       <h3 style="margin-top:0;">Copia de seguridad</h3>
       <p class="hint">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
 
@@ -151,46 +184,27 @@
 
       <p id="msgBackup" class="hint" style="margin-top:10px;"></p>
     </div>
-
-    <div class="card">
-      <p>Próximamente: totales, porcentajes, rarezas, colores, valor, etc.</p>
-    </div>
-    <div class="card" id="authBox">
-  <h3 style="margin-top:0;">Sincronización (Supabase)</h3>
-
-  <div id="authEstado" class="hint">No has iniciado sesión.</div>
-
-  <div class="fila" style="margin-top:10px;">
-    <input id="inputAuthEmail" type="text" placeholder="tuemail@ejemplo.com" />
-    <button id="btnAuthLogin" class="btn-principal" type="button">Entrar</button>
-  </div>
-
-  <div style="height:10px;"></div>
-
-  <button id="btnAuthLogout" class="btn-secundario" type="button" style="display:none;">
-    Cerrar sesión
-  </button>
-
-  <div class="hint" style="margin-top:10px;">
-    Te enviará un enlace al email para entrar.
-  </div>
-</div>
+    
+    <button id="btnPullNow" class="btn-secundario" type="button">Actualizar</button>
+<button id="btnPushNow" class="btn-secundario" type="button">Guardar cambios</button>
 
   </section>
 
-  <!-- Modal imagen carta -->
-<div id="modalCarta" class="modal hidden" role="dialog" aria-modal="true">
-  <div class="modal-backdrop" data-action="cerrarModal"></div>
+  <!-- =======================
+       MODAL: CARTA
+  ======================= -->
+  <div id="modalCarta" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" data-action="cerrarModal"></div>
 
-  <div class="modal-content">
-    <div class="modal-topbar">
-      <div id="modalCartaTitulo" class="modal-title">Carta</div>
-      <button id="btnCerrarModal" class="btn-secundario" type="button">✕</button>
+    <div class="modal-content">
+      <div class="modal-topbar">
+        <div id="modalCartaTitulo" class="modal-title">Carta</div>
+        <button id="btnCerrarModal" class="btn-secundario" type="button">✕</button>
+      </div>
+
+      <div id="modalCartaBody" class="modal-body"></div>
     </div>
-
-    <div id="modalCartaBody" class="modal-body"></div>
   </div>
-</div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
