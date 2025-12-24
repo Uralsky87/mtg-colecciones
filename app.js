@@ -898,6 +898,7 @@ function reconstruirCatalogoColecciones() {
       name_es: nombreES,
       released_at: s.released_at || "",
       set_type: s.set_type || "",
+      digital: !!s.digital,
       icon_svg_uri: s.icon_svg_uri || ""
     };
 
@@ -2300,7 +2301,7 @@ async function init() {
 
   try {
     // 1) Sets (Scryfall)
-    catalogoSets = await scryGetSets();
+    catalogoSets = (await scryGetSets()).filter(s => !s.digital);
     console.log("Sets cargados:", catalogoSets.length);
 
     // 2) Traducciones ES (MTGJSON) - opcional
