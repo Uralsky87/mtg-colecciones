@@ -875,3 +875,35 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   .stepper .inp-num { width: 52px; padding: 4px 6px; }
   .fila-accion .lbl { font-size: 12px; opacity: 0.85; }
 }
+
+/* --- Pantalla SET: todo alineado al mismo ancho --- */
+#pantallaSet {
+  /* si tienes padding aquí, ok. Si no, esto ayuda en móvil */
+  padding-left: 12px;
+  padding-right: 12px;
+  box-sizing: border-box;
+}
+
+/* Fuerza mismo ancho a los bloques principales del set */
+#pantallaSet > .topbar,
+#pantallaSet > #progresoSet,
+#pantallaSet > .card,
+#pantallaSet > #listaCartasSet {
+  width: 100%;
+  max-width: 980px;          /* ajusta si quieres más/menos */
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+
+/* Por si el topbar-set estaba en inline-flex o “encogiendo” */
+#pantallaSet .topbar-set {
+  width: 100%;
+  max-width: none;
+}
+
+/* Extra: evita que elementos flex hagan overflow y “obliguen” a zoom */
+#pantallaSet .topbar-set,
+#pantallaSet .topbar-set * {
+  min-width: 0;
+}
