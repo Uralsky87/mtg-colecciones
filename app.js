@@ -510,6 +510,11 @@ function actualizarProgresoGuardado(setKey) {
   guardarProgresoPorSet();
 }
 
+function actualizarProgresoSetActualSiSePuede() {
+  if (!setActualKey) return;
+  if (!cacheCartasPorSetLang[setActualKey]) return; // si no está cargado, no podemos contar
+  actualizarProgresoGuardado(setActualKey);          // esto ya guarda en localStorage
+}
 
 // ===============================
 // 2) Estado de colección en localStorage
@@ -1777,6 +1782,7 @@ function renderTablaSet(setKey) {
       const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setQty(id, st.qty - 1);
+      actualizarProgresoSetActualSiSePuede();
       renderTablaSet(setActualKey);
       renderColecciones();
     });
@@ -1787,6 +1793,7 @@ function renderTablaSet(setKey) {
       const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setQty(id, st.qty + 1);
+      actualizarProgresoSetActualSiSePuede();
       renderTablaSet(setActualKey);
       renderColecciones();
     });
@@ -1796,6 +1803,7 @@ function renderTablaSet(setKey) {
     inp.addEventListener("change", () => {
       const id = inp.dataset.id;
       setQty(id, inp.value);
+      actualizarProgresoSetActualSiSePuede();
       renderTablaSet(setActualKey);
       renderColecciones();
     });
@@ -1807,6 +1815,7 @@ function renderTablaSet(setKey) {
       const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setPlayedQty(id, st.playedQty - 1);
+      actualizarProgresoSetActualSiSePuede();
       renderTablaSet(setActualKey);
     });
   });
@@ -1816,6 +1825,7 @@ function renderTablaSet(setKey) {
       const id = btn.dataset.id;
       const st = getEstadoCarta(id);
       setPlayedQty(id, st.playedQty + 1);
+      actualizarProgresoSetActualSiSePuede();
       renderTablaSet(setActualKey);
     });
   });
@@ -1833,6 +1843,7 @@ function renderTablaSet(setKey) {
     chk.addEventListener("change", () => {
       const id = chk.dataset.id;
       setFoil(id, chk.checked);
+      actualizarProgresoSetActualSiSePuede();
       renderTablaSet(setActualKey);
     });
   });
