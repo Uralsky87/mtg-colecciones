@@ -420,6 +420,15 @@ function formatLang(lang) {
   return String(lang || "en").toUpperCase(); // "EN" / "ES"
 }
 
+function escapeAttr(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/'/g, "&#39;");
+}
+
 function formatMesAnyo(released_at) {
   if (!released_at) return "";
   const months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -1622,9 +1631,10 @@ function getListaSetFiltrada(setKey) {
   let lista = cartasDeSetKey(setKey)
     .sort((a, b) => compareCollectorNumbers(a.numero, b.numero));
 
-  if (filtroTextoSet) {
-    lista = lista.filter(c => c.nombre.toLowerCase().includes(filtroTextoSet));
-  }
+  const ft = String(filtroTextoSet || "").trim().toLowerCase();
+if (ft) {
+  lista = lista.filter(c => (c.nombre || "").toLowerCase().includes(ft));
+}
 
   if (filtroSoloFaltanSet) {
     lista = lista.filter(c => getEstadoCarta(c.id).qty === 0);
@@ -2012,7 +2022,14 @@ async function renderResultadosBuscar(texto) {
               <div class="hint">${tengoTxt}${foilTxt}${playedTxt}${riTxt}</div>
             </div>
 
-            <button class="btn-secundario btn-ir-set" type="button" data-setkey="${v.setKey}">Ir</button>
+            <button
+  class="btn-secundario btn-ir-set"
+  type="button"
+  data-setkey="${v.setKey}"
+  data-cardname="${escapeAttr(v.nombre || "")}"
+>
+  Ir
+</button>
           </div>
         </li>
       `;
@@ -2056,17 +2073,29 @@ async function renderResultadosBuscar(texto) {
 
   // Botones "Ir"
   cont.querySelectorAll(".btn-ir-set").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const setKey = btn.dataset.setkey;
+  btn.addEventListener("click", async () => {
+    const setKey = btn.dataset.setkey;
+    const cardName = btn.dataset.cardname || "";
 
-      if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
-        hiddenEmptySetKeys.delete(setKey);
-        if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
-      }
+    // (Opcional) si estaba el check "Solo faltan", lo quitamos para que se vea la carta siempre
+    filtroSoloFaltanSet = false;
 
-      await abrirSet(setKey);
-    });
+    // Ponemos el filtro del set con el nombre (con su capitalización bonita)
+    filtroTextoSet = String(cardName).trim();
+
+    // Si estaba oculto por set vacío, lo re-mostramos
+    if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
+      hiddenEmptySetKeys.delete(setKey);
+      if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
+    }
+
+    // Abrimos el set: como filtroTextoSet ya está puesto, ya entrará filtrado
+    await abrirSet(setKey);
+
+    // Por si acaso, reflejarlo en el input (normalmente abrirSet ya llama a aplicarUIFiltrosSet)
+    if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
   });
+});
 }
 
 
