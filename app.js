@@ -3,6 +3,7 @@
 // ===============================
 
 const cartas = [];
+const expandedCardIds = new Set(); // ids desplegados en esta sesión
 
 // === SUPABASE (Auth + Sync) ===
 const SUPABASE_URL = "https://slvpktkrfbsxwagibfjx.supabase.co";
@@ -588,17 +589,27 @@ function guardarEstado() {
 
 function normalizarEstadoCarta(st) {
   const qty = clampInt(Number(st.qty ?? 0), 0, 999);
+
+  // played 0..qty
   const playedQty = clampInt(Number(st.playedQty ?? 0), 0, qty);
-  const foil = qty > 0 ? !!st.foil : false;
+
+  // foilQty 0..qty
+  // compat: si venía el boolean "foil" antiguo y no hay foilQty, lo convertimos
+  let foilQtyRaw = st.foilQty;
+  if (typeof foilQtyRaw === "undefined" && typeof st.foil === "boolean") {
+    foilQtyRaw = st.foil ? qty : 0;
+  }
+  const foilQty = clampInt(Number(foilQtyRaw ?? 0), 0, qty);
+
   const wantMore = !!st.wantMore;
 
-  return { qty, foil, playedQty, wantMore };
+  return { qty, foilQty, playedQty, wantMore };
 }
 
 function ensureEstadoCarta(id) {
   const key = String(id);
   if (!estado[key]) {
-    estado[key] = { qty: 0, foil: false, playedQty: 0, wantMore: false };
+    estado[key] = { qty: 0, foilQty: 0, playedQty: 0, wantMore: false };
   }
   return estado[key];
 }
@@ -607,10 +618,8 @@ function getEstadoCarta(id) {
   const key = String(id);
   const st = estado[key];
 
-  // OJO: si no existe, devolvemos un default EN MEMORIA, sin guardarlo
-  if (!st) return { qty: 0, foil: false, playedQty: 0, wantMore: false };
+  if (!st) return { qty: 0, foilQty: 0, playedQty: 0, wantMore: false };
 
-  // Si existe, lo normalizamos (sin guardar automáticamente)
   const norm = normalizarEstadoCarta(st);
   estado[key] = norm;
   return norm;
@@ -624,12 +633,22 @@ function setQty(id, value) {
   st.qty = qty;
 
   if (st.playedQty > st.qty) st.playedQty = st.qty;
+  if ((st.foilQty ?? 0) > st.qty) st.foilQty = st.qty;
+
   if (st.qty === 0) {
-    st.foil = false;
+    st.foilQty = 0;
     st.playedQty = 0;
   }
+
   guardarEstado();
-  sbMarkDirty(); 
+  sbMarkDirty();
+}
+
+function setFoilQty(id, value) {
+  const st = ensureEstadoCarta(id);
+  st.foilQty = clampInt(Number(value), 0, st.qty);
+  guardarEstado();
+  sbMarkDirty();
 }
 
 function setPlayedQty(id, value) {
@@ -1703,64 +1722,79 @@ function renderTablaSet(setKey) {
 <td>${c.rareza}</td>
 <td class="precio-cell">${formatPrecioEUR(c._prices)}</td>
 <td>
-  <div class="acciones-col">
+  <td>
+  <div class="estado-mini">
+    <div class="stepper">
+      <button class="btn-step btn-qty-minus" data-id="${c.id}" ${st.qty <= 0 ? "disabled" : ""}>−</button>
+      <input
+        type="number"
+        class="inp-num inp-qty"
+        data-id="${c.id}"
+        min="0"
+        max="999"
+        value="${st.qty}"
+      />
+      <button class="btn-step btn-qty-plus" data-id="${c.id}">+</button>
+    </div>
 
-            <div class="fila-accion">
-              <span class="lbl">Cantidad</span>
-              <div class="stepper">
-                <button class="btn-step btn-qty-minus" data-id="${c.id}" ${st.qty <= 0 ? "disabled" : ""}>−</button>
-                <input
-                  type="number"
-                  class="inp-num inp-qty"
-                  data-id="${c.id}"
-                  min="0"
-                  max="999"
-                  value="${st.qty}"
-                />
-                <button class="btn-step btn-qty-plus" data-id="${c.id}">+</button>
-              </div>
-            </div>
+    <button class="btn-step btn-expand" type="button" data-id="${c.id}" aria-expanded="${expandedCardIds.has(c.id) ? "true" : "false"}">
+      ${expandedCardIds.has(c.id) ? "▴" : "▾"}
+    </button>
+  </div>
 
-            <div class="fila-accion">
-              <label class="chkline">
-                <input type="checkbox" class="chk-foil" data-id="${c.id}" ${st.foil ? "checked" : ""} ${st.qty > 0 ? "" : "disabled"}>
-                Foil
-              </label>
+  <div class="estado-extra ${expandedCardIds.has(c.id) ? "" : "hidden"}" data-id="${c.id}">
+    <div class="fila-accion">
+      <span class="lbl">Foil</span>
+      <div class="stepper">
+        <button class="btn-step btn-foil-minus" data-id="${c.id}" ${st.foilQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
+        <input
+          type="number"
+          class="inp-num inp-foil"
+          data-id="${c.id}"
+          min="0"
+          max="${st.qty}"
+          value="${st.foilQty}"
+          ${st.qty === 0 ? "disabled" : ""}
+        />
+        <button class="btn-step btn-foil-plus" data-id="${c.id}" ${st.qty === 0 || st.foilQty >= st.qty ? "disabled" : ""}>+</button>
+      </div>
+    </div>
 
-              <label class="chkline">
-                <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
-                Ri
-              </label>
-            </div>
+    <div class="fila-accion">
+      <span class="lbl">Played</span>
+      <div class="stepper">
+        <button class="btn-step btn-played-minus" data-id="${c.id}" ${st.playedQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
+        <input
+          type="number"
+          class="inp-num inp-played"
+          data-id="${c.id}"
+          min="0"
+          max="${st.qty}"
+          value="${st.playedQty}"
+          ${st.qty === 0 ? "disabled" : ""}
+        />
+        <button class="btn-step btn-played-plus" data-id="${c.id}" ${st.qty === 0 || st.playedQty >= st.qty ? "disabled" : ""}>+</button>
+      </div>
+    </div>
 
-            <div class="fila-accion">
-              <span class="lbl">Played</span>
-              <div class="stepper">
-                <button class="btn-step btn-played-minus" data-id="${c.id}" ${st.playedQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
-                <input
-                  type="number"
-                  class="inp-num inp-played"
-                  data-id="${c.id}"
-                  min="0"
-                  max="${st.qty}"
-                  value="${st.playedQty}"
-                  ${st.qty === 0 ? "disabled" : ""}
-                />
-                <button class="btn-step btn-played-plus" data-id="${c.id}" ${st.qty === 0 || st.playedQty >= st.qty ? "disabled" : ""}>+</button>
-              </div>
-            </div>
-
-          </div>
-        </td>
-      </tr>
+    <div class="fila-accion">
+      <label class="chkline">
+        <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
+        Ri
+      </label>
+    </div>
+  </div>
+</td>
     `;
   });
 
   html += `</tbody></table>`;
 
   const cont = document.getElementById("listaCartasSet");
-  cont.innerHTML = html;
-  cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
+cont.innerHTML = html;
+
+// Modal al clickar nombre
+cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
   btn.addEventListener("click", () => {
     const id = btn.dataset.id;
     const carta = (cacheCartasPorSetLang[setKey] || []).find(x => x.id === id);
@@ -1775,86 +1809,112 @@ function renderTablaSet(setKey) {
   });
 });
 
-
-  // cantidad
-  cont.querySelectorAll(".btn-qty-minus").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setQty(id, st.qty - 1);
-      actualizarProgresoSetActualSiSePuede();
-      renderTablaSet(setActualKey);
-      renderColecciones();
-    });
+// ✅ Expand/Collapse ▾/▴
+cont.querySelectorAll(".btn-expand").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    if (expandedCardIds.has(id)) expandedCardIds.delete(id);
+    else expandedCardIds.add(id);
+    renderTablaSet(setActualKey);
   });
+});
 
-  cont.querySelectorAll(".btn-qty-plus").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setQty(id, st.qty + 1);
-      actualizarProgresoSetActualSiSePuede();
-      renderTablaSet(setActualKey);
-      renderColecciones();
-    });
+// cantidad
+cont.querySelectorAll(".btn-qty-minus").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    const st = getEstadoCarta(id);
+    setQty(id, st.qty - 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
   });
+});
 
-  cont.querySelectorAll(".inp-qty").forEach(inp => {
-    inp.addEventListener("change", () => {
-      const id = inp.dataset.id;
-      setQty(id, inp.value);
-      actualizarProgresoSetActualSiSePuede();
-      renderTablaSet(setActualKey);
-      renderColecciones();
-    });
+cont.querySelectorAll(".btn-qty-plus").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    const st = getEstadoCarta(id);
+    setQty(id, st.qty + 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
   });
+});
 
-  // played
-  cont.querySelectorAll(".btn-played-minus").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setPlayedQty(id, st.playedQty - 1);
-      actualizarProgresoSetActualSiSePuede();
-      renderTablaSet(setActualKey);
-    });
+cont.querySelectorAll(".inp-qty").forEach(inp => {
+  inp.addEventListener("change", () => {
+    const id = inp.dataset.id;
+    setQty(id, inp.value);
+    renderTablaSet(setActualKey);
+    renderColecciones();
   });
+});
 
-  cont.querySelectorAll(".btn-played-plus").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setPlayedQty(id, st.playedQty + 1);
-      actualizarProgresoSetActualSiSePuede();
-      renderTablaSet(setActualKey);
-    });
+// ✅ foil qty (nuevo)
+cont.querySelectorAll(".btn-foil-minus").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    const st = getEstadoCarta(id);
+    setFoilQty(id, (st.foilQty || 0) - 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
   });
+});
 
-  cont.querySelectorAll(".inp-played").forEach(inp => {
-    inp.addEventListener("change", () => {
-      const id = inp.dataset.id;
-      setPlayedQty(id, inp.value);
-      renderTablaSet(setActualKey);
-    });
+cont.querySelectorAll(".btn-foil-plus").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    const st = getEstadoCarta(id);
+    setFoilQty(id, (st.foilQty || 0) + 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
   });
+});
 
-  // foil / Ri
-  cont.querySelectorAll(".chk-foil").forEach(chk => {
-    chk.addEventListener("change", () => {
-      const id = chk.dataset.id;
-      setFoil(id, chk.checked);
-      actualizarProgresoSetActualSiSePuede();
-      renderTablaSet(setActualKey);
-    });
+cont.querySelectorAll(".inp-foil").forEach(inp => {
+  inp.addEventListener("change", () => {
+    const id = inp.dataset.id;
+    setFoilQty(id, inp.value);
+    renderTablaSet(setActualKey);
+    renderColecciones();
   });
+});
 
-  cont.querySelectorAll(".chk-want").forEach(chk => {
-    chk.addEventListener("change", () => {
-      const id = chk.dataset.id;
-      setWantMore(id, chk.checked);
-      renderTablaSet(setActualKey);
-    });
+// played
+cont.querySelectorAll(".btn-played-minus").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    const st = getEstadoCarta(id);
+    setPlayedQty(id, st.playedQty - 1);
+    renderTablaSet(setActualKey);
   });
+});
+
+cont.querySelectorAll(".btn-played-plus").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    const st = getEstadoCarta(id);
+    setPlayedQty(id, st.playedQty + 1);
+    renderTablaSet(setActualKey);
+  });
+});
+
+cont.querySelectorAll(".inp-played").forEach(inp => {
+  inp.addEventListener("change", () => {
+    const id = inp.dataset.id;
+    setPlayedQty(id, inp.value);
+    renderTablaSet(setActualKey);
+  });
+});
+
+// Ri
+cont.querySelectorAll(".chk-want").forEach(chk => {
+  chk.addEventListener("change", () => {
+    const id = chk.dataset.id;
+    setWantMore(id, chk.checked);
+    renderTablaSet(setActualKey);
+  });
+});
+
 }
 
 

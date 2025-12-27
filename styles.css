@@ -1413,3 +1413,25 @@ body[data-theme="dark"] .set-icon{
 body[data-theme="light"] .set-icon{
   filter: none;
 }
+
+.estado-mini{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap: 8px;
+}
+
+.estado-extra.hidden{ display:none; }
+
+.estado-extra{
+  margin-top: 8px;
+  display:flex;
+  flex-direction:column;
+  gap: 8px;
+}
+
+.btn-expand{
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
