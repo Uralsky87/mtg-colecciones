@@ -9,7 +9,19 @@ const expandedCardIds = new Set(); // ids desplegados en esta sesión
 const SUPABASE_URL = "https://slvpktkrfbsxwagibfjx.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsdnBrdGtyZmJzeHdhZ2liZmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MTE3MTQsImV4cCI6MjA4MTk4NzcxNH0.-U3ijfDUuSFNKG2001QBzSH3pGlgYXLT2Z8TCRvV6rM";
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const LS_LOCAL_UPDATED_AT = "mtg_local_updated_at_v1";
+let sbLocalUpdatedAt = 0;
 
+function sbLoadLocalUpdatedAt() {
+  const raw = localStorage.getItem(LS_LOCAL_UPDATED_AT);
+  const n = Number(raw);
+  sbLocalUpdatedAt = Number.isFinite(n) ? n : 0;
+}
+
+function sbTouchLocalUpdatedAt() {
+  sbLocalUpdatedAt = Date.now();
+  localStorage.setItem(LS_LOCAL_UPDATED_AT, String(sbLocalUpdatedAt));
+}
 
 function getEmailRedirectTo() {
   // En GH Pages forzamos la URL final “limpia”
@@ -170,13 +182,11 @@ async function sbGetCloudMeta() {
 }
 
 async function sbPullNow() {
-  // ✅ Evita 2 descargas a la vez (muy importante con 2 pestañas o clicks dobles)
+  if (!sbUser?.id) { uiSetSyncStatus("Inicia sesión primero."); return; }
   if (sbPullInFlight) return;
   sbPullInFlight = true;
 
   try {
-    if (!sbUser?.id) { uiSetSyncStatus("Inicia sesión primero."); return; }
-
     uiSetSyncStatus("Descargando desde la nube…");
 
     const { data, error } = await supabaseClient
@@ -196,6 +206,33 @@ async function sbPullNow() {
       sbKnownCloudUpdatedAt = null;
       uiSetSyncStatus("Nube vacía. Pulsa “Guardar cambios” para subir tu colección por primera vez.");
       return;
+    }
+
+    // ✅ Confirmación extra si nube es más antigua que local
+    const cloudTs = data.updated_at ? Date.parse(data.updated_at) : 0;
+    const localTs = sbLocalUpdatedAt || 0;
+
+    // Si hay cambios locales pendientes, confirmamos siempre (para evitar pisado)
+    if (sbDirty) {
+      const ok = confirm(
+        "⚠️ Tienes cambios locales sin guardar.\n" +
+        "Si actualizas desde la nube ahora, podrías perderlos.\n\n" +
+        "¿Quieres continuar y actualizar igualmente?"
+      );
+      if (!ok) {
+        uiSetSyncStatus("Actualización cancelada.");
+        return;
+      }
+    } else if (cloudTs && localTs && cloudTs < localTs) {
+      const ok = confirm(
+        "⚠️ La nube parece más antigua que tus datos locales.\n" +
+        "Si actualizas desde la nube, podrías perder información local.\n\n" +
+        "¿Seguro que quieres actualizar?"
+      );
+      if (!ok) {
+        uiSetSyncStatus("Actualización cancelada.");
+        return;
+      }
     }
 
     sbKnownCloudUpdatedAt = data.updated_at || null;
@@ -306,6 +343,7 @@ function onClickOnce(el, handler) {
 
 function sbMarkDirty() {
   sbDirty = true;
+  sbTouchLocalUpdatedAt();
   uiSetSyncStatus("Cambios sin guardar…");
 }
 
@@ -314,6 +352,7 @@ async function sbInit() {
   // Evita doble init (y doble wiring) si por lo que sea se llama 2 veces
   if (sbInitDone) return;
   sbInitDone = true;
+  sbLoadLocalUpdatedAt();
   
   // 1) sesión actual al cargar
   const { data } = await supabaseClient.auth.getSession();
