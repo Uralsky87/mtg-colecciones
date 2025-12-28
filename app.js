@@ -1752,89 +1752,109 @@ function renderTablaSet(setKey) {
     const st = getEstadoCarta(c.id);
 
     html += `
-      <tr>
-        <td class="cell-nombre">
-  <button
-    class="btn-link-carta"
-    type="button"
-    data-accion="ver-carta-set"
-    data-id="${c.id}"
-  >
-    ${c.nombre}
-  </button>
-
-  <div class="subinfo-movil">
-    ${c.rareza} · ${formatPrecioEUR(c._prices)}
-  </div>
-</td>
-        <td>${c.numero}</td>
-<td>${c.rareza}</td>
-<td class="precio-cell">${formatPrecioEUR(c._prices)}</td>
-<td>
-  <td>
-  <div class="estado-mini">
-    <div class="stepper">
-      <button class="btn-step btn-qty-minus" data-id="${c.id}" ${st.qty <= 0 ? "disabled" : ""}>−</button>
-      <input
-        type="number"
-        class="inp-num inp-qty"
+  <tr>
+    <td class="cell-nombre">
+      <button
+        class="btn-link-carta"
+        type="button"
+        data-accion="ver-carta-set"
         data-id="${c.id}"
-        min="0"
-        max="999"
-        value="${st.qty}"
-      />
-      <button class="btn-step btn-qty-plus" data-id="${c.id}">+</button>
-    </div>
+      >
+        ${c.nombre}
+      </button>
 
-    <button class="btn-step btn-expand" type="button" data-id="${c.id}" aria-expanded="${expandedCardIds.has(c.id) ? "true" : "false"}">
-      ${expandedCardIds.has(c.id) ? "▴" : "▾"}
-    </button>
-  </div>
-
-  <div class="estado-extra ${expandedCardIds.has(c.id) ? "" : "hidden"}" data-id="${c.id}">
-    <div class="fila-accion">
-      <span class="lbl">Foil</span>
-      <div class="stepper">
-        <button class="btn-step btn-foil-minus" data-id="${c.id}" ${st.foilQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
-        <input
-          type="number"
-          class="inp-num inp-foil"
-          data-id="${c.id}"
-          min="0"
-          max="${st.qty}"
-          value="${st.foilQty}"
-          ${st.qty === 0 ? "disabled" : ""}
-        />
-        <button class="btn-step btn-foil-plus" data-id="${c.id}" ${st.qty === 0 || st.foilQty >= st.qty ? "disabled" : ""}>+</button>
+      <div class="subinfo-movil">
+        ${c.rareza} · ${formatPrecioEUR(c._prices)}
       </div>
-    </div>
+    </td>
 
-    <div class="fila-accion">
-      <span class="lbl">Played</span>
-      <div class="stepper">
-        <button class="btn-step btn-played-minus" data-id="${c.id}" ${st.playedQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
-        <input
-          type="number"
-          class="inp-num inp-played"
+    <td>${c.numero}</td>
+    <td>${c.rareza}</td>
+    <td class="precio-cell">${formatPrecioEUR(c._prices)}</td>
+
+    <td>
+      <!-- Mini: Cantidad + botón expand (alineado como "slot derecho") -->
+      <div class="fila-accion estado-mini">
+        <span class="lbl">Cantidad</span>
+
+        <div class="stepper">
+          <button class="btn-step btn-qty-minus" data-id="${c.id}" ${st.qty <= 0 ? "disabled" : ""}>−</button>
+          <input
+            type="number"
+            class="inp-num inp-qty"
+            data-id="${c.id}"
+            min="0"
+            max="999"
+            value="${st.qty}"
+          />
+          <button class="btn-step btn-qty-plus" data-id="${c.id}">+</button>
+        </div>
+
+        <button
+          class="btn-toggle-card right-slot btn-expand"
+          type="button"
           data-id="${c.id}"
-          min="0"
-          max="${st.qty}"
-          value="${st.playedQty}"
-          ${st.qty === 0 ? "disabled" : ""}
-        />
-        <button class="btn-step btn-played-plus" data-id="${c.id}" ${st.qty === 0 || st.playedQty >= st.qty ? "disabled" : ""}>+</button>
+          aria-expanded="${expandedCardIds.has(c.id) ? "true" : "false"}"
+          aria-label="Mostrar más"
+          title="Más"
+        >
+          ${expandedCardIds.has(c.id) ? "▴" : "▾"}
+        </button>
       </div>
-    </div>
 
-    <div class="fila-accion">
-      <label class="chkline">
-        <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
-        Ri
-      </label>
-    </div>
-  </div>
-</td>
-    `;
+      <!-- Extra: Foil/Played/Ri -->
+      <div class="estado-extra ${expandedCardIds.has(c.id) ? "" : "hidden"}" data-id="${c.id}">
+
+        <div class="fila-accion">
+          <span class="lbl">Foil</span>
+          <div class="stepper">
+            <button class="btn-step btn-foil-minus" data-id="${c.id}" ${st.foilQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
+            <input
+              type="number"
+              class="inp-num inp-foil"
+              data-id="${c.id}"
+              min="0"
+              max="${st.qty}"
+              value="${st.foilQty}"
+              ${st.qty === 0 ? "disabled" : ""}
+            />
+            <button class="btn-step btn-foil-plus" data-id="${c.id}" ${st.qty === 0 || st.foilQty >= st.qty ? "disabled" : ""}>+</button>
+          </div>
+          <span class="right-slot"></span>
+        </div>
+
+        <div class="fila-accion">
+          <span class="lbl">Played</span>
+          <div class="stepper">
+            <button class="btn-step btn-played-minus" data-id="${c.id}" ${st.playedQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
+            <input
+              type="number"
+              class="inp-num inp-played"
+              data-id="${c.id}"
+              min="0"
+              max="${st.qty}"
+              value="${st.playedQty}"
+              ${st.qty === 0 ? "disabled" : ""}
+            />
+            <button class="btn-step btn-played-plus" data-id="${c.id}" ${st.qty === 0 || st.playedQty >= st.qty ? "disabled" : ""}>+</button>
+          </div>
+          <span class="right-slot"></span>
+        </div>
+
+        <div class="fila-accion">
+          <span class="lbl">Ri</span>
+          <div>
+            <label class="chkline">
+              <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
+               </label>
+          </div>
+          <span class="right-slot"></span>
+        </div>
+
+      </div>
+    </td>
+  </tr>
+`;
   });
 
   html += `</tbody></table>`;

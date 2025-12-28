@@ -1435,3 +1435,316 @@ body[data-theme="light"] .set-icon{
   height: 34px;
   padding: 0;
 }
+
+/* =========================
+   Fix SELECT: que se vea el valor seleccionado
+========================= */
+
+/* El select en sí (lo que se ve cerrado) */
+.select-filtro{
+  color: var(--text) !important;
+  background: rgba(0,0,0,.25) !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* El desplegable (options) en muchos navegadores NO hereda bien */
+.select-filtro option{
+  color: #111 !important;
+  background: #fff !important;
+}
+
+/* Modo claro: el select debe ser legible */
+body[data-theme="light"] .select-filtro{
+  color: #111 !important;
+  background: #fff !important;
+  border-color: rgba(0,0,0,.15) !important;
+}
+
+/* =========================
+   Alineación de filas de acciones (Cantidad/Foil/Played)
+========================= */
+
+.fila-accion{
+  display: grid !important;
+  grid-template-columns: 84px 1fr 36px; /* label | stepper | slot fijo */
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+/* el stepper siempre alineado a la derecha */
+.fila-accion .stepper{
+  justify-self: end;
+}
+
+/* slot fijo a la derecha (para el botón ▾ / ▴ o un hueco vacío) */
+.right-slot{
+  width: 36px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+}
+
+/* botón de colapsar/expandir */
+.btn-toggle-card{
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.08);
+  color: var(--text);
+}
+
+/* por si en móvil se aprieta mucho */
+@media (max-width: 520px){
+  .fila-accion{
+    grid-template-columns: 76px 1fr 34px;
+    gap: 8px;
+  }
+  .right-slot{ width: 34px; height: 30px; }
+  .btn-toggle-card{ width: 34px; height: 30px; }
+}
+
+/* =========================
+   Fondo oscuro sin "cortes"
+========================= */
+
+/* Pon el fondo en html y haz body transparente */
+html{
+  background:
+    radial-gradient(1000px 700px at 20% 0%, rgba(122,166,255,.12), transparent 60%),
+    radial-gradient(900px 650px at 80% 10%, rgba(166,255,203,.08), transparent 55%),
+    linear-gradient(180deg, #0b0f19 0%, #0b0f19 100%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+body{
+  background: transparent !important;
+}
+
+/* =========================
+   SET (PC): tabla más compacta y Estado más ancho
+========================= */
+@media (min-width: 521px){
+
+  /* 1) Que la tabla respete anchos (muy importante) */
+  .tabla{
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  /* 2) Reducir columnas pequeñas */
+  .tabla th:nth-child(2),
+  .tabla td:nth-child(2){  /* # */
+    width: 52px;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .tabla th:nth-child(3),
+  .tabla td:nth-child(3){  /* Rareza */
+    width: 92px;
+    white-space: nowrap;
+  }
+
+  .tabla th:nth-child(4),
+  .tabla td:nth-child(4){  /* Precio */
+    width: 120px;
+    white-space: nowrap;
+  }
+
+  /* 3) Darle MÁS ancho a Estado (aquí está la magia) */
+  .tabla th:nth-child(5),
+  .tabla td:nth-child(5){
+    width: 360px;  /* prueba 320–420 según te guste */
+  }
+
+  /* 4) El nombre puede partir palabras largas sin ensanchar la tabla */
+  .cell-nombre{
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* 5) Menos padding general = más compacto */
+  .tabla th, .tabla td{
+    padding: 8px 10px;
+    vertical-align: top;
+  }
+
+  /* =========================
+     Estado: alineado y compacto
+  ========================= */
+
+  /* Cada fila: etiqueta | stepper | slot derecho */
+  .fila-accion.estado-mini,
+  .estado-extra .fila-accion{
+    display: grid;
+    grid-template-columns: 86px 1fr 38px; /* label fijo, stepper flexible, slot fijo */
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* El stepper no debe “romperse” */
+  .stepper{
+    display: inline-flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* Botones e input más compactos (y visibles) */
+  .btn-step{
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    line-height: 1;
+    color: rgba(255,255,255,.92);
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.18);
+  }
+
+  .inp-num{
+    width: 56px !important;
+    padding: 6px 8px;
+    text-align: center;
+  }
+
+  /* Slot derecho: reserva sitio para el botón expand (y alinea todo) */
+  .right-slot{
+    width: 38px;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* Botón expand dentro del slot derecho */
+  .btn-toggle-card{
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 10px;
+  }
+
+  /* Extra más compacto */
+  .estado-extra{
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,.10);
+  }
+
+  .estado-extra .fila-accion{
+    margin-top: 6px;
+  }
+}
+
+/* =========================
+   ESTADO (PC): compacto + botón expand “aparte”
+========================= */
+@media (min-width: 521px){
+
+  /* Menos alto de filas */
+  .tabla th, .tabla td{
+    padding: 6px 10px;
+  }
+
+  /* La celda Estado no debe cortar nada */
+  .tabla td:nth-child(5){
+    overflow: visible;
+  }
+
+  /* Contenedor del mini estado: reserva hueco a la derecha para el botón */
+  .estado-mini{
+    position: relative;
+    display: block;
+    padding-right: 42px;        /* hueco para el botón expand */
+    margin-bottom: 6px;
+  }
+
+  /* El stepper del mini (Cantidad) no ocupa 100% */
+  .estado-mini .stepper{
+    width: fit-content;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  /* Botón expand: fuera del flujo, pegado a la derecha */
+  .estado-mini .btn-expand,
+  .estado-mini .btn-toggle-card{
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    line-height: 1;
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.18);
+    color: rgba(255,255,255,.92);
+  }
+
+  /* Extra: más pegadito */
+  .estado-extra{
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,.10);
+    display: grid;
+    gap: 6px;                   /* antes 10px */
+  }
+
+  /* Filas Foil/Played: label estrecho + stepper + hueco derecho */
+  .estado-extra .fila-accion{
+    display: grid;
+    grid-template-columns: 66px 1fr 42px;  /* label más corto */
+    align-items: center;
+    gap: 8px;                               /* antes 10px */
+  }
+
+  /* Slot derecho (para alinear con el botón de expand) */
+  .estado-extra .right-slot{
+    width: 42px;
+  }
+
+  /* Label más discreto y sin empujar */
+  .estado-extra .lbl{
+    font-size: 12px;
+    opacity: .80;
+    white-space: nowrap;
+  }
+
+  /* Stepper más compacto */
+  .btn-step{
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 10px;
+  }
+
+  .inp-num{
+    width: 52px !important;
+    padding: 6px 8px;
+  }
+
+  /* Ri: en una línea, sin huecos raros */
+  .estado-extra .chkline{
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 2px;
+  }
+}
