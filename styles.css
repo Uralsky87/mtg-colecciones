@@ -9,6 +9,60 @@ body {
   padding: 18px;
 }
 
+/* =========================================================
+   Light-theme final overrides
+   Force readable light colors to override leftover dark rules
+========================================================= */
+:root{
+  --bg: #f4f6fb;
+  --panel: rgba(0,0,0,.04);
+  --panel-2: rgba(0,0,0,.06);
+  --text: rgba(0,0,0,.88);
+  --muted: rgba(0,0,0,.60);
+  --border: rgba(0,0,0,.10);
+  --accent: #2f6cff;
+}
+
+html{
+  background: radial-gradient(1000px 700px at 20% 0%, rgba(122,166,255,.12), transparent 60%),
+              radial-gradient(900px 650px at 80% 10%, rgba(166,255,203,.08), transparent 55%),
+              var(--bg) !important;
+}
+
+body{ background: transparent !important; color: var(--text) !important; }
+
+/* Panels and main UI elements: prefer light panels */
+.card, .topbar, .modal-content, .progreso-box, .coleccion-item, .stat, .tabla, .btn-lang-set, .select-filtro {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel)) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+.tabla tbody td, .tabla thead th, .modal-topbar, .modal-body, .card small.hint, .hint {
+  color: var(--muted) !important;
+}
+
+/* Buttons and inputs */
+button, .btn-principal, .btn-secundario, input[type="text"], input[type="number"], select {
+  background: rgba(255,255,255,0.96) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+/* Progress and badges */
+.progress, .badge, .progreso-box {
+  background: rgba(255,255,255,0.96) !important;
+  color: var(--muted) !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* Ensure accents visible */
+.btn-link-carta, a { color: var(--accent) !important; }
+
+/* Remove any forced dark full-page gradients left */
+html[style], html { background-image: none !important; }
+
+
 h1, h2 {
   text-align: center;
 }
@@ -429,21 +483,24 @@ input[type="text"] {
    UI POLISH PACK (pégalo al final del CSS)
    ========================================= */
 
-:root[data-theme="dark"]{
-  --bg: #0b0f19;
-  --panel: rgba(255,255,255,.06);
-  --panel-2: rgba(255,255,255,.08);
-  --text: rgba(255,255,255,.92);
-  --muted: rgba(255,255,255,.65);
-  --muted-2: rgba(255,255,255,.50);
-  --border: rgba(255,255,255,.10);
-  --shadow: 0 10px 30px rgba(0,0,0,.35);
+:root{
+  --bg: #f4f6fb;
+
+  --panel: rgba(0,0,0,.04);
+  --panel-2: rgba(0,0,0,.06);
+
+  --text: rgba(0,0,0,.88);
+  --muted: rgba(0,0,0,.60);
+  --muted-2: rgba(0,0,0,.45);
+
+  --border: rgba(0,0,0,.10);
+  --shadow: 0 10px 30px rgba(0,0,0,.10);
+
+  --accent: #2f6cff;
+  --accent-2: #0aa06e;
 
   --radius: 16px;
   --radius-sm: 12px;
-
-  --accent: #7aa6ff;
-  --accent-2: #a6ffcb;
   --danger: #ff7a7a;
 }
 
@@ -1346,30 +1403,10 @@ select optgroup{
   background: #fff;
 }
 
-/* =========================
-   THEME: Light
-========================= */
-:root[data-theme="light"]{
-  --bg: #f4f6fb;
-
-  --panel: rgba(0,0,0,.04);
-  --panel-2: rgba(0,0,0,.06);
-
-  --text: rgba(0,0,0,.88);
-  --muted: rgba(0,0,0,.60);
-  --muted-2: rgba(0,0,0,.45);
-
-  --border: rgba(0,0,0,.10);
-  --shadow: 0 10px 30px rgba(0,0,0,.10);
-
-  --accent: #2f6cff;
-  --accent-2: #0aa06e;
-}
-
-/* En modo claro, inputs/select con fondo claro */
-:root[data-theme="light"] input[type="text"],
-:root[data-theme="light"] input[type="number"],
-:root[data-theme="light"] select{
+/* En modo claro (por defecto), inputs/select con fondo claro */
+input[type="text"],
+input[type="number"],
+select{
   background: rgba(255,255,255,.85);
 }
 
@@ -1398,19 +1435,8 @@ select optgroup{
   pointer-events: none; /* para que el click siga siendo del item */
 }
 
-/* Si tu body usa clases */
-body.theme-dark .set-icon{
-  filter: invert(1) brightness(1.6);
-}
-body.theme-light .set-icon{
-  filter: none;
-}
-
-/* Por si en tu proyecto usas data-theme en vez de clases */
-body[data-theme="dark"] .set-icon{
-  filter: invert(1) brightness(1.6);
-}
-body[data-theme="light"] .set-icon{
+/* Iconos de set: estilo por defecto (tema claro) */
+body .set-icon{
   filter: none;
 }
 
@@ -1454,7 +1480,7 @@ body[data-theme="light"] .set-icon{
 }
 
 /* Modo claro: el select debe ser legible */
-body[data-theme="light"] .select-filtro{
+.select-filtro{
   color: #111 !important;
   background: #fff !important;
   border-color: rgba(0,0,0,.15) !important;
@@ -1517,7 +1543,7 @@ html{
   background:
     radial-gradient(1000px 700px at 20% 0%, rgba(122,166,255,.12), transparent 60%),
     radial-gradient(900px 650px at 80% 10%, rgba(166,255,203,.08), transparent 55%),
-    linear-gradient(180deg, #0b0f19 0%, #0b0f19 100%);
+    var(--bg);
   background-attachment: fixed;
   background-repeat: no-repeat;
 }
