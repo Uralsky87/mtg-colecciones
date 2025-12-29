@@ -652,10 +652,18 @@ function renderStatsDesdeSnapshot(snap) {
 }
 
 function renderEstadisticas({ forceRecalc = false } = {}) {
-  // 1) pinta instantáneo desde snapshot
+  // 1) pinta instantáneo desde snapshot si existe
   if (statsSnapshot) renderStatsDesdeSnapshot(statsSnapshot);
 
-  // 2) si quieres recalcular “real” (igual será igual, pero actualiza fecha)
+  // 2) si no hay snapshot, calcula una vez (para no ver “—”)
+  if (!statsSnapshot) {
+    const snap = calcularStatsDesdeEstado();
+    guardarStatsSnapshot(snap, { markDirty: false });
+    renderStatsDesdeSnapshot(snap);
+    return;
+  }
+
+  // 3) si fuerzas recálculo
   if (forceRecalc) {
     const snap = calcularStatsDesdeEstado();
     guardarStatsSnapshot(snap, { markDirty: true });
@@ -1517,16 +1525,13 @@ function calcSetStatsFromProgreso() {
   return rows;
 }
 
-function renderEstadisticas() {
-  const elResumen = document.getElementById("statsResumen");
-  const elSets = document.getElementById("statsSets");
-  if (!elResumen || !elSets) return;
-
+function calcularStatsDesdeEstado() {
   // Helpers
   const toNum = (x) => {
     const n = Number(x);
     return Number.isFinite(n) ? n : 0;
   };
+
   const fmtEUR = (n) => {
     try {
       return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
@@ -1534,6 +1539,7 @@ function renderEstadisticas() {
       return `€${(Math.round(n * 100) / 100).toFixed(2)}`;
     }
   };
+
   const parsePrice = (prices, key) => {
     const v = prices?.[key];
     if (v == null || v === "") return null;
@@ -1541,29 +1547,31 @@ function renderEstadisticas() {
     return Number.isFinite(n) ? n : null;
   };
 
-  // 1) Resumen básico desde estado
-  let totalDistintasConQty = 0; // "Total de cartas en colección"
-  let totalCopias = 0;          // "Total de cartas unitarias"
-  let totalFoil = 0;            // "Foil"
-  let totalPlayed = 0;          // "Played"
-  let totalRi = 0;              // "Ri:"
+  // 1) Resumen desde estado
+  let totalDistintasConQty = 0; // Total de cartas en colección (distintas con qty>0)
+  let totalCopias = 0;          // Total de cartas unit correspondido a qty
+  let totalFoil = 0;            // ahora suma foilQty
+  let totalPlayed = 0;          // suma playedQty
+  let totalRi = 0;              // cuenta wantMore
 
   for (const id of Object.keys(estado || {})) {
     const st = estado[id];
     if (!st) continue;
 
-    const qty = toNum(st.qty);
-    const played = toNum(st.playedQty);
+    const qty = Math.max(0, toNum(st.qty));
+    const played = Math.max(0, toNum(st.playedQty));
+    const foilQty = Math.max(0, toNum(st.foilQty)); // ✅ NUEVO
 
     if (qty > 0) totalDistintasConQty += 1;
-    totalCopias += Math.max(0, qty);
-    if (qty > 0 && st.foil) totalFoil += 1;
-    totalPlayed += Math.max(0, played);
+    totalCopias += qty;
+
+    totalFoil += Math.min(foilQty, qty);
+    totalPlayed += Math.min(played, qty);
+
     if (st.wantMore) totalRi += 1;
   }
 
   // 2) Índices de precios desde caché (preferencia EN)
-  // Necesita que en caché exista oracle_id (ver ajuste A)
   const priceByOracle = new Map(); // oracle_id -> { en:{eur,eurFoil}, any:{eur,eurFoil} }
   const metaById = new Map();      // id -> { oracle_id, lang, prices }
 
@@ -1584,7 +1592,6 @@ function renderEstadisticas() {
 
       const eur = parsePrice(c._prices, "eur");
       const eurFoil = parsePrice(c._prices, "eur_foil");
-
       if (eur == null && eurFoil == null) continue;
 
       if (!priceByOracle.has(oid)) {
@@ -1594,11 +1601,9 @@ function renderEstadisticas() {
       const slot = priceByOracle.get(oid);
       const isEn = String(c.lang || "").toLowerCase() === "en";
 
-      // any
       if (slot.any.eur == null && eur != null) slot.any.eur = eur;
       if (slot.any.eurFoil == null && eurFoil != null) slot.any.eurFoil = eurFoil;
 
-      // en preferente
       if (isEn) {
         if (slot.en.eur == null && eur != null) slot.en.eur = eur;
         if (slot.en.eurFoil == null && eurFoil != null) slot.en.eurFoil = eurFoil;
@@ -1606,66 +1611,60 @@ function renderEstadisticas() {
     }
   }
 
-  // 3) Agrupar lo poseído por oracle_id para NO mezclar ES/EN (EN manda)
-  // Aproximación: si una entrada está marcada foil, asumimos todas sus copias foil.
-  const ownedByOracle = new Map(); // key -> { qty: n, foilQty: n, nonFoilQty: n }
+  // 3) Agrupar lo poseído por oracle_id (no mezclar EN/ES)
+  const ownedByOracle = new Map(); // key -> { foilQty, nonFoilQty, qty }
   for (const [id, st] of Object.entries(estado || {})) {
-    const qty = toNum(st?.qty);
+    const qty = Math.max(0, toNum(st?.qty));
     if (qty <= 0) continue;
 
+    const foilQty = Math.max(0, toNum(st?.foilQty));
+    const safeFoil = Math.min(foilQty, qty);
+    const safeNonFoil = Math.max(0, qty - safeFoil);
+
     const meta = metaById.get(id);
-    const key = meta?.oracle_id || id; // fallback si no sabemos oracle_id
+    const key = meta?.oracle_id || id;
+
     if (!ownedByOracle.has(key)) ownedByOracle.set(key, { qty: 0, foilQty: 0, nonFoilQty: 0 });
 
     const g = ownedByOracle.get(key);
     g.qty += qty;
-
-    if (st?.foil) g.foilQty += qty;
-    else g.nonFoilQty += qty;
+    g.foilQty += safeFoil;
+    g.nonFoilQty += safeNonFoil;
   }
 
-  // 4) Calcular valor aproximado con preferencia EN
+  // 4) Valor aproximado (EN manda)
   let totalValueEUR = 0;
   let pricedGroups = 0;
-  let totalGroups = ownedByOracle.size;
+  const totalGroups = ownedByOracle.size;
 
   for (const [oid, g] of ownedByOracle.entries()) {
-    // si oid es realmente un id (fallback), miramos precio por id si existiera
     let eur = null;
     let eurFoil = null;
 
     const slot = priceByOracle.get(oid);
     if (slot) {
-      // EN manda, si no hay EN, usa any
       eur = slot.en.eur ?? slot.any.eur;
       eurFoil = slot.en.eurFoil ?? slot.any.eurFoil;
     } else {
-      // fallback por id (si no tenemos oracle_id y justo tenemos meta)
       const meta = metaById.get(oid);
       eur = parsePrice(meta?.prices, "eur");
       eurFoil = parsePrice(meta?.prices, "eur_foil");
     }
 
-    // Si no hay ningún precio en EUR, no contamos este grupo
     const base = (eur != null) ? eur : null;
     const foil = (eurFoil != null) ? eurFoil : base;
 
     if (base == null && foil == null) continue;
 
     pricedGroups += 1;
-
-    const nonFoilVal = (base != null) ? g.nonFoilQty * base : 0;
-    const foilVal = (foil != null) ? g.foilQty * foil : 0;
-
-    totalValueEUR += nonFoilVal + foilVal;
+    totalValueEUR += (base != null ? g.nonFoilQty * base : 0) + (foil != null ? g.foilQty * foil : 0);
   }
 
   const coverageTxt = totalGroups > 0
     ? `${pricedGroups}/${totalGroups} cartas (oracle) con precio`
     : `0/0`;
 
-  // 5) Pintar resumen con labels como quieres
-  elResumen.innerHTML = `
+  const resumenHtml = `
     <div><strong>Total de cartas en colección:</strong> ${totalDistintasConQty}</div>
     <div><strong>Total de cartas unitarias:</strong> ${totalCopias}</div>
     <div><strong>Foil:</strong> ${totalFoil}</div>
@@ -1673,11 +1672,11 @@ function renderEstadisticas() {
     <div><strong>Ri:</strong> ${totalRi}</div>
     <div style="margin-top:8px;">
       <strong>Valor total aproximado:</strong> ${fmtEUR(totalValueEUR)}
-      <div class="hint">Cobertura: ${coverageTxt} (solo con precios en € disponibles en caché).</div>
+      <div class="hint">Cobertura: ${coverageTxt} (solo precios € en caché).</div>
     </div>
   `;
 
-  // 6) Top sets por % (tu parte que ya te iba bien)
+  // 5) Top sets por %
   const items = [];
   for (const [setKey, p] of Object.entries(progresoPorSet || {})) {
     const total = toNum(p?.total);
@@ -1687,35 +1686,58 @@ function renderEstadisticas() {
   }
   items.sort((a, b) => b.ratio - a.ratio);
 
+  let setsHtml = "";
   if (items.length === 0) {
-    elSets.innerHTML = `Aún no hay progreso guardado. Entra en algún set para que la app calcule totales.`;
-    return;
-  }
+    setsHtml = `Aún no hay progreso guardado. Entra en algún set para que la app calcule totales.`;
+  } else {
+    const top = items.slice(0, 30);
+    let html = `<div class="hint" style="margin-bottom:8px;">Top sets (por % completado)</div>`;
 
-  const top = items.slice(0, 30);
-  let html = `<div class="hint" style="margin-bottom:8px;">Top sets (por % completado)</div>`;
+    for (const it of top) {
+      const [code, lang] = String(it.setKey).split("__");
+      let nombre = code?.toUpperCase() || "SET";
+      try {
+        const meta = (typeof setMetaByKey !== "undefined") ? setMetaByKey.get(it.setKey) : null;
+        if (meta?.nombre) nombre = meta.nombre;
+      } catch {}
 
-  for (const it of top) {
-    const [code, lang] = String(it.setKey).split("__");
-    let nombre = code?.toUpperCase() || "SET";
-    try {
-      const meta = (typeof setMetaByKey !== "undefined") ? setMetaByKey.get(it.setKey) : null;
-      if (meta?.nombre) nombre = meta.nombre;
-    } catch {}
-
-    const pct = Math.round(it.ratio * 100);
-    html += `
-      <div class="card" style="margin:8px 0;">
-        <div style="display:flex; justify-content:space-between; gap:10px;">
-          <div><strong>${nombre}</strong> <span class="hint">(${(lang || "en").toUpperCase()})</span></div>
-          <div><strong>${pct}%</strong></div>
+      const pct = Math.round(it.ratio * 100);
+      html += `
+        <div class="card" style="margin:8px 0;">
+          <div style="display:flex; justify-content:space-between; gap:10px;">
+            <div><strong>${nombre}</strong> <span class="hint">(${(lang || "en").toUpperCase()})</span></div>
+            <div><strong>${pct}%</strong></div>
+          </div>
+          <div class="hint">${it.tengo} / ${it.total}</div>
         </div>
-        <div class="hint">${it.tengo} / ${it.total}</div>
-      </div>
-    `;
+      `;
+    }
+
+    setsHtml = html;
   }
 
-  elSets.innerHTML = html;
+  return {
+    computedAt: new Date().toISOString(),
+    resumenHtml,
+    setsHtml
+  };
+}
+
+function renderStatsDesdeSnapshot(snap) {
+  const elResumen = document.getElementById("statsResumen");
+  const elSets = document.getElementById("statsSets");
+  if (!elResumen || !elSets) return;
+
+  elResumen.innerHTML = snap?.resumenHtml || "—";
+  elSets.innerHTML = snap?.setsHtml || "—";
+}
+
+function guardarStatsSnapshot(snap, { markDirty = false } = {}) {
+  statsSnapshot = snap || null;
+  try { localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot)); } catch {}
+
+  // opcional: si quieres que esto suba a Supabase en el próximo autosave
+  if (markDirty && typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
 function guardarFiltrosColecciones() {
@@ -2570,6 +2592,12 @@ async function init() {
   wireGlobalButtons();
   wireBackupButtons();
 
+  try {
+  const raw = localStorage.getItem(LS_STATS_SNAPSHOT);
+  statsSnapshot = raw ? JSON.parse(raw) : null;
+} catch {
+  statsSnapshot = null;
+}
   // ✅ Supabase (nuevo): sesión + listeners + pull + autosave
     try { 
     await sbInit(); 
