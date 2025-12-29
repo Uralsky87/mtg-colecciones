@@ -1780,17 +1780,8 @@ body{
   }
 }
 
-/* Card styling for both mobile and desktop */
-#pantallaSet .tabla tr {
-  background: white !important;
-}
 
 #pantallaSet .btn-link-carta {
-  color: black !important;
-}
-
-#pantallaSet .tabla td:nth-child(2) {
-  background: darkgray !important;
   color: black !important;
 }
 
@@ -1804,38 +1795,19 @@ body{
 
 /* PC-specific styles */
 #pantallaSet .tabla tr:not(.has-qty) {
-  border-left: 12px solid red !important;
+  box-shadow: inset 0 0 0 12px red !important;
 }
 
 #pantallaSet .tabla tr.has-qty {
-  border-left: 12px solid navy !important;
+  box-shadow: inset 0 0 0 12px navy !important;
 }
 
 #pantallaSet .estado-extra .fila-accion {
-  gap: 3px !important; /* Closer spacing */
+  gap: 6px; /* Same as between Cantidad and Foil */
 }
 
-#pantallaSet .estado-extra .btn-expand {
-  display: none; /* Hide in PC */
-}
-
-#pantallaSet .estado-mini .btn-expand {
-  display: inline-block; /* Show in PC */
-}
-
-/* Mobile overrides */
-@media (max-width: 520px) {
-  #pantallaSet .estado-mini .btn-expand {
-    display: none; /* Hide in mobile */
-  }
-
-  #pantallaSet .estado-extra .btn-expand {
-    display: inline-block; /* Show in mobile */
-  }
-
-  #pantallaSet .fila-accion {
-    gap: 4px !important; /* Closer in mobile */
-  }
+#pantallaSet .tabla {
+  background: white !important; /* Even lighter */
 }
 
 /* Mobile card styling */
@@ -1852,5 +1824,109 @@ body{
   /* Move expand button to bottom after Ri */
   #pantallaSet .estado-extra .btn-expand {
     order: 999; /* Move to end */
+  }
+}
+
+/* =========================================================
+   PATCH SET: fondo claro tipo topbar + bordes más gordos
+   + spacing compacto + botón correcto (PC arriba / móvil abajo)
+   PÉGALO AL FINAL
+========================================================= */
+
+/* 1) Quitar el “oscuro” del contenedor tabla (esto era la causa del gris feo) */
+#pantallaSet .tabla{
+  background: transparent !important;
+  border: none !important;
+  border-collapse: separate !important;
+  border-spacing: 0 10px !important; /* separa filas como “cards” */
+}
+
+/* 2) Cada fila como tarjeta con el MISMO fondo que el topbar */
+#pantallaSet .tabla tr{
+  background: linear-gradient(180deg, var(--panel-2), var(--panel)) !important;
+  border-radius: 16px !important;
+
+  border: 4px solid var(--border) !important;  /* más grueso */
+  overflow: hidden; /* para que el radio recorte bien */
+}
+
+/* 3) Bordes por estado */
+#pantallaSet .tabla tr:not(.has-qty){ border-color: red !important; }
+#pantallaSet .tabla tr.has-qty{ border-color: navy !important; }
+
+/* (Opcional PC) banda izquierda extra gordita */
+@media (min-width: 521px){
+  #pantallaSet .tabla tr:not(.has-qty){ border-left-width: 20px !important; }
+  #pantallaSet .tabla tr.has-qty{ border-left-width: 20px !important; }
+}
+
+/* 4) Pill del # sin gris oscuro */
+#pantallaSet .tabla td:nth-child(2){
+  background: rgba(0,0,0,.06) !important;
+  color: rgba(0,0,0,.75) !important;
+}
+
+/* 5) Menos espacio entre Cantidad / Foil / Played / Ri */
+#pantallaSet .estado-extra{
+  gap: 4px !important;          /* antes 8-10 */
+  margin-top: 6px !important;
+  padding-top: 6px !important;
+}
+#pantallaSet .estado-extra .fila-accion{
+  gap: 6px !important;          /* reduce separación interna */
+  margin-top: 2px !important;
+}
+#pantallaSet .estado-mini{
+  margin-bottom: 4px !important;
+}
+
+/* =========================================================
+   BOTÓN EXPAND/COLLAPSE
+   - PC: SOLO ARRIBA (estado-mini), nunca abajo.
+   - Móvil: cuando está desplegado, botón ABAJO (estado-extra).
+========================================================= */
+
+/* PC: deja SOLO el botón del mini, oculta el de abajo siempre */
+@media (min-width: 521px){
+  #pantallaSet .estado-mini .btn-expand,
+  #pantallaSet .estado-mini .btn-toggle-card{
+    display: inline-flex !important;
+  }
+
+  #pantallaSet .estado-extra .btn-expand,
+  #pantallaSet .estado-extra .btn-toggle-card{
+    display: none !important;
+  }
+}
+
+/* Móvil: por defecto el botón está arriba (cuando está colapsado) */
+@media (max-width: 520px){
+  #pantallaSet .estado-mini .btn-expand,
+  #pantallaSet .estado-mini .btn-toggle-card{
+    display: inline-flex !important;
+  }
+
+  #pantallaSet .estado-extra .btn-expand,
+  #pantallaSet .estado-extra .btn-toggle-card{
+    display: none !important;
+  }
+
+  /* SOLO cuando está desplegado: oculta el de arriba y muestra el de abajo */
+  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-mini .btn-expand,
+  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-mini .btn-toggle-card{
+    display: none !important;
+  }
+
+  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-extra{
+    display: flex !important;             /* OJO: SOLO si NO está hidden */
+    flex-direction: column !important;
+  }
+
+  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-extra .btn-expand,
+  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-extra .btn-toggle-card{
+    display: inline-flex !important;
+    order: 999 !important;
+    align-self: flex-end !important;
+    margin-top: 6px !important;
   }
 }
