@@ -1779,3 +1779,30 @@ body{
     margin-top: 2px;
   }
 }
+
+/* Card styling for both mobile and desktop */
+#pantallaSet .tabla tr {
+  background: lightgray !important;
+}
+
+#pantallaSet .btn-link-carta {
+  color: black !important;
+}
+
+#pantallaSet .tabla td:nth-child(2) {
+  background: darkgray !important;
+  color: black !important;
+}
+
+#pantallaSet .tabla tr:not(.has-qty) {
+  border-color: red !important;
+}
+
+#pantallaSet .tabla tr.has-qty {
+  border-color: navy !important;
+}
+
+/* Mobile card styling */
+@media (max-width: 520px) {
+  /* Additional mobile-specific styles if needed */
+}

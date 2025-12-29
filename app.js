@@ -1657,7 +1657,7 @@ function renderTablaSet(setKey) {
     const st = getEstadoCarta(c.id);
 
     html += `
-  <tr>
+  <tr class="${st.qty > 0 ? 'has-qty' : ''}">
     <td class="cell-nombre">
       <button
         class="btn-link-carta"
