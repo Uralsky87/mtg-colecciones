@@ -1827,106 +1827,100 @@ body{
   }
 }
 
+
 /* =========================================================
-   PATCH SET: fondo claro tipo topbar + bordes más gordos
-   + spacing compacto + botón correcto (PC arriba / móvil abajo)
-   PÉGALO AL FINAL
+   PATCH LIMPIO: fondo uniforme (sin blanco bajo el título),
+   borde razonable, spacing uniforme, botón bien alineado,
+   + y - en negro
+   PÉGALO AL FINAL DEL CSS
 ========================================================= */
 
-/* 1) Quitar el “oscuro” del contenedor tabla (esto era la causa del gris feo) */
+/* 1) La tabla NO debe meter un fondo oscuro propio */
 #pantallaSet .tabla{
   background: transparent !important;
   border: none !important;
+  border-spacing: 0 10px !important; /* separa filas tipo "card" */
   border-collapse: separate !important;
-  border-spacing: 0 10px !important; /* separa filas como “cards” */
 }
 
-/* 2) Cada fila como tarjeta con el MISMO fondo que el topbar */
+/* 2) Cada fila es una card con el MISMO fondo que el topbar */
 #pantallaSet .tabla tr{
   background: linear-gradient(180deg, var(--panel-2), var(--panel)) !important;
   border-radius: 16px !important;
 
-  border: 4px solid var(--border) !important;  /* más grueso */
-  overflow: hidden; /* para que el radio recorte bien */
+  /* borde más pequeño (un pelín más que antes, pero no enorme) */
+  border: 2px solid var(--border) !important;
+  overflow: hidden;
 }
 
 /* 3) Bordes por estado */
 #pantallaSet .tabla tr:not(.has-qty){ border-color: red !important; }
 #pantallaSet .tabla tr.has-qty{ border-color: navy !important; }
 
-/* (Opcional PC) banda izquierda extra gordita */
+/* (opcional) banda izquierda un pelín más marcada en PC, sin exagerar */
 @media (min-width: 521px){
-  #pantallaSet .tabla tr:not(.has-qty){ border-left-width: 20px !important; }
-  #pantallaSet .tabla tr.has-qty{ border-left-width: 20px !important; }
+  #pantallaSet .tabla tr:not(.has-qty){ border-left-width: 8px !important; }
+  #pantallaSet .tabla tr.has-qty{ border-left-width: 8px !important; }
 }
 
-/* 4) Pill del # sin gris oscuro */
+/* 4) CLAVE: evita “fondo blanco” bajo el nombre y en general */
+#pantallaSet .tabla td{
+  background: transparent !important;
+}
+
+/* Mantén el # como pill suave (solo esa celda) */
 #pantallaSet .tabla td:nth-child(2){
   background: rgba(0,0,0,.06) !important;
   color: rgba(0,0,0,.75) !important;
+  border-radius: 999px !important;
 }
 
-/* 5) Menos espacio entre Cantidad / Foil / Played / Ri */
+/* 5) Spacing uniforme: Cantidad/Foil/Played/Ri con la misma distancia */
 #pantallaSet .estado-extra{
-  gap: 4px !important;          /* antes 8-10 */
-  margin-top: 6px !important;
-  padding-top: 6px !important;
+  gap: 10px !important;         /* iguala el “salto” entre items */
+  margin-top: 10px !important;
+  padding-top: 10px !important;
 }
 #pantallaSet .estado-extra .fila-accion{
-  gap: 6px !important;          /* reduce separación interna */
-  margin-top: 2px !important;
+  margin-top: 0 !important;     /* quita separaciones extras raras */
+  gap: 10px !important;         /* que no varíe entre filas */
 }
-#pantallaSet .estado-mini{
-  margin-bottom: 4px !important;
-}
-
-/* =========================================================
-   BOTÓN EXPAND/COLLAPSE
-   - PC: SOLO ARRIBA (estado-mini), nunca abajo.
-   - Móvil: cuando está desplegado, botón ABAJO (estado-extra).
-========================================================= */
-
-/* PC: deja SOLO el botón del mini, oculta el de abajo siempre */
-@media (min-width: 521px){
-  #pantallaSet .estado-mini .btn-expand,
-  #pantallaSet .estado-mini .btn-toggle-card{
-    display: inline-flex !important;
-  }
-
-  #pantallaSet .estado-extra .btn-expand,
-  #pantallaSet .estado-extra .btn-toggle-card{
-    display: none !important;
-  }
+#pantallaSet .estado-extra .chkline{
+  margin-top: 0 !important;
 }
 
-/* Móvil: por defecto el botón está arriba (cuando está colapsado) */
-@media (max-width: 520px){
-  #pantallaSet .estado-mini .btn-expand,
-  #pantallaSet .estado-mini .btn-toggle-card{
-    display: inline-flex !important;
-  }
+/* 6) Botón expand/colapsar: SOLO uno (el de arriba), bien alineado y del mismo tamaño */
+#pantallaSet .estado-extra .btn-expand,
+#pantallaSet .estado-extra .btn-toggle-card{
+  display: none !important;      /* <- mata el botón “extra” que se ve raro */
+}
 
-  #pantallaSet .estado-extra .btn-expand,
-  #pantallaSet .estado-extra .btn-toggle-card{
-    display: none !important;
-  }
+#pantallaSet .estado-mini .btn-expand,
+#pantallaSet .estado-mini .btn-toggle-card{
+  display: inline-flex !important;
+  width: 34px !important;
+  height: 34px !important;
+  padding: 0 !important;
+  border-radius: 10px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(255,255,255,0.85) !important;
+  border: 1px solid rgba(0,0,0,0.18) !important;
+  color: rgba(0,0,0,0.85) !important;
+}
 
-  /* SOLO cuando está desplegado: oculta el de arriba y muestra el de abajo */
-  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-mini .btn-expand,
-  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-mini .btn-toggle-card{
-    display: none !important;
-  }
+/* Asegura que el slot derecho no “se vaya a la izquierda” */
+#pantallaSet .right-slot{
+  justify-self: end !important;
+  align-self: center !important;
+}
 
-  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-extra{
-    display: flex !important;             /* OJO: SOLO si NO está hidden */
-    flex-direction: column !important;
-  }
-
-  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-extra .btn-expand,
-  #pantallaSet .tabla tr:has(.estado-extra:not(.hidden)) .estado-extra .btn-toggle-card{
-    display: inline-flex !important;
-    order: 999 !important;
-    align-self: flex-end !important;
-    margin-top: 6px !important;
-  }
+/* 7) + y - en negro (mejor contraste) */
+#pantallaSet .btn-step{
+  color: rgba(0,0,0,0.92) !important;
+  background: rgba(255,255,255,0.85) !important;
+  border: 1px solid rgba(0,0,0,0.18) !important;
+}
+#pantallaSet .btn-step:disabled{
+  color: rgba(0,0,0,0.35) !important;
 }
