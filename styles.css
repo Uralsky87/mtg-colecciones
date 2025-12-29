@@ -59,8 +59,8 @@ button, .btn-principal, .btn-secundario, input[type="text"], input[type="number"
 /* Ensure accents visible */
 .btn-link-carta, a { color: black !important; }
 
-/* Remove any forced dark full-page gradients left */
-html[style], html { background-image: none !important; }
+/* Remove any forced dark full-page gradients left - DISABLED for custom wallpapers */
+/* html[style], html { background-image: none !important; } */
 
 
 h1, h2 {
@@ -1907,18 +1907,12 @@ body{
 /* Fondos de menú personalizados */
 @media (max-width: 520px) {
   html {
-    background-image: url('WallpaperMenu1.png') !important;
-    background-size: cover !important;
-    background-position: center !important;
-    background-repeat: no-repeat !important;
+    background: url('icons/WallpaperMenu1.png') center/cover no-repeat fixed !important;
   }
 }
 
 @media (min-width: 521px) {
   html {
-    background-image: url('Wallpaperpc1.png') !important;
-    background-size: cover !important;
-    background-position: center !important;
-    background-repeat: no-repeat !important;
+    background: url('icons/Wallpaperpc1.png') center/cover no-repeat fixed !important;
   }
 }
