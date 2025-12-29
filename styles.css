@@ -1306,8 +1306,8 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     grid-template-areas:
       "name num"
       "state state";
-    gap: 8px 10px;
-    padding: 12px;
+    gap: 4px 8px;
+    padding: 8px;
   }
 
   .tabla td{ border: none !important; padding: 0 !important; }
@@ -1339,7 +1339,12 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   /* estado debajo */
   .tabla td:nth-child(5){
     grid-area: state;
-    margin-top: 2px;
+    margin-top: 0px;
+  }
+
+  /* Compactar estado extra */
+  .estado-extra{
+    margin-top: 4px;
   }
 
   /* palabras largas no “ensancharán” el bloque */
@@ -1350,7 +1355,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   }
 
   /* ACCIONES: compactas y SIN forzar ancho */
-  .acciones-col{ min-width: 0 !important; gap: 8px; }
+  .acciones-col{ min-width: 0 !important; gap: 6px; }
   .fila-accion{ gap: 8px; }
   .lbl{ font-size: 12px; }
 
@@ -1381,7 +1386,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 
   .inp-num{
     width: 56px !important;
-    padding: 6px 8px;
+    padding: 4px 6px;
     border-radius: 10px;
     text-align:center;
   }
