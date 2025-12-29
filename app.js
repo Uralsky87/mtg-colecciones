@@ -70,20 +70,17 @@ function sbUpdateAuthUI() {
   const inputEmail = document.getElementById("inputEmail");
   const btnLogin = document.getElementById("btnLogin");
   const btnLogout = document.getElementById("btnLogout");
-  const btnSyncNow = document.getElementById("btnSyncNow");   // Actualizar
-  const btnPushNow = document.getElementById("btnPushNow");   // Guardar
+  const btnPushNow = document.getElementById("btnPushNow"); // Guardar cambios
 
   if (sbUser) {
     if (inputEmail) inputEmail.value = sbUser.email || "";
     if (btnLogin) btnLogin.disabled = true;
     if (btnLogout) btnLogout.style.display = "inline-block";
-    if (btnSyncNow) btnSyncNow.disabled = false;
     if (btnPushNow) btnPushNow.disabled = false;
     uiSetSyncStatus(`Conectado como ${sbUser.email || "usuario"} ✅`);
   } else {
     if (btnLogin) btnLogin.disabled = false;
     if (btnLogout) btnLogout.style.display = "none";
-    if (btnSyncNow) btnSyncNow.disabled = true;
     if (btnPushNow) btnPushNow.disabled = true;
     uiSetSyncStatus("No has iniciado sesión.");
   }
@@ -96,6 +93,7 @@ function sbBuildCloudPayload() {
     estado: estado || {},
     progresoPorSet: progresoPorSet || {},
     hiddenEmptySetKeys: [...(hiddenEmptySetKeys || new Set())],
+    statsSnapshot: statsSnapshot || null,
     filtros: {
       filtroIdiomaColecciones: filtroIdiomaColecciones ?? "all",
       filtroTextoColecciones: filtroTextoColecciones ?? "",
@@ -125,6 +123,14 @@ function sbApplyCloudPayload(payload) {
     guardarHiddenEmptySets();
   }
 
+  // ✅ NUEVO: aplicar snapshot de estadísticas desde nube
+  if (payload.statsSnapshot && typeof payload.statsSnapshot === "object") {
+    statsSnapshot = payload.statsSnapshot;
+    try {
+      localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
+    } catch {}
+  }
+
   const f = payload.filtros || {};
   if (typeof f.filtroIdiomaColecciones === "string") filtroIdiomaColecciones = f.filtroIdiomaColecciones;
   if (typeof f.filtroTextoColecciones === "string") filtroTextoColecciones = f.filtroTextoColecciones;
@@ -135,8 +141,12 @@ function sbApplyCloudPayload(payload) {
   renderColecciones();
   if (setActualKey) renderTablaSet(setActualKey);
 
-  // ✅ Bonus: refresca estadísticas tras sincronizar
-  try { renderEstadisticas(); } catch {}
+  // ✅ Bonus: pinta estadísticas con snapshot (NO recalcula aquí)
+  try {
+    if (typeof renderEstadisticas === "function") {
+      renderEstadisticas({ forceRecalc: false });
+    }
+  } catch {}
 }
 
 async function sbLoginWithEmail(email) {
@@ -208,34 +218,7 @@ async function sbPullNow() {
       return;
     }
 
-    // ✅ Confirmación extra si nube es más antigua que local
-    const cloudTs = data.updated_at ? Date.parse(data.updated_at) : 0;
-    const localTs = sbLocalUpdatedAt || 0;
-
-    // Si hay cambios locales pendientes, confirmamos siempre (para evitar pisado)
-    if (sbDirty) {
-      const ok = confirm(
-        "⚠️ Tienes cambios locales sin guardar.\n" +
-        "Si actualizas desde la nube ahora, podrías perderlos.\n\n" +
-        "¿Quieres continuar y actualizar igualmente?"
-      );
-      if (!ok) {
-        uiSetSyncStatus("Actualización cancelada.");
-        return;
-      }
-    } else if (cloudTs && localTs && cloudTs < localTs) {
-      const ok = confirm(
-        "⚠️ La nube parece más antigua que tus datos locales.\n" +
-        "Si actualizas desde la nube, podrías perder información local.\n\n" +
-        "¿Seguro que quieres actualizar?"
-      );
-      if (!ok) {
-        uiSetSyncStatus("Actualización cancelada.");
-        return;
-      }
-    }
-
-    sbKnownCloudUpdatedAt = data.updated_at || null;
+        sbKnownCloudUpdatedAt = data.updated_at || null;
     sbApplyCloudPayload(data.data || {});
     sbDirty = false;
 
@@ -349,11 +332,13 @@ function sbMarkDirty() {
 
 async function sbInit() {
   await sbCompleteMagicLinkIfPresent();
-  // Evita doble init (y doble wiring) si por lo que sea se llama 2 veces
+
   if (sbInitDone) return;
   sbInitDone = true;
-  sbLoadLocalUpdatedAt();
-  
+
+  // Si ya NO usas el sistema de sbLocalUpdatedAt, puedes borrar esta línea:
+  // sbLoadLocalUpdatedAt();
+
   // 1) sesión actual al cargar
   const { data } = await supabaseClient.auth.getSession();
   sbUser = data?.session?.user || null;
@@ -362,8 +347,7 @@ async function sbInit() {
   // 2) wire botones (una sola vez)
   const btnLogin = document.getElementById("btnLogin");
   const btnLogout = document.getElementById("btnLogout");
-  const btnSyncNow = document.getElementById("btnSyncNow");   // "Actualizar"
-  const btnPushNow = document.getElementById("btnPushNow");   // "Guardar cambios"
+  const btnPushNow = document.getElementById("btnPushNow");
   const inputEmail = document.getElementById("inputEmail");
 
   onClickOnce(btnLogin, async () => {
@@ -371,37 +355,34 @@ async function sbInit() {
   });
 
   onClickOnce(btnLogout, sbLogout);
-
-  // ✅ Actualizar desde nube
-  onClickOnce(btnSyncNow, sbPullNow);
-
-  // ✅ Guardar a nube
   onClickOnce(btnPushNow, sbPushNow);
 
   // 3) Si ya estaba logueado, hacemos pull y arrancamos autosave
   if (sbUser) {
-    await sbPullNow();        // PULL
-    sbStartAutoSave();        // autosave cada 30s si hay cambios
+    await sbPullNow();
+    sbStartAutoSave();
   } else {
     sbStopAutoSave();
   }
 
   // 4) escuchar cambios de sesión (login/logout) (solo una vez)
-  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+  supabaseClient.auth.onAuthStateChange(async (event, session) => {
+    // evita el pull doble del arranque
+    if (event === "INITIAL_SESSION") return;
+
     sbUser = session?.user || null;
     sbUpdateAuthUI();
 
     if (sbUser) {
-      await sbPullNow();      // PULL automático al loguear
-      sbStartAutoSave();      // empieza autosave
+      await sbPullNow();
+      sbStartAutoSave();
     } else {
-      sbStopAutoSave();       // parar autosave al desloguear
-      sbDirty = false;        // opcional
+      sbStopAutoSave();
+      sbDirty = false;
     }
   });
 
-  // 5) Cuando una pestaña termina el login, otras pestañas reciben un "storage event"
-  // Aseguramos que este listener no se registra 2 veces.
+  // 5) storage event (solo una vez)
   if (!window.__sbStorageWired) {
     window.__sbStorageWired = true;
 
@@ -418,9 +399,6 @@ async function sbInit() {
       }
     });
   }
-  function formatLang(lang) {
-  return String(lang || "en").toUpperCase(); // "EN" / "ES"
-}
 }
 
 function sbStartAutoSave() {
@@ -548,6 +526,143 @@ function guardarProgresoPorSet() {
   sbMarkDirty(); 
 }
 
+// ===============================
+// Estadísticas - Snapshot persistente
+// ===============================
+
+const LS_STATS_SNAPSHOT = "mtg_stats_snapshot_v1";
+let statsSnapshot = null;
+
+// Si estás aplicando payload de la nube, evita marcar dirty por cosas derivadas
+let sbApplyingCloud = false;
+
+function cargarStatsSnapshot() {
+  const raw = localStorage.getItem(LS_STATS_SNAPSHOT);
+  if (!raw) return;
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === "object") statsSnapshot = obj;
+  } catch {}
+}
+
+function guardarStatsSnapshot(snap, { markDirty = true } = {}) {
+  statsSnapshot = snap || null;
+  localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot || {}));
+
+  // Queremos que se sincronice con Supabase, pero NO cuando viene de un pull
+  if (markDirty && !sbApplyingCloud) sbMarkDirty();
+}
+
+function calcularStatsDesdeEstado() {
+  // Estadísticas SOLO desde `estado` (idempotente => nunca duplica)
+  let distinct = 0;     // cartas distintas con qty > 0
+  let totalQty = 0;     // suma de qty
+  let foilQty = 0;      // suma de foilQty
+  let playedQty = 0;    // suma de playedQty
+  let riCount = 0;      // nº de cartas con wantMore
+
+  for (const id of Object.keys(estado || {})) {
+    const st = getEstadoCarta(id); // normaliza
+    const q = Number(st.qty || 0);
+    if (q > 0) distinct++;
+    totalQty += q;
+
+    foilQty += Number(st.foilQty || 0);
+    playedQty += Number(st.playedQty || 0);
+    if (st.wantMore) riCount++;
+  }
+
+  // Stats por sets (usando progreso guardado; no requiere cargar sets)
+  const entries = Object.entries(progresoPorSet || {});
+  const totalColecciones = entries.length;
+
+  const conAlguna = entries.filter(([,v]) => (v?.tengo || 0) > 0).length;
+  const completas = entries.filter(([,v]) => {
+    const t = Number(v?.total);
+    const h = Number(v?.tengo || 0);
+    return Number.isFinite(t) && t > 0 && h === t;
+  }).length;
+
+  // % global aproximado (solo colecciones con total conocido)
+  let sumTengo = 0;
+  let sumTotal = 0;
+  for (const [, v] of entries) {
+    const t = Number(v?.total);
+    const h = Number(v?.tengo || 0);
+    if (Number.isFinite(t) && t > 0) {
+      sumTotal += t;
+      sumTengo += Math.min(h, t);
+    }
+  }
+  const pctGlobal = sumTotal > 0 ? Math.round((sumTengo / sumTotal) * 100) : null;
+
+  return {
+    version: 1,
+    updatedAt: Date.now(),
+    resumen: { distinct, totalQty, foilQty, playedQty, riCount },
+    sets: { totalColecciones, conAlguna, completas, pctGlobal }
+  };
+}
+
+function actualizarStatsSnapshot({ render = false } = {}) {
+  const snap = calcularStatsDesdeEstado();
+  guardarStatsSnapshot(snap, { markDirty: true });
+
+  if (render) renderEstadisticas({ forceRecalc: false });
+}
+
+function renderStatsDesdeSnapshot(snap) {
+  const elResumen = document.getElementById("statsResumen");
+  const elSets = document.getElementById("statsSets");
+
+  if (!elResumen || !elSets) return;
+
+  if (!snap || !snap.resumen) {
+    elResumen.textContent = "—";
+    elSets.textContent = "—";
+    return;
+  }
+
+  const r = snap.resumen;
+  const s = snap.sets || {};
+
+  elResumen.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><div class="k">Total de cartas en colección</div><div class="v">${r.distinct}</div></div>
+      <div class="stat"><div class="k">Total de cartas unitarias</div><div class="v">${r.totalQty}</div></div>
+      <div class="stat"><div class="k">Foil</div><div class="v">${r.foilQty}</div></div>
+      <div class="stat"><div class="k">Played</div><div class="v">${r.playedQty}</div></div>
+      <div class="stat"><div class="k">Ri</div><div class="v">${r.riCount}</div></div>
+    </div>
+    <div class="hint" style="margin-top:10px;">
+      Última actualización: ${snap.updatedAt ? new Date(snap.updatedAt).toLocaleString() : "—"}
+    </div>
+  `;
+
+  const pctTxt = (s.pctGlobal == null) ? "—" : `${s.pctGlobal}%`;
+
+  elSets.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><div class="k">Colecciones (idioma) conocidas</div><div class="v">${s.totalColecciones ?? 0}</div></div>
+      <div class="stat"><div class="k">Con alguna carta</div><div class="v">${s.conAlguna ?? 0}</div></div>
+      <div class="stat"><div class="k">Completas</div><div class="v">${s.completas ?? 0}</div></div>
+      <div class="stat"><div class="k">% global</div><div class="v">${pctTxt}</div></div>
+    </div>
+  `;
+}
+
+function renderEstadisticas({ forceRecalc = false } = {}) {
+  // 1) pinta instantáneo desde snapshot
+  if (statsSnapshot) renderStatsDesdeSnapshot(statsSnapshot);
+
+  // 2) si quieres recalcular “real” (igual será igual, pero actualiza fecha)
+  if (forceRecalc) {
+    const snap = calcularStatsDesdeEstado();
+    guardarStatsSnapshot(snap, { markDirty: true });
+    renderStatsDesdeSnapshot(snap);
+  }
+}
+
 function actualizarProgresoGuardado(setKey) {
   const lista = cacheCartasPorSetLang[setKey];
   if (!lista) return; // si no hay cartas cargadas, no podemos calcular total
@@ -589,6 +704,14 @@ function migrarEstadoSiHaceFalta() {
       const qty = st.tengo ? 1 : 0;
       const foil = !!st.foil && qty > 0;
 
+    // migración intermedia: si venía como boolean foil, pásalo a foilQty
+if (st && typeof st === "object" && ("foil" in st) && !("foilQty" in st)) {
+  const qty = clampInt(Number(st.qty ?? (st.tengo ? 1 : 0)), 0, 999);
+  // antes era checkbox => interpretamos “tengo 1 foil”
+  st.foilQty = (st.foil && qty > 0) ? 1 : 0;
+  delete st.foil;
+  cambiado = true;
+}
       estado[id] = {
         qty,
         foil,
@@ -633,21 +756,17 @@ function cargarEstado() {
 function guardarEstado() {
   localStorage.setItem(LS_KEY, JSON.stringify(estado));
   if (typeof sbMarkDirty === "function") sbMarkDirty();
+  cargarStatsSnapshot();
 }
 
 function normalizarEstadoCarta(st) {
   const qty = clampInt(Number(st.qty ?? 0), 0, 999);
 
-  // played 0..qty
-  const playedQty = clampInt(Number(st.playedQty ?? 0), 0, qty);
+  // foilQty: 0..qty
+  const foilQty = clampInt(Number(st.foilQty ?? 0), 0, qty);
 
-  // foilQty 0..qty
-  // compat: si venía el boolean "foil" antiguo y no hay foilQty, lo convertimos
-  let foilQtyRaw = st.foilQty;
-  if (typeof foilQtyRaw === "undefined" && typeof st.foil === "boolean") {
-    foilQtyRaw = st.foil ? qty : 0;
-  }
-  const foilQty = clampInt(Number(foilQtyRaw ?? 0), 0, qty);
+  // playedQty: 0..qty
+  const playedQty = clampInt(Number(st.playedQty ?? 0), 0, qty);
 
   const wantMore = !!st.wantMore;
 
@@ -2234,11 +2353,11 @@ if (btnThemeLight) btnThemeLight.addEventListener("click", () => applyTheme("lig
 
   // Stats: recalcular
   const btnStatsRecalcular = document.getElementById("btnStatsRecalcular");
-  if (btnStatsRecalcular) {
-    btnStatsRecalcular.addEventListener("click", () => {
-      if (typeof renderEstadisticas === "function") renderEstadisticas();
-    });
-  }
+if (btnStatsRecalcular) {
+  btnStatsRecalcular.addEventListener("click", () => {
+    if (typeof renderEstadisticas === "function") renderEstadisticas({ forceRecalc: true });
+  });
+}
 
   // Menú principal
   document.querySelectorAll(".btn-menu").forEach(btn => {
@@ -2262,10 +2381,10 @@ if (btnThemeLight) btnThemeLight.addEventListener("click", () => applyTheme("lig
       }
 
       if (destino === "estadisticas") {
-        if (typeof renderEstadisticas === "function") renderEstadisticas();
-        mostrarPantalla("estadisticas");
-        return;
-      }
+  renderEstadisticas({ forceRecalc: false }); // pinta rápido con lo guardado
+  mostrarPantalla("estadisticas");
+  return;
+}
 
       if (destino === "cuenta") {
         mostrarPantalla("cuenta");
@@ -2446,6 +2565,7 @@ async function init() {
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
   cargarHiddenEmptySets();
+  cargarStatsSnapshot();
 
   wireGlobalButtons();
   wireBackupButtons();
