@@ -1756,6 +1756,17 @@ function renderTablaSet(setKey) {
           <span class="right-slot"></span>
         </div>
 
+        <button
+          class="btn-toggle-card btn-expand"
+          type="button"
+          data-id="${c.id}"
+          aria-expanded="${expandedCardIds.has(c.id) ? "true" : "false"}"
+          aria-label="Mostrar más"
+          title="Más"
+        >
+          ${expandedCardIds.has(c.id) ? "▴" : "▾"}
+        </button>
+
       </div>
     </td>
   </tr>

@@ -687,7 +687,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   font-size: 12px;
   color: var(--muted);
   padding: 10px 10px;
-  background: rgba(255,255,255,.06);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel)) !important;
   border-bottom: 1px solid var(--border);
 }
 .tabla tbody td{
@@ -1782,7 +1782,7 @@ body{
 
 /* Card styling for both mobile and desktop */
 #pantallaSet .tabla tr {
-  background: lightgray !important;
+  background: white !important;
 }
 
 #pantallaSet .btn-link-carta {
@@ -1802,7 +1802,55 @@ body{
   border-color: navy !important;
 }
 
+/* PC-specific styles */
+#pantallaSet .tabla tr:not(.has-qty) {
+  border-left: 12px solid red !important;
+}
+
+#pantallaSet .tabla tr.has-qty {
+  border-left: 12px solid navy !important;
+}
+
+#pantallaSet .estado-extra .fila-accion {
+  gap: 3px !important; /* Closer spacing */
+}
+
+#pantallaSet .estado-extra .btn-expand {
+  display: none; /* Hide in PC */
+}
+
+#pantallaSet .estado-mini .btn-expand {
+  display: inline-block; /* Show in PC */
+}
+
+/* Mobile overrides */
+@media (max-width: 520px) {
+  #pantallaSet .estado-mini .btn-expand {
+    display: none; /* Hide in mobile */
+  }
+
+  #pantallaSet .estado-extra .btn-expand {
+    display: inline-block; /* Show in mobile */
+  }
+
+  #pantallaSet .fila-accion {
+    gap: 4px !important; /* Closer in mobile */
+  }
+}
+
 /* Mobile card styling */
 @media (max-width: 520px) {
-  /* Additional mobile-specific styles if needed */
+  #pantallaSet .tabla tr {
+    background: white !important;
+    border-width: 4px !important; /* Thicker borders */
+  }
+
+  #pantallaSet .fila-accion {
+    gap: 4px !important; /* Closer spacing between Foil, Played, Ri */
+  }
+
+  /* Move expand button to bottom after Ri */
+  #pantallaSet .estado-extra .btn-expand {
+    order: 999; /* Move to end */
+  }
 }
