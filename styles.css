@@ -1903,3 +1903,22 @@ body{
 #pantallaSet .btn-step:disabled{
   color: rgba(0,0,0,0.35) !important;
 }
+
+/* Fondos de menú personalizados */
+@media (max-width: 520px) {
+  html {
+    background-image: url('WallpaperMenu1.png') !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+  }
+}
+
+@media (min-width: 521px) {
+  html {
+    background-image: url('Wallpaperpc1.png') !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+  }
+}
