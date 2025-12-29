@@ -57,7 +57,7 @@ button, .btn-principal, .btn-secundario, input[type="text"], input[type="number"
 }
 
 /* Ensure accents visible */
-.btn-link-carta, a { color: var(--accent) !important; }
+.btn-link-carta, a { color: black !important; }
 
 /* Remove any forced dark full-page gradients left */
 html[style], html { background-image: none !important; }
@@ -725,7 +725,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   background: transparent;
   border: none;
   padding: 0;
-  color: var(--accent);
+  color: black;
   text-align:left;
 }
 .btn-link-carta:hover{ text-decoration: underline; }
@@ -1066,9 +1066,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     position: relative;
     margin: 10px 0;
     padding: 12px;
-    border: 1px solid rgba(255,255,255,.10);
+    border: 1px solid rgba(0,0,0,.10);
     border-radius: 16px;
-    background: rgba(0,0,0,.18);
+    background: #f0f0f0;
   }
 
   #pantallaSet .tabla td {
@@ -1095,9 +1095,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     width: auto !important;
     padding: 2px 8px !important;
     border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.12);
-    background: rgba(0,0,0,.25);
-    color: rgba(255,255,255,.75);
+    border: 1px solid rgba(0,0,0,.12);
+    background: rgba(100,100,100,.5);
+    color: #333;
     font-size: 12px;
   }
 
@@ -1785,25 +1785,17 @@ body{
   color: black !important;
 }
 
-#pantallaSet .tabla tr:not(.has-qty) {
-  border-color: red !important;
-}
-
-#pantallaSet .tabla tr.has-qty {
-  border-color: navy !important;
-}
-
 /* PC-specific styles */
-#pantallaSet .tabla tr:not(.has-qty) {
-  box-shadow: inset 0 0 0 12px red !important;
-}
-
-#pantallaSet .tabla tr.has-qty {
-  box-shadow: inset 0 0 0 12px navy !important;
-}
-
 #pantallaSet .estado-extra .fila-accion {
   gap: 6px; /* Same as between Cantidad and Foil */
+}
+
+/* Make # column same as rest in PC */
+@media (min-width: 521px) {
+  #pantallaSet .tabla td:nth-child(2) {
+    background: inherit !important;
+    color: inherit !important;
+  }
 }
 
 #pantallaSet .tabla {
@@ -1853,26 +1845,13 @@ body{
   overflow: hidden;
 }
 
-/* 3) Bordes por estado */
-#pantallaSet .tabla tr:not(.has-qty){ border-color: red !important; }
-#pantallaSet .tabla tr.has-qty{ border-color: navy !important; }
+/* 3) Bordes por estado - REMOVED */
 
-/* (opcional) banda izquierda un pelín más marcada en PC, sin exagerar */
-@media (min-width: 521px){
-  #pantallaSet .tabla tr:not(.has-qty){ border-left-width: 8px !important; }
-  #pantallaSet .tabla tr.has-qty{ border-left-width: 8px !important; }
-}
+/* (opcional) banda izquierda un pelín más marcada en PC, sin exagerar - REMOVED */
 
 /* 4) CLAVE: evita “fondo blanco” bajo el nombre y en general */
 #pantallaSet .tabla td{
   background: transparent !important;
-}
-
-/* Mantén el # como pill suave (solo esa celda) */
-#pantallaSet .tabla td:nth-child(2){
-  background: rgba(0,0,0,.06) !important;
-  color: rgba(0,0,0,.75) !important;
-  border-radius: 999px !important;
 }
 
 /* 5) Spacing uniforme: Cantidad/Foil/Played/Ri con la misma distancia */
