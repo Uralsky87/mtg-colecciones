@@ -619,6 +619,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 
 /* Botones con fondo Botonmenu.png */
 #btnEntrar,
+#btnLogin,
 #btnPushNow,
 #btnExportarEstado {
   background: url('icons/Botonmenu.png') center/cover no-repeat !important;
