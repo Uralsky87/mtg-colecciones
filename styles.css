@@ -1602,22 +1602,11 @@ body{
 
   /* LED indicator next to card name */
   .led-indicator {
-    display: inline-block;
     height: 36px;
     width: 36px;
     margin-left: 4px;
     vertical-align: middle;
-    background-size: 36px 36px;
-    background-repeat: no-repeat;
-    background-position: center;
-  }
-
-  .led-indicator.led-rojo {
-    background-image: url('icons/Ledrojo.png');
-  }
-
-  .led-indicator.led-azul {
-    background-image: url('icons/Ledazul.png');
+    object-fit: contain;
   }
 
   /* Mobile: much smaller LED */
@@ -1625,7 +1614,6 @@ body{
     .led-indicator {
       height: 12px !important;
       width: 12px !important;
-      background-size: 12px 12px !important;
     }
   }
 
