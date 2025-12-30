@@ -1667,6 +1667,7 @@ function renderTablaSet(setKey) {
       >
         ${c.nombre}
       </button>
+      <img src="icons/${st.qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="">
 
       <div class="subinfo-movil">
         ${c.rareza} · ${formatPrecioEUR(c._prices)}
@@ -1993,6 +1994,7 @@ async function renderResultadosBuscar(texto) {
                 <span class="lang-pill">${formatLang(v.lang)}</span>
                 <span class="hint"> (#${v.collector_number}, ${v.rareza})</span>
               </button>
+              <img src="icons/${qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="">
 
               <div class="hint">${tengoTxt}${foilTxt}${playedTxt}${riTxt}</div>
             </div>

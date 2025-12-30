@@ -1600,6 +1600,14 @@ body{
     word-break: break-word;
   }
 
+  /* LED indicator next to card name */
+  .led-indicator {
+    height: 36px;
+    width: auto;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
   /* 5) Menos padding general = más compacto */
   .tabla th, .tabla td{
     padding: 8px 10px;
@@ -1932,7 +1940,7 @@ body{
      0.92 = casi blanco sólido
      0.86 = blanco translúcido (recomendado)
      0.80 = más transparente (se ve más el wallpaper) */
-  --card-glass: rgba(255,255,255,0.90);
+  --card-glass: rgba(255,255,255,0.92);
 }
 
 /* La tabla no debe meter su propio fondo */
