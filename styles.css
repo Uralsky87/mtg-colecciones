@@ -1604,14 +1604,18 @@ body{
   .led-indicator {
     height: 36px;
     width: auto;
+    max-width: 36px;
     margin-left: 4px;
     vertical-align: middle;
   }
 
   /* Mobile: much smaller LED */
-  @media (max-width: 768px) {
+  @media (max-width: 520px) {
     .led-indicator {
-      height: 12px;
+      height: 12px !important;
+      width: 12px !important;
+      max-width: 12px !important;
+      object-fit: contain;
     }
   }
 
