@@ -33,7 +33,7 @@ body{ background: transparent !important; color: var(--text) !important; }
 
 /* Panels and main UI elements: prefer light panels */
 .card, .topbar, .modal-content, .progreso-box, .coleccion-item, .stat, .tabla, .btn-lang-set, .select-filtro {
-  background: linear-gradient(180deg, var(--panel-2), var(--panel)) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
   color: var(--text) !important;
   border-color: var(--border) !important;
 }
@@ -146,14 +146,14 @@ h1, h2 {
   font-size: 1.05rem;
   cursor: pointer;
   border-radius: 10px;
-  background: #e6e6e6;
+  background: rgba(255, 255, 255, 0.9);
   color: #111;
   border: none;
   font-weight: bold;
 }
 
 .btn-menu:hover {
-  background: #d8d8d8;
+  background: rgba(255, 255, 255, 0.95);
 }
 
 .btn-secundario {
@@ -1068,7 +1068,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     padding: 12px;
     border: 1px solid rgba(0,0,0,.10);
     border-radius: 16px;
-    background: #f0f0f0;
+    background: rgba(255, 255, 255, 0.95);
   }
 
   #pantallaSet .tabla td {
@@ -1796,6 +1796,11 @@ body{
     background: inherit !important;
     color: inherit !important;
   }
+
+  /* Make entire card rows non-transparent like collections */
+  #pantallaSet .tabla tr {
+    background: rgba(255, 255, 255, 0.95) !important;
+  }
 }
 
 #pantallaSet .tabla {
@@ -1851,7 +1856,7 @@ body{
 
 /* 4) CLAVE: evita “fondo blanco” bajo el nombre y en general */
 #pantallaSet .tabla td{
-  background: transparent !important;
+  background: none !important;
 }
 
 /* 5) Spacing uniforme: Cantidad/Foil/Played/Ri con la misma distancia */
