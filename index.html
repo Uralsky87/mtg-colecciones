@@ -55,20 +55,54 @@
       <small class="hint">Filtra por nombre (según escribes).</small>
     </div>
 
-    <!-- Selector tipo set -->
-    <div class="filtros-colecciones">
-      <label class="hint" for="selTipoSet" style="align-self:center;">Tipo:</label>
-      <select id="selTipoSet" class="select-filtro">
-        <option value="all">Todos</option>
-        <option value="expansion">Expansiones</option>
-        <option value="core">Core</option>
-        <option value="commander">Commander</option>
-        <option value="masters">Masters</option>
-        <option value="promo">Promos</option>
-        <option value="token">Tokens</option>
-        <option value="memorabilia">Arte / Memorabilia</option>
-        <option value="other">Otros</option>
-      </select>
+    <!-- Menú desplegable de filtros -->
+    <div class="filtro-desplegable-container">
+      <button id="btnToggleFiltroTipos" class="btn-filtro-header" type="button">
+        <span>Filtrar por tipo</span>
+        <span class="arrow">▼</span>
+      </button>
+      
+      <div id="filtroTiposContent" class="filtro-content hidden">
+        <div class="filtro-actions">
+          <button id="btnMarcarTodos" class="btn-filtro-action" type="button">✓ Marcar todos</button>
+          <button id="btnDesmarcarTodos" class="btn-filtro-action" type="button">✕ Desmarcar todos</button>
+        </div>
+        
+        <div class="filtro-checks">
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="expansion" checked>
+            <span>Expansiones</span>
+          </label>
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="core" checked>
+            <span>Core</span>
+          </label>
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="commander" checked>
+            <span>Commander</span>
+          </label>
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="masters" checked>
+            <span>Masters</span>
+          </label>
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="promo" checked>
+            <span>Promos</span>
+          </label>
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="token" checked>
+            <span>Tokens</span>
+          </label>
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="memorabilia" checked>
+            <span>Arte / Memorabilia</span>
+          </label>
+          <label class="filtro-check-item">
+            <input type="checkbox" class="chk-tipo-set" value="other" checked>
+            <span>Otros</span>
+          </label>
+        </div>
+      </div>
     </div>
 
     <div id="listaColecciones"></div>

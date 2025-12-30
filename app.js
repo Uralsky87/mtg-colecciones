@@ -84,7 +84,7 @@ function sbBuildCloudPayload() {
     filtros: {
       filtroIdiomaColecciones: filtroIdiomaColecciones ?? "all",
       filtroTextoColecciones: filtroTextoColecciones ?? "",
-      filtroTipoSet: filtroTipoSet ?? "all",
+      filtroTiposSet: [...filtroTiposSet],
       ocultarTokens: !!ocultarTokens,
       ocultarArte: !!ocultarArte
     }
@@ -121,7 +121,7 @@ function sbApplyCloudPayload(payload) {
   const f = payload.filtros || {};
   if (typeof f.filtroIdiomaColecciones === "string") filtroIdiomaColecciones = f.filtroIdiomaColecciones;
   if (typeof f.filtroTextoColecciones === "string") filtroTextoColecciones = f.filtroTextoColecciones;
-  if (typeof f.filtroTipoSet === "string") filtroTipoSet = f.filtroTipoSet;
+  if (Array.isArray(f.filtroTiposSet)) filtroTiposSet = new Set(f.filtroTiposSet);
   if (typeof f.ocultarTokens === "boolean") ocultarTokens = f.ocultarTokens;
   if (typeof f.ocultarArte === "boolean") ocultarArte = f.ocultarArte;
 
@@ -1452,16 +1452,20 @@ function aplicarUIFiltrosColecciones() {
 // ===============================
 let ocultarTokens = false;
 let ocultarArte = false;
-let filtroTipoSet = "all"; // "all" | "expansion" | ... | "other"
+// Cambio: ahora es un Set con múltiples valores seleccionados
+let filtroTiposSet = new Set(["expansion", "core", "commander", "masters", "promo", "token", "memorabilia", "other"]);
 
 function aplicarUIFiltrosTipo() {
   const bTok = document.getElementById("btnToggleTokens");
   const bArt = document.getElementById("btnToggleArte");
-  const sel = document.getElementById("selTipoSet");
+  
+  // Actualizar checkboxes
+  document.querySelectorAll(".chk-tipo-set").forEach(chk => {
+    chk.checked = filtroTiposSet.has(chk.value);
+  });
 
   if (bTok) bTok.classList.toggle("active", ocultarTokens);
   if (bArt) bArt.classList.toggle("active", ocultarArte);
-  if (sel) sel.value = filtroTipoSet;
 }
 
 function renderColecciones() {
@@ -1480,14 +1484,22 @@ function renderColecciones() {
 
   let sets = obtenerColecciones();
 
-  // filtro tipo set
-  if (filtroTipoSet && filtroTipoSet !== "all") {
-    if (filtroTipoSet === "other") {
-      const allowed = new Set(["expansion","core","commander","masters","promo","token","memorabilia"]);
-      sets = sets.filter(s => !allowed.has((s.set_type || "").toLowerCase()));
-    } else {
-      sets = sets.filter(s => (s.set_type || "").toLowerCase() === filtroTipoSet);
-    }
+  // filtro tipo set (ahora con múltiples selecciones)
+  if (filtroTiposSet.size > 0 && filtroTiposSet.size < 8) {
+    sets = sets.filter(s => {
+      const tipo = (s.set_type || "").toLowerCase();
+      
+      // Si el tipo está en los seleccionados, incluirlo
+      if (filtroTiposSet.has(tipo)) return true;
+      
+      // Si "other" está seleccionado y no coincide con ninguno conocido
+      if (filtroTiposSet.has("other")) {
+        const tiposConocidos = new Set(["expansion","core","commander","masters","promo","token","memorabilia"]);
+        if (!tiposConocidos.has(tipo)) return true;
+      }
+      
+      return false;
+    });
   }
 
   // ocultar tokens/arte
@@ -1532,14 +1544,15 @@ function renderColecciones() {
 
     // ✅ Icono (si existe)
     const iconHtml = s.icon_svg_uri
-  ? `<img class="set-icon" src="${s.icon_svg_uri}" alt="" loading="lazy" />`
-  : "";
+  ? `<img class="set-icon" src="${s.icon_svg_uri}" alt="${s.nombre}" loading="lazy" />`
+  : `<div class="set-icon" style="background: rgba(0,0,0,.15); border-radius: 50%;"></div>`;
 
     html += `
   <div class="coleccion-item" data-code="${s.code}">
+    ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
     <div class="coleccion-titulo">
-      <strong>${iconHtml}${s.nombre}</strong>
-      ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
+      ${iconHtml}
+      <div class="coleccion-nombre">${s.nombre}</div>
     </div>
     <div class="badge">EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt}</div>
   </div>
@@ -1741,27 +1754,17 @@ renderColecciones(); // para que al volver ya no salga
 function renderTablaSet(setKey) {
   const lista = getListaSetFiltrada(setKey);
 
-  let html = `
-    <table class="tabla">
-    <thead>
-  <tr>
-    <th>Carta</th>
-    <th>#</th>
-    <th>Rareza</th>
-    <th>Precio</th>
-    <th style="text-align:right;">Estado</th>
-  </tr>
-</thead>
-      <tbody>
-  `;
+  let html = `<div class="cartas-grid">`;
 
   lista.forEach((c, idx) => {
     const st = getEstadoCarta(c.id);
+    const tieneImg = c._img && c._img.trim() !== "";
 
     html += `
-  <tr class="${st.qty > 0 ? 'has-qty' : ''}">
-    <td class="cell-nombre">
-      <img src="icons/${st.qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
+  <div class="carta-item ${st.qty > 0 ? 'has-qty' : ''}">
+    <!-- Header de la carta -->
+    <div class="carta-header">
+      <img src="icons/${st.qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="24" height="24">
       <button
         class="btn-link-carta"
         type="button"
@@ -1771,21 +1774,22 @@ function renderTablaSet(setKey) {
       >
         ${c.nombre}
       </button>
+      <span class="carta-numero">#${c.numero}</span>
+    </div>
 
-      <div class="subinfo-movil">
-        ${c.rareza} · ${formatPrecioEUR(c._prices)}
-      </div>
-    </td>
+    <!-- Imagen de la carta -->
+    <div class="carta-imagen-container">
+      ${tieneImg 
+        ? `<img src="${c._img}" alt="${c.nombre}" class="carta-imagen" loading="lazy" />`
+        : `<div class="carta-imagen-placeholder">Sin imagen</div>`
+      }
+    </div>
 
-    <td>${c.numero}</td>
-    <td>${c.rareza}</td>
-    <td class="precio-cell">${formatPrecioEUR(c._prices)}</td>
-
-    <td>
-      <!-- Mini: Cantidad + botón expand (alineado como "slot derecho") -->
-      <div class="fila-accion estado-mini">
+    <!-- Controles de cantidad -->
+    <div class="carta-controles">
+      <!-- Cantidad -->
+      <div class="control-fila">
         <span class="lbl">Cantidad</span>
-
         <div class="stepper">
           <button class="btn-step btn-qty-minus" data-id="${c.id}" ${st.qty <= 0 ? "disabled" : ""}>−</button>
           <input
@@ -1798,86 +1802,39 @@ function renderTablaSet(setKey) {
           />
           <button class="btn-step btn-qty-plus" data-id="${c.id}">+</button>
         </div>
-
-        <button
-          class="btn-toggle-card right-slot btn-expand"
-          type="button"
-          data-id="${c.id}"
-          aria-expanded="${expandedCardIds.has(c.id) ? "true" : "false"}"
-          aria-label="Mostrar más"
-          title="Más"
-        >
-          ${expandedCardIds.has(c.id) ? "▴" : "▾"}
-        </button>
       </div>
 
-      <!-- Extra: Foil/Played/Ri -->
-      <div class="estado-extra ${expandedCardIds.has(c.id) ? "" : "hidden"}" data-id="${c.id}">
-
-        <div class="fila-accion">
-          <span class="lbl">Foil</span>
-          <div class="stepper">
-            <button class="btn-step btn-foil-minus" data-id="${c.id}" ${st.foilQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
-            <input
-              type="number"
-              class="inp-num inp-foil"
-              data-id="${c.id}"
-              min="0"
-              max="${st.qty}"
-              value="${st.foilQty}"
-              ${st.qty === 0 ? "disabled" : ""}
-            />
-            <button class="btn-step btn-foil-plus" data-id="${c.id}" ${st.qty === 0 || st.foilQty >= st.qty ? "disabled" : ""}>+</button>
-          </div>
-          <span class="right-slot"></span>
+      <!-- Foil -->
+      <div class="control-fila">
+        <span class="lbl">Foil</span>
+        <div class="stepper">
+          <button class="btn-step btn-foil-minus" data-id="${c.id}" ${st.foilQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
+          <input
+            type="number"
+            class="inp-num inp-foil"
+            data-id="${c.id}"
+            min="0"
+            max="${st.qty}"
+            value="${st.foilQty}"
+            ${st.qty === 0 ? "disabled" : ""}
+          />
+          <button class="btn-step btn-foil-plus" data-id="${c.id}" ${st.qty === 0 || st.foilQty >= st.qty ? "disabled" : ""}>+</button>
         </div>
-
-        <div class="fila-accion">
-          <span class="lbl">Played</span>
-          <div class="stepper">
-            <button class="btn-step btn-played-minus" data-id="${c.id}" ${st.playedQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
-            <input
-              type="number"
-              class="inp-num inp-played"
-              data-id="${c.id}"
-              min="0"
-              max="${st.qty}"
-              value="${st.playedQty}"
-              ${st.qty === 0 ? "disabled" : ""}
-            />
-            <button class="btn-step btn-played-plus" data-id="${c.id}" ${st.qty === 0 || st.playedQty >= st.qty ? "disabled" : ""}>+</button>
-          </div>
-          <span class="right-slot"></span>
-        </div>
-
-        <div class="fila-accion">
-          <span class="lbl">Ri</span>
-          <div>
-            <label class="chkline">
-              <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
-               </label>
-          </div>
-          <span class="right-slot"></span>
-        </div>
-
-        <button
-          class="btn-toggle-card btn-expand"
-          type="button"
-          data-id="${c.id}"
-          aria-expanded="${expandedCardIds.has(c.id) ? "true" : "false"}"
-          aria-label="Mostrar más"
-          title="Más"
-        >
-          ${expandedCardIds.has(c.id) ? "▴" : "▾"}
-        </button>
-
       </div>
-    </td>
-  </tr>
+
+      <!-- Ri -->
+      <div class="control-fila control-ri">
+        <span class="lbl">Ri</span>
+        <label class="chkline">
+          <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
+        </label>
+      </div>
+    </div>
+  </div>
 `;
   });
 
-  html += `</tbody></table>`;
+  html += `</div>`;
 
   const cont = document.getElementById("listaCartasSet");
 cont.innerHTML = html;
@@ -1895,16 +1852,6 @@ cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
       rareza: carta?.rareza || "",
       precio: formatPrecioEUR(carta?._prices)
     });
-  });
-});
-
-// ✅ Expand/Collapse ▾/▴
-cont.querySelectorAll(".btn-expand").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    if (expandedCardIds.has(id)) expandedCardIds.delete(id);
-    else expandedCardIds.add(id);
-    renderTablaSet(setActualKey);
   });
 });
 
@@ -1938,7 +1885,7 @@ cont.querySelectorAll(".inp-qty").forEach(inp => {
   });
 });
 
-// ✅ foil qty (nuevo)
+// ✅ foil qty
 cont.querySelectorAll(".btn-foil-minus").forEach(btn => {
   btn.addEventListener("click", () => {
     const id = btn.dataset.id;
@@ -1965,33 +1912,6 @@ cont.querySelectorAll(".inp-foil").forEach(inp => {
     setFoilQty(id, inp.value);
     renderTablaSet(setActualKey);
     renderColecciones();
-  });
-});
-
-// played
-cont.querySelectorAll(".btn-played-minus").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    const st = getEstadoCarta(id);
-    setPlayedQty(id, st.playedQty - 1);
-    renderTablaSet(setActualKey);
-  });
-});
-
-cont.querySelectorAll(".btn-played-plus").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    const st = getEstadoCarta(id);
-    setPlayedQty(id, st.playedQty + 1);
-    renderTablaSet(setActualKey);
-  });
-});
-
-cont.querySelectorAll(".inp-played").forEach(inp => {
-  inp.addEventListener("change", () => {
-    const id = inp.dataset.id;
-    setPlayedQty(id, inp.value);
-    renderTablaSet(setActualKey);
   });
 });
 
@@ -2388,10 +2308,46 @@ if (btnStatsRecalcular) {
     });
   }
 
-  const selTipoSet = document.getElementById("selTipoSet");
-  if (selTipoSet) {
-    selTipoSet.addEventListener("change", () => {
-      filtroTipoSet = selTipoSet.value;
+  // Menú desplegable de filtros
+  const btnToggleFiltro = document.getElementById("btnToggleFiltroTipos");
+  const filtroContent = document.getElementById("filtroTiposContent");
+  
+  if (btnToggleFiltro && filtroContent) {
+    btnToggleFiltro.addEventListener("click", () => {
+      filtroContent.classList.toggle("hidden");
+      const arrow = btnToggleFiltro.querySelector(".arrow");
+      if (arrow) arrow.textContent = filtroContent.classList.contains("hidden") ? "▼" : "▲";
+    });
+  }
+  
+  // Checkboxes de tipos
+  document.querySelectorAll(".chk-tipo-set").forEach(chk => {
+    chk.addEventListener("change", () => {
+      if (chk.checked) {
+        filtroTiposSet.add(chk.value);
+      } else {
+        filtroTiposSet.delete(chk.value);
+      }
+      renderColecciones();
+    });
+  });
+  
+  // Botón marcar todos
+  const btnMarcarTodos = document.getElementById("btnMarcarTodos");
+  if (btnMarcarTodos) {
+    btnMarcarTodos.addEventListener("click", () => {
+      filtroTiposSet = new Set(["expansion", "core", "commander", "masters", "promo", "token", "memorabilia", "other"]);
+      aplicarUIFiltrosTipo();
+      renderColecciones();
+    });
+  }
+  
+  // Botón desmarcar todos
+  const btnDesmarcarTodos = document.getElementById("btnDesmarcarTodos");
+  if (btnDesmarcarTodos) {
+    btnDesmarcarTodos.addEventListener("click", () => {
+      filtroTiposSet.clear();
+      aplicarUIFiltrosTipo();
       renderColecciones();
     });
   }
