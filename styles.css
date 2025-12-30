@@ -1932,7 +1932,7 @@ body{
      0.92 = casi blanco sólido
      0.86 = blanco translúcido (recomendado)
      0.80 = más transparente (se ve más el wallpaper) */
-  --card-glass: rgba(255,255,255,0.86);
+  --card-glass: rgba(255,255,255,0.90);
 }
 
 /* La tabla no debe meter su propio fondo */
