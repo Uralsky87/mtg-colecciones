@@ -309,11 +309,14 @@ input[type="text"] {
   padding: 12px;
   max-height: 400px;
   overflow-y: auto;
-  transition: max-height 0.3s ease;
 }
 
 .filtro-content.hidden {
-  display: none;
+  display: none !important;
+  max-height: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
 }
 
 .filtro-actions {
@@ -867,7 +870,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   #listaColecciones{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px){
-  #listaColecciones{ grid-template-columns: 1fr; }
+  #listaColecciones{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .coleccion-item{
   border: 1px solid var(--border);
@@ -958,9 +961,14 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .cartas-grid {
     grid-template-columns: 1fr;
+  }
+  
+  /* En móvil, reducir gap entre elementos de la carta cuando no hay imagen */
+  .cartas-grid.ocultar-imagenes .carta-item {
+    gap: 8px;
   }
 }
 
@@ -1027,6 +1035,16 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   overflow: hidden;
   background: rgba(0,0,0,.15);
   border: 1px solid var(--border);
+  transition: all 0.3s ease;
+}
+
+/* Cuando se ocultan las imágenes */
+.cartas-grid.ocultar-imagenes .carta-imagen-container {
+  display: none;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
 }
 
 .carta-imagen {

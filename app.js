@@ -2272,6 +2272,21 @@ if (btnStatsRecalcular) {
     chkSoloFaltanSet.addEventListener("change", () => setFiltroSoloFaltanSet(chkSoloFaltanSet.checked));
   }
 
+  // Checkbox para ver/ocultar imágenes de cartas (móvil)
+  const chkVerCartasMovil = document.getElementById("chkVerCartasMovil");
+  if (chkVerCartasMovil) {
+    chkVerCartasMovil.addEventListener("change", () => {
+      const gridCartas = document.querySelector(".cartas-grid");
+      if (gridCartas) {
+        if (chkVerCartasMovil.checked) {
+          gridCartas.classList.remove("ocultar-imagenes");
+        } else {
+          gridCartas.classList.add("ocultar-imagenes");
+        }
+      }
+    });
+  }
+
   // Cambiar idioma dentro del set
   const btnSetLangEn = document.getElementById("btnSetLangEn");
   if (btnSetLangEn) {

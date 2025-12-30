@@ -143,10 +143,16 @@
         <button id="btnLimpiarBuscarEnSet" class="btn-secundario" type="button" title="Limpiar">✕</button>
       </div>
 
-      <label class="chkline" style="margin-top:10px;">
-        <input id="chkSoloFaltanSet" type="checkbox" />
-        Solo faltan
-      </label>
+      <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:10px;">
+        <label class="chkline">
+          <input id="chkSoloFaltanSet" type="checkbox" />
+          Solo faltan
+        </label>
+        <label class="chkline">
+          <input id="chkVerCartasMovil" type="checkbox" checked />
+          Ver cartas
+        </label>
+      </div>
     </div>
 
     <div id="listaCartasSet"></div>
