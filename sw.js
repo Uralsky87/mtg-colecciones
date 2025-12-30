@@ -1,4 +1,4 @@
-const CACHE = "mtg-colecciones-v1";
+const CACHE = "mtg-colecciones-v2";
 const ASSETS = [
   "/mtg-colecciones/",
   "/mtg-colecciones/index.html",
@@ -8,7 +8,8 @@ const ASSETS = [
   "/mtg-colecciones/icons/icon-192.png",
   "/mtg-colecciones/icons/icon-512.png",
   "/mtg-colecciones/icons/maskable-192.png",
-  "/mtg-colecciones/icons/maskable-512.png"
+  "/mtg-colecciones/icons/maskable-512.png",
+  "/mtg-colecciones/icons/Botonmenu.png"
 ];
 
 self.addEventListener("install", (e) => {

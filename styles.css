@@ -611,6 +611,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   text-align: center;
   padding: 12px 14px;
   border-radius: var(--radius-sm);
+  overflow: hidden;
   background: url('icons/Botonmenu.png') center/cover no-repeat !important; /* Override global button background */
   color: #111;
   border: none;
