@@ -616,6 +616,30 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   color: #111;
   border: none;
 }
+
+/* Botones con fondo Botonmenu.png */
+#btnEntrar,
+#btnPushNow,
+#btnExportarEstado {
+  background: url('icons/Botonmenu.png') center/cover no-repeat !important;
+  color: #111 !important;
+  border: none;
+  padding: 14px 18px;
+  min-height: 52px;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  opacity: 1;
+}
+
+/* Pantalla Buscar: usa mismo PNG en botones y fondo especial en la tarjeta */
+#pantallaBuscar #btnBuscar {
+  background: url('icons/Botonmenu.png') center/cover no-repeat !important;
+  color: #111;
+  border: none;
+  padding: 14px 18px;
+  min-height: 52px;
+  border-radius: var(--radius-sm);
+}
 .menu{
   display:grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -785,6 +809,34 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   width:100%;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.10);
+}
+
+/* Navegación de cartas en modal */
+.modal-info-row{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.modal-info-main{
+  flex:1;
+}
+.modal-nav{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+.modal-nav .btn-secundario{
+  min-width:40px;
+  padding:8px 10px;
+}
+
+@media (min-width: 720px){
+  #modalCarta .modal-body img{
+    width:80%;
+    margin: 0 auto;
+    display:block;
+  }
 }
 
 /* Estadísticas: (si luego metemos barras, ya lo tienes listo) */

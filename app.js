@@ -1173,7 +1173,7 @@ function guardarHiddenEmptySets() {
 // Modal carta + precio
 // ===============================
 
-function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio }) {
+function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = null, navIndex = -1 }) {
   const modal = document.getElementById("modalCarta");
   const tit = document.getElementById("modalCartaTitulo");
   const body = document.getElementById("modalCartaBody");
@@ -1182,6 +1182,15 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio }) {
 
   tit.textContent = titulo || "Carta";
 
+  // Guardamos estado para navegación
+  if (Array.isArray(navLista) && navLista.length) {
+    modalNavState.lista = navLista;
+    modalNavState.idx = navIndex;
+  } else {
+    modalNavState.lista = null;
+    modalNavState.idx = -1;
+  }
+
   const infoBits = [];
   if (numero) infoBits.push(`#${numero}`);
   if (rareza) infoBits.push(rareza);
@@ -1189,16 +1198,59 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio }) {
 
   const precioTxt = precio || "—";
 
+  const tieneNav = Array.isArray(navLista) && navLista.length > 0 && navIndex >= 0;
+  const prevDisabled = !tieneNav || navIndex <= 0;
+  const nextDisabled = !tieneNav || navIndex >= navLista.length - 1;
+
   body.innerHTML = `
     <div class="card" style="margin-bottom:12px;">
-      ${infoLinea ? `<div><strong>${infoLinea}</strong></div>` : ""}
-      <div class="hint" style="margin-top:6px;">Precio orientativo: ${precioTxt}</div>
+      <div class="modal-info-row">
+        <div class="modal-info-main">
+          ${infoLinea ? `<div><strong>${infoLinea}</strong></div>` : ""}
+          <div class="hint" style="margin-top:6px;">Precio orientativo: ${precioTxt}</div>
+        </div>
+        ${tieneNav ? `
+        <div class="modal-nav">
+          <button class="btn-secundario btn-nav-prev" type="button" ${prevDisabled ? "disabled" : ""} aria-label="Carta anterior">←</button>
+          <button class="btn-secundario btn-nav-next" type="button" ${nextDisabled ? "disabled" : ""} aria-label="Carta siguiente">→</button>
+        </div>
+        ` : ""}
+      </div>
     </div>
     ${imageUrl ? `<img src="${imageUrl}" alt="${titulo || "Carta"}" loading="lazy" />`
               : `<div class="card"><p>No hay imagen disponible.</p></div>`}
   `;
 
+  const btnPrev = body.querySelector('.btn-nav-prev');
+  const btnNext = body.querySelector('.btn-nav-next');
+
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => moverModalCarta(-1));
+  }
+  if (btnNext) {
+    btnNext.addEventListener('click', () => moverModalCarta(1));
+  }
+
   modal.classList.remove("hidden");
+}
+
+function moverModalCarta(delta) {
+  if (!modalNavState.lista || modalNavState.idx < 0) return;
+  const nuevo = modalNavState.idx + delta;
+  if (nuevo < 0 || nuevo >= modalNavState.lista.length) return;
+
+  const c = modalNavState.lista[nuevo];
+  if (!c) return;
+
+  abrirModalCarta({
+    titulo: c?.nombre || "Carta",
+    imageUrl: c?._img || null,
+    numero: c?.numero || "",
+    rareza: c?.rareza || "",
+    precio: formatPrecioEUR(c?._prices),
+    navLista: modalNavState.lista,
+    navIndex: nuevo,
+  });
 }
 
 function cerrarModalCarta() {
@@ -1552,6 +1604,12 @@ function aplicarUILangSet() {
 let setActualKey = null;
 let filtroTextoSet = "";
 let filtroSoloFaltanSet = false;
+let ultimaListaSetRender = [];
+
+const modalNavState = {
+  lista: null,
+  idx: -1,
+};
 
 function aplicarUIFiltrosSet() {
   const inp = document.getElementById("inputBuscarEnSet");
@@ -1653,7 +1711,7 @@ function renderTablaSet(setKey) {
       <tbody>
   `;
 
-  lista.forEach(c => {
+  lista.forEach((c, idx) => {
     const st = getEstadoCarta(c.id);
 
     html += `
@@ -1665,6 +1723,7 @@ function renderTablaSet(setKey) {
         type="button"
         data-accion="ver-carta-set"
         data-id="${c.id}"
+        data-idx="${idx}"
       >
         ${c.nombre}
       </button>
@@ -2036,43 +2095,37 @@ async function renderResultadosBuscar(texto) {
     });
   });
 
-  // Título del grupo -> modal con imagen “general” del oracle (la que guardas en g.img)
+  // Título del grupo -> modal con imagen “general” del oracle
   const mapaOracleAImg = new Map();
   for (const g of grupos) mapaOracleAImg.set(g.oracleId, { titulo: g.titulo, img: g.img });
 
   cont.querySelectorAll("[data-accion='ver-carta']").forEach(btn => {
     btn.addEventListener("click", () => {
-      const oracle = btn.dataset.oracle;
-      const info = mapaOracleAImg.get(oracle);
-      abrirModalCarta({ titulo: info?.titulo, imageUrl: info?.img });
+      const data = mapaOracleAImg.get(btn.dataset.oracle);
+      if (!data) return;
+      abrirModalCarta({ titulo: data.titulo, imageUrl: data.img });
     });
   });
 
-  // Botones "Ir"
+  // Ir al set desde la búsqueda
   cont.querySelectorAll(".btn-ir-set").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    const setKey = btn.dataset.setkey;
-    const cardName = btn.dataset.cardname || "";
+    btn.addEventListener("click", async () => {
+      const setKey = btn.dataset.setkey;
+      const cardName = btn.dataset.cardname || "";
+      if (!setKey) return;
 
-    // (Opcional) si estaba el check "Solo faltan", lo quitamos para que se vea la carta siempre
-    filtroSoloFaltanSet = false;
+      filtroSoloFaltanSet = false;
+      filtroTextoSet = String(cardName).trim();
 
-    // Ponemos el filtro del set con el nombre (con su capitalización bonita)
-    filtroTextoSet = String(cardName).trim();
+      if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
+        hiddenEmptySetKeys.delete(setKey);
+        if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
+      }
 
-    // Si estaba oculto por set vacío, lo re-mostramos
-    if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
-      hiddenEmptySetKeys.delete(setKey);
-      if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
-    }
-
-    // Abrimos el set: como filtroTextoSet ya está puesto, ya entrará filtrado
-    await abrirSet(setKey);
-
-    // Por si acaso, reflejarlo en el input (normalmente abrirSet ya llama a aplicarUIFiltrosSet)
-    if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
+      await abrirSet(setKey);
+      if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
+    });
   });
-});
 }
 
 
