@@ -1659,6 +1659,7 @@ function renderTablaSet(setKey) {
     html += `
   <tr class="${st.qty > 0 ? 'has-qty' : ''}">
     <td class="cell-nombre">
+      <img src="icons/${st.qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
       <button
         class="btn-link-carta"
         type="button"
@@ -1667,7 +1668,6 @@ function renderTablaSet(setKey) {
       >
         ${c.nombre}
       </button>
-      <img src="icons/${st.qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
 
       <div class="subinfo-movil">
         ${c.rareza} · ${formatPrecioEUR(c._prices)}
@@ -1989,12 +1989,12 @@ async function renderResultadosBuscar(texto) {
         <li class="item-version">
           <div class="item-version-main">
             <div>
+              <img src="icons/${qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
               <button class="btn-link-carta" type="button" data-accion="ver-print" data-id="${v.id}">
                 <strong>${v.set_name}</strong>
                 <span class="lang-pill">${formatLang(v.lang)}</span>
                 <span class="hint"> (#${v.collector_number}, ${v.rareza})</span>
               </button>
-              <img src="icons/${qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
 
               <div class="hint">${tengoTxt}${foilTxt}${playedTxt}${riTxt}</div>
             </div>
