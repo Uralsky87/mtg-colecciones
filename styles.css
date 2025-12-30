@@ -1612,8 +1612,8 @@ body{
   /* Mobile: much smaller LED */
   @media (max-width: 520px) {
     .led-indicator {
-      height: 12px !important;
-      width: 12px !important;
+      height: 24px !important;
+      width: 24px !important;
     }
   }
 
@@ -1949,7 +1949,7 @@ body{
      0.92 = casi blanco sólido
      0.86 = blanco translúcido (recomendado)
      0.80 = más transparente (se ve más el wallpaper) */
-  --card-glass: rgba(255,255,255,0.92);
+  --card-glass: rgba(255,255,255,0.93);
 }
 
 /* La tabla no debe meter su propio fondo */
