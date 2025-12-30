@@ -1607,7 +1607,7 @@ body{
     width: 36px;
     margin-left: 4px;
     vertical-align: middle;
-    background-size: contain;
+    background-size: 36px 36px;
     background-repeat: no-repeat;
     background-position: center;
   }
@@ -1625,6 +1625,7 @@ body{
     .led-indicator {
       height: 12px !important;
       width: 12px !important;
+      background-size: 12px 12px !important;
     }
   }
 
