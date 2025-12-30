@@ -684,6 +684,23 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   justify-content: center;
 }
 
+/* En móvil: botones de cuenta al mismo tamaño que btnLogin */
+@media (max-width: 768px) {
+  #btnPushNow,
+  #btnExportarEstado,
+  #btnLogout,
+  #btnImportarEstado {
+    width: 52.5% !important;
+    font-size: 0.8rem !important;
+  }
+  
+  /* Botón Entrar de la pantalla inicial al mismo tamaño que los del menú */
+  #btnEntrar {
+    width: 75% !important;
+    font-size: 0.9rem !important;
+  }
+}
+
 /* Contenedor para botones apilados verticalmente */
 .acciones-verticales {
   display: flex;
