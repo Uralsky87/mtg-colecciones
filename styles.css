@@ -1921,3 +1921,43 @@ body{
     background: url('icons/Wallpaperpc1.png') center/cover no-repeat fixed !important;
   }
 }
+
+/* =========================================================
+   FONDO “VIDRIO” UNIFICADO (igual que el botón del título)
+   PÉGALO AL FINAL
+========================================================= */
+
+:root{
+  /* Ajusta solo este número:
+     0.92 = casi blanco sólido
+     0.86 = blanco translúcido (recomendado)
+     0.80 = más transparente (se ve más el wallpaper) */
+  --card-glass: rgba(255,255,255,0.86);
+}
+
+/* La tabla no debe meter su propio fondo */
+#pantallaSet .tabla{
+  background: transparent !important;
+}
+
+/* Toda la “card” (fila) con el mismo fondo blanco translúcido */
+#pantallaSet .tabla tr{
+  background: var(--card-glass) !important;
+}
+
+/* Ninguna celda debe pintar un fondo diferente encima */
+#pantallaSet .tabla td,
+#pantallaSet .tabla td:nth-child(1){
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/* El botón del nombre no debe tener “pastilla”/fondo propio */
+#pantallaSet .btn-link-carta{
+  background: transparent !important;
+}
+
+/* (Opcional) el numerito # a la derecha: quítale la pill para que no “corte” */
+#pantallaSet .tabla td:nth-child(2){
+  background: transparent !important;
+}
