@@ -871,6 +871,41 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 }
 @media (max-width: 560px){
   #listaColecciones{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  
+  /* Hacer los bloques más pequeños en móvil */
+  .coleccion-item {
+    padding: 10px;
+    min-height: 160px;
+    gap: 6px;
+  }
+  
+  .set-icon {
+    width: 50px;
+    height: 50px;
+    margin-bottom: 6px;
+  }
+  
+  .coleccion-nombre {
+    font-size: 12px;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+  
+  .coleccion-titulo {
+    gap: 6px;
+  }
+  
+  .set-date {
+    top: 6px;
+    right: 6px;
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+  
+  .badge {
+    font-size: 10px;
+    padding: 4px 6px;
+  }
 }
 .coleccion-item{
   border: 1px solid var(--border);
