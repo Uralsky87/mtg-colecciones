@@ -1608,6 +1608,13 @@ body{
     vertical-align: middle;
   }
 
+  /* Mobile: much smaller LED */
+  @media (max-width: 768px) {
+    .led-indicator {
+      height: 12px;
+    }
+  }
+
   /* 5) Menos padding general = más compacto */
   .tabla th, .tabla td{
     padding: 8px 10px;
