@@ -173,15 +173,15 @@
   <!-- (Tema eliminado: la aplicación usa tema claro por defecto) -->
 
     <!-- Login + Sync (ÚNICO, sin duplicados) -->
-    <div class="card">
-      <h3 style="margin-top:0;">Cuenta y sincronización</h3>
+    <div class="card card-small">
+      <h3 style="margin-top:0; font-size:1rem;">Cuenta y sincronización</h3>
 
       <div class="fila">
         <input id="inputEmail" type="text" placeholder="tu@email.com" />
         <button id="btnLogin" class="btn-principal" type="button">Entrar</button>
       </div>
 
-      <div class="acciones" style="margin-top:10px;">
+      <div class="acciones-verticales" style="margin-top:10px;">
         <button id="btnPushNow" class="btn-secundario" type="button">Guardar cambios</button>
         <button id="btnLogout" class="btn-secundario" type="button">Salir</button>
       </div>
@@ -190,16 +190,15 @@
     </div>
 
     <!-- Backup JSON (ÚNICO, sin duplicados) -->
-    <div class="card">
-      <h3 style="margin-top:0;">Copia de seguridad</h3>
-      <p class="hint">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
+    <div class="card card-small">
+      <h3 style="margin-top:0; font-size:1rem;">Copia de seguridad</h3>
+      <p class="hint" style="font-size:0.85rem;">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
 
-      <button id="btnExportarEstado" class="btn-principal" type="button">Exportar (JSON)</button>
-
-      <div style="height:10px;"></div>
-
-      <input id="inputImportarEstado" type="file" accept="application/json" style="display:none;" />
-      <button id="btnImportarEstado" class="btn-secundario" type="button">Importar (reemplazar)</button>
+      <div class="acciones-verticales">
+        <button id="btnExportarEstado" class="btn-principal" type="button">Exportar (JSON)</button>
+        <input id="inputImportarEstado" type="file" accept="application/json" style="display:none;" />
+        <button id="btnImportarEstado" class="btn-secundario" type="button">Importar (reemplazar)</button>
+      </div>
 
       <p id="msgBackup" class="hint" style="margin-top:10px;"></p>
     </div>

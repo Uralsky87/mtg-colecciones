@@ -607,14 +607,20 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 }
 
 .btn-menu{
-  width: 100%;
+  width: 75%;
   text-align: center;
-  padding: 12px 14px;
+  padding: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
-  background: url('icons/Botonmenu.png') center/cover no-repeat !important; /* Override global button background */
+  background: url('icons/Botonmenu.png') center/contain no-repeat !important;
   color: #111;
   border: none;
+  aspect-ratio: 1047 / 219; /* Mantiene la proporción exacta del PNG */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: unset;
+  margin: 0 auto;
 }
 
 /* Botones con fondo Botonmenu.png */
@@ -622,28 +628,102 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 #btnLogin,
 #btnPushNow,
 #btnExportarEstado {
-  background: url('icons/Botonmenu.png') center/cover no-repeat !important;
+  background: url('icons/Botonmenu.png') center/contain no-repeat !important;
   color: #111 !important;
   border: none;
-  padding: 14px 18px;
-  min-height: 52px;
+  padding: 0;
+  aspect-ratio: 1047 / 219; /* Mantiene la proporción exacta del PNG */
+  min-height: unset;
   border-radius: var(--radius-sm);
   font-weight: 700;
   opacity: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Botón Entrar más pequeño (mitad de tamaño) */
+#btnEntrar {
+  width: 50% !important;
+  margin: 0 auto;
+  font-size: 0.9rem !important;
+}
+
+/* Botón Login (Cuenta) más pequeño */
+#btnLogin {
+  width: 52.5% !important;
+  font-size: 0.8rem !important;
+}
+
+/* Botones específicos más pequeños (mitad de tamaño) */
+#btnPushNow,
+#btnExportarEstado {
+  width: 25% !important;
+  aspect-ratio: 1047 / 219 !important;
+  min-height: unset !important;
+  font-size: 0.75rem !important;
+  margin: 0 auto;
+}
+
+/* Botones Salir e Importar con la misma estética */
+#btnLogout,
+#btnImportarEstado {
+  background: url('icons/Botonmenu.png') center/contain no-repeat !important;
+  color: #111 !important;
+  border: none;
+  padding: 0;
+  aspect-ratio: 1047 / 219 !important;
+  width: 25% !important;
+  min-height: unset !important;
+  font-size: 0.75rem !important;
+  margin: 0 auto;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Contenedor para botones apilados verticalmente */
+.acciones-verticales {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Cards más pequeños */
+.card-small {
+  padding: 10px !important;
+}
+
+.card-small h3 {
+  font-size: 1rem !important;
+}
+
+.card-small .hint {
+  font-size: 0.85rem !important;
 }
 
 /* Pantalla Buscar: usa mismo PNG en botones y fondo especial en la tarjeta */
 #pantallaBuscar #btnBuscar {
-  background: url('icons/Botonmenu.png') center/cover no-repeat !important;
+  background: url('icons/Botonmenu.png') center/contain no-repeat !important;
   color: #111;
   border: none;
-  padding: 14px 18px;
-  min-height: 52px;
+  padding: 0;
+  aspect-ratio: 1047 / 219; /* Mantiene la proporción exacta del PNG */
+  min-height: unset;
   border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 50%;
+  margin: 0 auto;
+  font-size: 0.85rem;
 }
 .menu{
   display:grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 @media (max-width: 560px){
