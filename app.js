@@ -272,6 +272,16 @@ async function sbLogout() {
 
 let sbInitDone = false;
 
+// Canal de comunicación entre pestañas (solo desktop)
+let authChannel = null;
+if (typeof BroadcastChannel !== 'undefined') {
+  try {
+    authChannel = new BroadcastChannel('mtg-auth');
+  } catch {
+    authChannel = null;
+  }
+}
+
 async function sbCompleteMagicLinkIfPresent() {
   if (sbExchangeInFlight) return;
   sbExchangeInFlight = true;
@@ -286,14 +296,36 @@ async function sbCompleteMagicLinkIfPresent() {
     const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
 
     if (error) {
-      // Si se abrió 2 veces, el code puede estar "used/invalid" en la segunda pestaña.
       console.error("exchangeCodeForSession:", error);
-
-      // En vez de quedarnos "colgados", lo tratamos como "ya se completó en otra pestaña"
       uiSetSyncStatus("Login ya completado en otra pestaña. Actualizando sesión…");
     } else {
       sbJustExchanged = true;
       setTimeout(() => { sbJustExchanged = false; }, 1500);
+      
+      // Notificar a otras pestañas que el login se completó
+      if (authChannel) {
+        authChannel.postMessage({ type: 'AUTH_COMPLETE' });
+      }
+      localStorage.setItem('mtg-auth-event', Date.now().toString());
+      
+      // En desktop: si esta pestaña fue abierta por el magic link, cerrarla automáticamente
+      // Detectamos si es una pestaña nueva (poca historia) y no es standalone (PWA)
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                          window.navigator.standalone === true;
+      const hasLittleHistory = window.history.length <= 2;
+      
+      if (!isStandalone && hasLittleHistory) {
+        uiSetSyncStatus("Login completado. Cerrando esta ventana…");
+        setTimeout(() => {
+          window.close();
+          // Si no se puede cerrar (algunas restricciones de navegador), mostrar mensaje
+          setTimeout(() => {
+            if (!window.closed) {
+              uiSetSyncStatus("Login completo. Puedes cerrar esta ventana.");
+            }
+          }, 500);
+        }, 1500);
+      }
     }
 
     // Limpia ?code=... para que al refrescar no lo reintente
@@ -369,7 +401,7 @@ async function sbInit() {
     }
   });
 
-  // 5) storage event (solo una vez)
+  // 5) storage event + BroadcastChannel listener (solo una vez)
   if (!window.__sbStorageWired) {
     window.__sbStorageWired = true;
 
@@ -377,7 +409,7 @@ async function sbInit() {
       const k = String(e.key || "");
       if (!k) return;
 
-      if (k.includes("supabase") || k.includes("auth-token")) {
+      if (k.includes("supabase") || k.includes("auth-token") || k === 'mtg-auth-event') {
         const { data } = await supabaseClient.auth.getSession();
         sbUser = data?.session?.user || null;
         sbUpdateAuthUI();
@@ -385,6 +417,18 @@ async function sbInit() {
         if (sbUser) await sbPullNow();
       }
     });
+
+    // Escuchar mensajes de otras pestañas vía BroadcastChannel
+    if (authChannel) {
+      authChannel.onmessage = async (e) => {
+        if (e.data?.type === 'AUTH_COMPLETE') {
+          const { data } = await supabaseClient.auth.getSession();
+          sbUser = data?.session?.user || null;
+          sbUpdateAuthUI();
+          if (sbUser) await sbPullNow();
+        }
+      };
+    }
   }
 }
 
