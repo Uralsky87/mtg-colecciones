@@ -652,7 +652,6 @@ function renderStatsDesdeSnapshot(snap) {
       <div class="stat"><div class="k">Total de cartas en colección</div><div class="v">${r.distinct}</div></div>
       <div class="stat"><div class="k">Total de cartas unitarias</div><div class="v">${r.totalQty}</div></div>
       <div class="stat"><div class="k">Foil</div><div class="v">${r.foilQty}</div></div>
-      <div class="stat"><div class="k">Played</div><div class="v">${r.playedQty}</div></div>
       <div class="stat"><div class="k">Ri</div><div class="v">${r.riCount}</div></div>
     </div>
     <div class="hint" style="margin-top:10px;">
