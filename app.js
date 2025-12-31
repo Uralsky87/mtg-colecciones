@@ -2620,7 +2620,48 @@ init();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(console.error);
+    navigator.serviceWorker.register("./sw.js").then(reg => {
+      // Detectar actualizaciones
+      reg.addEventListener("updatefound", () => {
+        const newWorker = reg.installing;
+        
+        newWorker.addEventListener("statechange", () => {
+          if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+            // Hay una nueva versión disponible
+            mostrarBannerActualizacion(newWorker);
+          }
+        });
+      });
+      
+      // Verificar actualizaciones cada 60 segundos
+      setInterval(() => {
+        reg.update();
+      }, 60000);
+    }).catch(console.error);
   });
+}
+
+function mostrarBannerActualizacion(newWorker) {
+  const banner = document.getElementById("updateBanner");
+  const btnActualizar = document.getElementById("btnActualizarApp");
+  const btnCerrar = document.getElementById("btnCerrarUpdate");
+  
+  if (!banner) return;
+  
+  banner.classList.remove("hidden");
+  
+  btnActualizar.addEventListener("click", () => {
+    // Enviar mensaje al service worker para que se active inmediatamente
+    newWorker.postMessage({ type: "SKIP_WAITING" });
+    
+    // Recargar la página cuando el nuevo SW tome control
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      window.location.reload();
+    });
+  }, { once: true });
+  
+  btnCerrar.addEventListener("click", () => {
+    banner.classList.add("hidden");
+  }, { once: true });
 }
 

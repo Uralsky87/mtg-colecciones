@@ -1,4 +1,4 @@
-const CACHE = "mtg-colecciones-v7";
+const CACHE = "mtg-colecciones-v8";
 const ASSETS = [
   "/mtg-colecciones/",
   "/mtg-colecciones/index.html",
@@ -12,6 +12,13 @@ const ASSETS = [
   "/mtg-colecciones/icons/Botonmenu.png",
   "/mtg-colecciones/icons/Fondosmenus.png"
 ];
+
+// Escuchar mensaje de SKIP_WAITING
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
