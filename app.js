@@ -1560,7 +1560,10 @@ function renderColecciones() {
     sets = sets.filter(s => !hiddenCollections.has(s.code));
     
     // filtro tipo set (ahora con múltiples selecciones)
-    if (filtroTiposSet.size > 0 && filtroTiposSet.size < 8) {
+    if (filtroTiposSet.size === 0) {
+      // Si no hay ningún tipo seleccionado, no mostrar nada
+      sets = [];
+    } else if (filtroTiposSet.size < 8) {
       sets = sets.filter(s => {
         const tipo = (s.set_type || "").toLowerCase();
         
@@ -1619,13 +1622,25 @@ function renderColecciones() {
     // Calcular porcentajes
     let pctEn = "-%";
     let pctEs = "-%";
+    let pctEnNum = 0;
+    let pctEsNum = 0;
     
     if (pEn.total && pEn.total > 0) {
-      pctEn = Math.floor((pEn.tengo / pEn.total) * 100) + "%";
+      pctEnNum = Math.floor((pEn.tengo / pEn.total) * 100);
+      pctEn = pctEnNum + "%";
     }
     
     if (pEs.total && pEs.total > 0) {
-      pctEs = Math.floor((pEs.tengo / pEs.total) * 100) + "%";
+      pctEsNum = Math.floor((pEs.tengo / pEs.total) * 100);
+      pctEs = pctEsNum + "%";
+    }
+
+    // Calcular progreso para la barra visual (solo idioma inglés, o español si inglés no disponible)
+    let progresoPromedio = 0;
+    if (pEn.total && pEn.total > 0) {
+      progresoPromedio = pctEnNum;
+    } else if (pEs.total && pEs.total > 0) {
+      progresoPromedio = pctEsNum;
     }
 
     const fechaTxt = formatMesAnyo(s.released_at);
@@ -1636,7 +1651,7 @@ function renderColecciones() {
   : `<div class="set-icon" style="background: rgba(0,0,0,.15); border-radius: 50%;"></div>`;
 
     html += `
-  <div class="coleccion-item" data-code="${s.code}">
+  <div class="coleccion-item" data-code="${s.code}" data-progress="${progresoPromedio}">
     ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
     <div class="coleccion-titulo">
       ${iconHtml}
@@ -1650,6 +1665,10 @@ function renderColecciones() {
   cont.innerHTML = html;
 
   cont.querySelectorAll("[data-code]").forEach(item => {
+    // Aplicar altura de progreso visual
+    const progress = item.dataset.progress || 0;
+    item.style.setProperty('--progress-height', `${progress}%`);
+    
     item.addEventListener("click", () => {
       const code = item.dataset.code;
       abrirSet(`${code}__en`);
