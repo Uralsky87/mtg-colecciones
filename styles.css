@@ -89,12 +89,14 @@ h1, h2 {
 .btn-back {
   font-size: 28px !important;
   font-weight: bold !important;
-  padding: 8px 16px !important;
+  padding: 6px 16px !important;
   line-height: 1 !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   vertical-align: middle !important;
+  height: auto !important;
+  min-height: 40px !important;
 }
 
 @media (max-width: 560px) {
