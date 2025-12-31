@@ -178,6 +178,16 @@ h1, h2 {
   background: #fff;
   cursor: pointer;
   font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-lang-set .flag {
+  display: inline-block;
+  vertical-align: middle;
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 2px;
 }
 
 .btn-lang-set.active {
@@ -269,6 +279,11 @@ input[type="text"] {
   font-size: 0.85rem;
   opacity: 0.85;
   white-space: nowrap;
+}
+
+.badge .pct-lang {
+  font-weight: bold;
+  color: #555;
 }
 
 /* Filtros colecciones - Menú desplegable */

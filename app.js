@@ -80,6 +80,7 @@ function sbBuildCloudPayload() {
     estado: estado || {},
     progresoPorSet: progresoPorSet || {},
     hiddenEmptySetKeys: [...(hiddenEmptySetKeys || new Set())],
+    hiddenCollections: [...(hiddenCollections || new Set())],
     statsSnapshot: statsSnapshot || null,
     filtros: {
       filtroIdiomaColecciones: filtroIdiomaColecciones ?? "all",
@@ -108,6 +109,11 @@ function sbApplyCloudPayload(payload) {
   if (Array.isArray(payload.hiddenEmptySetKeys)) {
     hiddenEmptySetKeys = new Set(payload.hiddenEmptySetKeys);
     guardarHiddenEmptySets();
+  }
+
+  if (Array.isArray(payload.hiddenCollections)) {
+    hiddenCollections = new Set(payload.hiddenCollections);
+    guardarHiddenCollections();
   }
 
   // ✅ NUEVO: aplicar snapshot de estadísticas desde nube
@@ -443,9 +449,9 @@ function setKeyFromCard(c) {
 
 function langFlag(lang) {
   const l = (lang || "").toLowerCase();
-  if (l === "es") return "🇪🇸";
-  if (l === "en") return "🇬🇧";
-  return "🏳️";
+  if (l === "es") return '<svg class="flag" width="20" height="15" viewBox="0 0 60 40"><rect width="60" height="40" fill="#c60b1e"/><rect y="10" width="60" height="20" fill="#ffc400"/></svg>';
+  if (l === "en") return '<svg class="flag" width="20" height="15" viewBox="0 0 60 30"><clipPath id="t"><path d="M30,15 h30 v15 z v15 h-30 z h-30 v-15 z v-15 h30 z"/></clipPath><path d="M0,0 v30 h60 v-30 z" fill="#012169"/><path d="M0,0 L60,30 M60,0 L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0 L60,30 M60,0 L0,30" clip-path="url(#t)" stroke="#C8102E" stroke-width="4"/><path d="M30,0 v30 M0,15 h60" stroke="#fff" stroke-width="10"/><path d="M30,0 v30 M0,15 h60" stroke="#C8102E" stroke-width="6"/></svg>';
+  return '🏳️';
 }
 
 function formatLang(lang) {
@@ -1215,6 +1221,27 @@ function guardarHiddenEmptySets() {
 }
 
 // ===============================
+// Ocultar colecciones (persistente)
+// ===============================
+
+const LS_HIDDEN_COLLECTIONS = "mtg_hidden_collections_v1";
+let hiddenCollections = new Set();
+
+function cargarHiddenCollections() {
+  const raw = localStorage.getItem(LS_HIDDEN_COLLECTIONS);
+  if (!raw) return;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) hiddenCollections = new Set(arr);
+  } catch {}
+}
+
+function guardarHiddenCollections() {
+  localStorage.setItem(LS_HIDDEN_COLLECTIONS, JSON.stringify([...hiddenCollections]));
+  if (typeof sbMarkDirty === "function") sbMarkDirty();
+}
+
+// ===============================
 // Modal carta + precio
 // ===============================
 
@@ -1487,18 +1514,21 @@ function aplicarUIFiltrosColecciones() {
 // ===============================
 let ocultarTokens = false;
 let ocultarArte = false;
+let mostrarOcultas = false;
 // Cambio: ahora es un Set con múltiples valores seleccionados
 let filtroTiposSet = new Set(["expansion", "core", "commander", "masters", "promo", "token", "memorabilia", "other"]);
 
 function aplicarUIFiltrosTipo() {
   const bTok = document.getElementById("btnToggleTokens");
   const bArt = document.getElementById("btnToggleArte");
+  const chkOcultas = document.getElementById("chkMostrarOcultas");
   
   // Actualizar checkboxes
   document.querySelectorAll(".chk-tipo-set").forEach(chk => {
     chk.checked = filtroTiposSet.has(chk.value);
   });
 
+  if (chkOcultas) chkOcultas.checked = mostrarOcultas;
   if (bTok) bTok.classList.toggle("active", ocultarTokens);
   if (bArt) bArt.classList.toggle("active", ocultarArte);
 }
@@ -1519,28 +1549,39 @@ function renderColecciones() {
 
   let sets = obtenerColecciones();
 
-  // filtro tipo set (ahora con múltiples selecciones)
-  if (filtroTiposSet.size > 0 && filtroTiposSet.size < 8) {
-    sets = sets.filter(s => {
-      const tipo = (s.set_type || "").toLowerCase();
-      
-      // Si el tipo está en los seleccionados, incluirlo
-      if (filtroTiposSet.has(tipo)) return true;
-      
-      // Si "other" está seleccionado y no coincide con ninguno conocido
-      if (filtroTiposSet.has("other")) {
-        const tiposConocidos = new Set(["expansion","core","commander","masters","promo","token","memorabilia"]);
-        if (!tiposConocidos.has(tipo)) return true;
-      }
-      
-      return false;
-    });
+  // Primero aplicar filtro de colecciones ocultas
+  // Si mostrarOcultas está activo, solo mostrar las ocultas
+  // Si mostrarOcultas está desactivado, ocultar las que están marcadas como ocultas
+  if (mostrarOcultas) {
+    // Mostrar SOLO las colecciones ocultas, ignorando otros filtros de tipo
+    sets = sets.filter(s => hiddenCollections.has(s.code));
+  } else {
+    // Filtrar las colecciones ocultas (no mostrarlas)
+    sets = sets.filter(s => !hiddenCollections.has(s.code));
+    
+    // filtro tipo set (ahora con múltiples selecciones)
+    if (filtroTiposSet.size > 0 && filtroTiposSet.size < 8) {
+      sets = sets.filter(s => {
+        const tipo = (s.set_type || "").toLowerCase();
+        
+        // Si el tipo está en los seleccionados, incluirlo
+        if (filtroTiposSet.has(tipo)) return true;
+        
+        // Si "other" está seleccionado y no coincide con ninguno conocido
+        if (filtroTiposSet.has("other")) {
+          const tiposConocidos = new Set(["expansion","core","commander","masters","promo","token","memorabilia"]);
+          if (!tiposConocidos.has(tipo)) return true;
+        }
+        
+        return false;
+      });
+    }
   }
 
-  // ocultar tokens/arte
-  if (ocultarTokens) sets = sets.filter(s => (s.set_type || "").toLowerCase() !== "token");
+  // ocultar tokens/arte (solo si no estamos en modo "mostrar ocultas")
+  if (!mostrarOcultas && ocultarTokens) sets = sets.filter(s => (s.set_type || "").toLowerCase() !== "token");
 
-  if (ocultarArte) {
+  if (!mostrarOcultas && ocultarArte) {
     sets = sets.filter(s => {
       const t = (s.set_type || "");
       const n = (s.nombre || "").toLowerCase();
@@ -1575,6 +1616,18 @@ function renderColecciones() {
     const totalEnTxt = (pEn.total === null ? "?" : pEn.total);
     const totalEsTxt = (pEs.total === null ? "?" : pEs.total);
 
+    // Calcular porcentajes
+    let pctEn = "-%";
+    let pctEs = "-%";
+    
+    if (pEn.total && pEn.total > 0) {
+      pctEn = Math.floor((pEn.tengo / pEn.total) * 100) + "%";
+    }
+    
+    if (pEs.total && pEs.total > 0) {
+      pctEs = Math.floor((pEs.tengo / pEs.total) * 100) + "%";
+    }
+
     const fechaTxt = formatMesAnyo(s.released_at);
 
     // ✅ Icono (si existe)
@@ -1589,7 +1642,7 @@ function renderColecciones() {
       ${iconHtml}
       <div class="coleccion-nombre">${s.nombre}</div>
     </div>
-    <div class="badge">EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt}</div>
+    <div class="badge"><span class="pct-lang">${pctEn}</span> EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt} <span class="pct-lang">${pctEs}</span></div>
   </div>
 `;
   }
@@ -1744,6 +1797,12 @@ async function abrirSet(setKey) {
 setActualCode = code;
 setActualLang = lang || "en";
 aplicarUILangSet();
+
+  // Actualizar checkbox de ocultar colección
+  const chkOcultarColeccion = document.getElementById("chkOcultarColeccion");
+  if (chkOcultarColeccion) {
+    chkOcultarColeccion.checked = hiddenCollections.has(code);
+  }
 
   const info = setMetaByKey.get(setKey) || { nombre: "Set", lang: "en" };
   document.getElementById("tituloSet").textContent = `${info.nombre} (${formatLang(setActualLang)})`;
@@ -2323,6 +2382,22 @@ if (btnStatsRecalcular) {
     });
   }
 
+  // Checkbox para ocultar colección
+  const chkOcultarColeccion = document.getElementById("chkOcultarColeccion");
+  if (chkOcultarColeccion) {
+    chkOcultarColeccion.addEventListener("change", () => {
+      if (!setActualCode) return;
+      
+      if (chkOcultarColeccion.checked) {
+        hiddenCollections.add(setActualCode);
+      } else {
+        hiddenCollections.delete(setActualCode);
+      }
+      
+      guardarHiddenCollections();
+    });
+  }
+
   // Cambiar idioma dentro del set
   const btnSetLangEn = document.getElementById("btnSetLangEn");
   if (btnSetLangEn) {
@@ -2382,6 +2457,15 @@ if (btnStatsRecalcular) {
       renderColecciones();
     });
   });
+  
+  // Checkbox de mostrar ocultas
+  const chkMostrarOcultas = document.getElementById("chkMostrarOcultas");
+  if (chkMostrarOcultas) {
+    chkMostrarOcultas.addEventListener("change", () => {
+      mostrarOcultas = chkMostrarOcultas.checked;
+      renderColecciones();
+    });
+  }
   
   // Botón marcar todos
   const btnMarcarTodos = document.getElementById("btnMarcarTodos");
@@ -2466,6 +2550,7 @@ async function init() {
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
   cargarHiddenEmptySets();
+  cargarHiddenCollections();
   cargarStatsSnapshot();
 
   wireGlobalButtons();
