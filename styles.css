@@ -1428,8 +1428,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 
 .control-fila .lbl {
   font-size: 12px;
-  color: var(--muted);
+  color: rgba(0, 0, 0, 0.85);
   min-width: 60px;
+  font-weight: 600;
 }
 
 .control-ri {
@@ -1521,7 +1522,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 /* Acciones columna derecha */
 .acciones-col{ display:flex; flex-direction:column; gap: 10px; min-width: 210px; }
 .fila-accion{ display:flex; align-items:center; justify-content:space-between; gap: 10px; }
-.lbl{ color: var(--muted); font-size: 12px; }
+.lbl{ color: rgba(0, 0, 0, 0.85); font-size: 12px; font-weight: 600; }
 
 /* Stepper */
 .stepper{ display:flex; align-items:center; gap: 6px; }
