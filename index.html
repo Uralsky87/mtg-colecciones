@@ -2,7 +2,7 @@
 <html lang="es" data-theme="light">
 <head>
   <meta charset="UTF-8" />
-  <title>MTG Colecciones</title>
+  <title>ManaCodex</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="manifest" href="manifest.webmanifest">
@@ -17,8 +17,7 @@
        PANTALLA: BIENVENIDA
   ======================= -->
   <section id="pantallaInicio" class="pantalla active">
-    <h1>Mi Colección de Magic</h1>
-    <p class="subtitulo">Organiza tus ediciones y marca tus cartas.</p>
+    <img src="icons/manacodex.png" alt="ManaCodex" class="logo-inicio" />
     <button id="btnEntrar" class="btn-principal">Entrar</button>
   </section>
 
@@ -26,7 +25,7 @@
        PANTALLA: MENÚ PRINCIPAL
   ======================= -->
   <section id="pantallaMenu" class="pantalla">
-    <h2>Menú</h2>
+    <img src="icons/manacodex.png" alt="ManaCodex" class="logo-menu" />
     <div class="menu">
       <button class="btn-menu" data-pantalla="colecciones">Colecciones</button>
       <button class="btn-menu" data-pantalla="buscar">Buscar</button>
@@ -40,7 +39,7 @@
   ======================= -->
   <section id="pantallaColecciones" class="pantalla">
     <div class="topbar">
-      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <button class="btn-secundario btn-back" data-action="volverMenu" aria-label="Volver al menú">←</button>
       <h2>Colecciones</h2>
     </div>
 
@@ -117,7 +116,7 @@
   ======================= -->
   <section id="pantallaSet" class="pantalla">
     <div class="topbar topbar-set">
-      <button class="btn-secundario" data-action="volverColecciones">← Colecciones</button>
+      <button class="btn-secundario btn-back" data-action="volverColecciones" aria-label="Volver a colecciones">←</button>
       <h2 id="tituloSet">Set</h2>
 
       <div class="set-actions">
@@ -181,7 +180,7 @@
   ======================= -->
   <section id="pantallaBuscar" class="pantalla">
     <div class="topbar">
-      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <button class="btn-secundario btn-back" data-action="volverMenu" aria-label="Volver al menú">←</button>
       <h2>Buscar</h2>
     </div>
 
@@ -202,7 +201,7 @@
   ======================= -->
   <section id="pantallaEstadisticas" class="pantalla">
     <div class="topbar">
-      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <button class="btn-secundario btn-back" data-action="volverMenu" aria-label="Volver al menú">←</button>
       <h2>Estadísticas</h2>
     </div>
 
@@ -224,7 +223,7 @@
   ======================= -->
   <section id="pantallaCuenta" class="pantalla">
     <div class="topbar">
-      <button class="btn-secundario" data-action="volverMenu">← Menú</button>
+      <button class="btn-secundario btn-back" data-action="volverMenu" aria-label="Volver al menú">←</button>
       <h2>Cuenta</h2>
     </div>
 

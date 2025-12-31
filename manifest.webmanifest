@@ -1,6 +1,6 @@
 {
-  "name": "MTG Colecciones",
-  "short_name": "MTG",
+  "name": "ManaCodex",
+  "short_name": "ManaCodex",
   "start_url": "/mtg-colecciones/",
   "scope": "/mtg-colecciones/",
   "display": "standalone",

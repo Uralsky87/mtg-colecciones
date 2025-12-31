@@ -68,6 +68,48 @@ h1, h2 {
   text-align: center;
 }
 
+.logo-inicio {
+  max-width: 560px;
+  width: 90%;
+  height: auto;
+  display: block;
+  margin: 0 auto 32px;
+  object-fit: contain;
+}
+
+.logo-menu {
+  max-width: 280px;
+  width: 80%;
+  height: auto;
+  display: block;
+  margin: 0 auto 24px;
+  object-fit: contain;
+}
+
+.btn-back {
+  font-size: 28px !important;
+  font-weight: bold !important;
+  padding: 8px 16px !important;
+  line-height: 1 !important;
+}
+
+@media (max-width: 560px) {
+  .logo-inicio {
+    max-width: 85%;
+    margin-bottom: 24px;
+  }
+  
+  .logo-menu {
+    max-width: 70%;
+    margin-bottom: 20px;
+  }
+  
+  .btn-back {
+    font-size: 24px !important;
+    padding: 6px 12px !important;
+  }
+}
+
 .subtitulo {
   text-align: center;
   opacity: 0.8;
