@@ -1150,7 +1150,8 @@ async function ensureSetCardsLoaded(setKey) {
     lang,
     _img: pickImage(card),
     _prices: card.prices || null,
-    _colors: card.colors || null
+    _colors: card.colors || null,
+    _raw: card // Guardar objeto completo para acceder a card_faces
   }));
 
   // Guardar resumen (total/tengo) para que no vuelva a 0/? al reiniciar
@@ -1217,7 +1218,7 @@ function guardarHiddenEmptySets() {
 // Modal carta + precio
 // ===============================
 
-function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = null, navIndex = -1 }) {
+function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = null, navIndex = -1, cardData = null }) {
   const modal = document.getElementById("modalCarta");
   const tit = document.getElementById("modalCartaTitulo");
   const body = document.getElementById("modalCartaBody");
@@ -1246,6 +1247,14 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
   const prevDisabled = !tieneNav || navIndex <= 0;
   const nextDisabled = !tieneNav || navIndex >= navLista.length - 1;
 
+  // Detectar si es carta de doble cara
+  const esDobleCaracardFaces = cardData?.card_faces?.length >= 2;
+  const imagenCara1 = cardData?.card_faces?.[0]?.image_uris?.normal;
+  const imagenCara2 = cardData?.card_faces?.[1]?.image_uris?.normal;
+  
+  // Variable para rastrear qué cara se muestra (la guardamos en el body como data attribute)
+  let caraActual = 1;
+
   body.innerHTML = `
     <div class="card" style="margin-bottom:12px;">
       <div class="modal-info-row">
@@ -1261,18 +1270,43 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
         ` : ""}
       </div>
     </div>
-    ${imageUrl ? `<img src="${imageUrl}" alt="${titulo || "Carta"}" loading="lazy" />`
-              : `<div class="card"><p>No hay imagen disponible.</p></div>`}
+    ${esDobleCaracardFaces && imagenCara1 && imagenCara2 ? `
+      <div style="position: relative; display: inline-block;">
+        <img id="imgCartaModal" src="${imagenCara1}" alt="${titulo || "Carta"}" loading="lazy" 
+             data-cara1="${imagenCara1}" data-cara2="${imagenCara2}" data-cara-actual="1" />
+        <button id="btnVoltearCarta" class="btn-voltear-carta" type="button" title="Voltear carta">
+          🔄
+        </button>
+      </div>
+    ` : (imageUrl ? `<img src="${imageUrl}" alt="${titulo || "Carta"}" loading="lazy" />`
+              : `<div class="card"><p>No hay imagen disponible.</p></div>`)}
   `;
 
   const btnPrev = body.querySelector('.btn-nav-prev');
   const btnNext = body.querySelector('.btn-nav-next');
+  const btnVoltear = body.querySelector('#btnVoltearCarta');
+  const imgCarta = body.querySelector('#imgCartaModal');
 
   if (btnPrev) {
     btnPrev.addEventListener('click', () => moverModalCarta(-1));
   }
   if (btnNext) {
     btnNext.addEventListener('click', () => moverModalCarta(1));
+  }
+  
+  if (btnVoltear && imgCarta) {
+    btnVoltear.addEventListener('click', () => {
+      const caraActual = parseInt(imgCarta.dataset.caraActual);
+      const nuevaCara = caraActual === 1 ? 2 : 1;
+      const nuevaImagen = nuevaCara === 1 ? imgCarta.dataset.cara1 : imgCarta.dataset.cara2;
+      
+      imgCarta.style.opacity = '0';
+      setTimeout(() => {
+        imgCarta.src = nuevaImagen;
+        imgCarta.dataset.caraActual = nuevaCara;
+        imgCarta.style.opacity = '1';
+      }, 150);
+    });
   }
 
   modal.classList.remove("hidden");
@@ -1294,6 +1328,7 @@ function moverModalCarta(delta) {
     precio: formatPrecioEUR(c?._prices),
     navLista: modalNavState.lista,
     navIndex: nuevo,
+    cardData: c?._raw || null,
   });
 }
 
@@ -1850,7 +1885,8 @@ cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
       imageUrl: carta?._img || null,
       numero: carta?.numero || "",
       rareza: carta?.rareza || "",
-      precio: formatPrecioEUR(carta?._prices)
+      precio: formatPrecioEUR(carta?._prices),
+      cardData: carta?._raw || null,
     });
   });
 });
