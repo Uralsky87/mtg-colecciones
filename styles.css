@@ -3027,7 +3027,8 @@ body{
   }
   
   .carta-controles .inp-num {
-    background: rgba(0, 0, 0, 0.04) !important;
+    background: rgba(255, 255, 255, 1) !important;
     border: 1px solid rgba(0, 0, 0, 0.12) !important;
+    color: #000 !important;
   }
 }

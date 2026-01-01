@@ -2041,6 +2041,85 @@ cont.querySelectorAll(".chk-want").forEach(chk => {
 
 
 // ===============================
+// 5b) Autocompletar colección
+// ===============================
+
+function marcarTodasCartasSet() {
+  if (!setActualKey) return;
+  
+  const cartas = cartasDeSetKey(setActualKey);
+  cartas.forEach(c => {
+    const st = getEstadoCarta(c.id);
+    if (st.qty === 0) {
+      setQty(c.id, 1);
+    }
+  });
+  
+  renderTablaSet(setActualKey);
+  renderColecciones();
+}
+
+function desmarcarTodasCartasSet() {
+  if (!setActualKey) return;
+  
+  const cartas = cartasDeSetKey(setActualKey);
+  cartas.forEach(c => {
+    setQty(c.id, 0);
+  });
+  
+  renderTablaSet(setActualKey);
+  renderColecciones();
+}
+
+function parseRangosCartas(texto) {
+  const rangos = texto.trim().split(',').map(s => s.trim()).filter(Boolean);
+  const indices = new Set();
+  
+  for (const rango of rangos) {
+    if (rango.includes('-')) {
+      // Rango tipo "8-12"
+      const [inicio, fin] = rango.split('-').map(n => parseInt(n.trim(), 10));
+      if (isNaN(inicio) || isNaN(fin)) continue;
+      
+      for (let i = Math.min(inicio, fin); i <= Math.max(inicio, fin); i++) {
+        indices.add(i);
+      }
+    } else {
+      // Número individual tipo "1"
+      const num = parseInt(rango, 10);
+      if (!isNaN(num)) {
+        indices.add(num);
+      }
+    }
+  }
+  
+  return [...indices].sort((a, b) => a - b);
+}
+
+function aplicarRangosCartas(rangosTexto) {
+  if (!setActualKey) return;
+  
+  const indices = parseRangosCartas(rangosTexto);
+  if (indices.length === 0) return;
+  
+  const lista = getListaSetFiltrada(setActualKey);
+  
+  indices.forEach(idx => {
+    // Las posiciones son 1-based para el usuario
+    const cartaIdx = idx - 1;
+    if (cartaIdx >= 0 && cartaIdx < lista.length) {
+      const carta = lista[cartaIdx];
+      const st = getEstadoCarta(carta.id);
+      setQty(carta.id, st.qty + 1);
+    }
+  });
+  
+  renderTablaSet(setActualKey);
+  renderColecciones();
+}
+
+
+// ===============================
 // 6) Buscar: por nombre + mostrar sets donde aparece y estado + botón Ir (set+idioma)
 // ===============================
 
@@ -2430,6 +2509,56 @@ if (btnStatsRecalcular) {
     btnSetLangEs.addEventListener("click", async () => {
       if (!setActualCode) return;
       await abrirSet(`${setActualCode}__es`);
+    });
+  }
+
+  // Autocompletar colección - Toggle desplegable
+  const btnToggleAutocompletar = document.getElementById("btnToggleAutocompletar");
+  const autocompletarContent = document.getElementById("autocompletarContent");
+  
+  if (btnToggleAutocompletar && autocompletarContent) {
+    btnToggleAutocompletar.addEventListener("click", () => {
+      autocompletarContent.classList.toggle("hidden");
+      const arrow = btnToggleAutocompletar.querySelector(".arrow");
+      if (arrow) arrow.textContent = autocompletarContent.classList.contains("hidden") ? "▼" : "▲";
+    });
+  }
+
+  // Marcar todas las cartas del set
+  const btnMarcarTodasSet = document.getElementById("btnMarcarTodasSet");
+  if (btnMarcarTodasSet) {
+    btnMarcarTodasSet.addEventListener("click", () => {
+      marcarTodasCartasSet();
+    });
+  }
+
+  // Desmarcar todas las cartas del set
+  const btnDesmarcarTodasSet = document.getElementById("btnDesmarcarTodasSet");
+  if (btnDesmarcarTodasSet) {
+    btnDesmarcarTodasSet.addEventListener("click", () => {
+      desmarcarTodasCartasSet();
+    });
+  }
+
+  // Aplicar rangos de cartas
+  const btnAplicarRangos = document.getElementById("btnAplicarRangos");
+  const inputRangosCartas = document.getElementById("inputRangosCartas");
+  
+  if (btnAplicarRangos && inputRangosCartas) {
+    btnAplicarRangos.addEventListener("click", () => {
+      const texto = inputRangosCartas.value;
+      if (texto.trim()) {
+        aplicarRangosCartas(texto);
+        inputRangosCartas.value = ""; // Limpiar después de aplicar
+      }
+    });
+    
+    // También permitir Enter en el input
+    inputRangosCartas.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        btnAplicarRangos.click();
+      }
     });
   }
 
