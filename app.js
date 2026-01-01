@@ -2794,3 +2794,40 @@ function mostrarBannerActualizacion(newWorker) {
   }, { once: true });
 }
 
+// ===============================
+// Botones flotantes scroll to top
+// ===============================
+
+function setupScrollToTopButton(buttonId, containerId) {
+  const button = document.getElementById(buttonId);
+  const container = document.getElementById(containerId);
+  
+  if (!button || !container) return;
+  
+  // Mostrar/ocultar botón según el scroll
+  const handleScroll = () => {
+    if (window.scrollY > 300) {
+      button.classList.add("visible");
+    } else {
+      button.classList.remove("visible");
+    }
+  };
+  
+  // Scroll suave al inicio
+  button.addEventListener("click", () => {
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth"
+    });
+  });
+  
+  // Escuchar scroll
+  window.addEventListener("scroll", handleScroll);
+  
+  // Verificar posición inicial
+  handleScroll();
+}
+
+// Inicializar botones
+setupScrollToTopButton("btnScrollTopColecciones", "pantallaColecciones");
+setupScrollToTopButton("btnScrollTopSet", "pantallaSet");
