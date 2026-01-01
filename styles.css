@@ -87,8 +87,8 @@ h1, h2 {
 }
 
 .btn-back {
-  width: 50px;
-  height: 50px;
+  width: 100px;
+  height: 60px;
   cursor: pointer;
   transition: transform 0.2s ease, opacity 0.2s ease;
   object-fit: contain;
@@ -115,8 +115,8 @@ h1, h2 {
   }
   
   .btn-back {
-    width: 45px;
-    height: 45px;
+    width: 32px;
+    height: 20px;
   }
 }
 
