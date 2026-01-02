@@ -1,4 +1,4 @@
-// ===============================
+﻿// ===============================
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
@@ -2166,6 +2166,14 @@ async function renderResultadosBuscar(texto) {
     return;
   }
 
+  // Guardar estado de expansión antes de limpiar
+  const expandedGroups = new Set();
+  cont.querySelectorAll(".versiones-container").forEach(container => {
+    if (container.style.display !== "none") {
+      expandedGroups.add(container.id);
+    }
+  });
+
   cont.innerHTML = `<div class="card"><p>Buscando en Scryfall…</p></div>`;
 
   let cards = [];
@@ -2191,16 +2199,31 @@ async function renderResultadosBuscar(texto) {
   let html = avisoLimit;
 
   for (const g of grupos) {
+    const grupoId = `grupo-${g.oracleId}`;
+    const numVersiones = g.versiones.length;
+    const isExpanded = expandedGroups.has(grupoId);
+    
     html += `
       <div class="card">
-        <h3 style="margin-top:0;">
-          <button class="btn-link-carta" type="button" data-accion="ver-carta" data-oracle="${g.oracleId}">
-            ${g.titulo}
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+          <h3 style="margin: 0; flex: 1;">
+            <button class="btn-link-carta" type="button" data-accion="ver-carta" data-oracle="${g.oracleId}">
+              ${g.titulo}
+            </button>
+          </h3>
+          <button 
+            class="btn-secundario btn-toggle-versiones" 
+            type="button" 
+            data-target="${grupoId}"
+            style="padding: 6px 12px; font-size: 0.9rem;"
+          >
+            ${isExpanded ? '▲ Ocultar' : '▼ Mostrar'} ${numVersiones} versión${numVersiones !== 1 ? 'es' : ''}
           </button>
-        </h3>
+        </div>
 
-        <div class="hint">Aparece en:</div>
-        <ul class="lista-versiones">
+        <div id="${grupoId}" class="versiones-container" style="display: ${isExpanded ? 'block' : 'none'}; margin-top: 15px;">
+          <div class="hint">Aparece en:</div>
+          <ul class="lista-versiones">
     `;
 
     for (const v of g.versiones) {
@@ -2269,10 +2292,30 @@ async function renderResultadosBuscar(texto) {
       `;
     }
 
-    html += `</ul></div>`;
+    html += `</ul></div></div>`;
   }
 
   cont.innerHTML = html;
+  
+  // Event listeners para botones de expandir/colapsar
+  cont.querySelectorAll(".btn-toggle-versiones").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const targetId = btn.dataset.target;
+      const container = document.getElementById(targetId);
+      
+      if (container) {
+        const isVisible = container.style.display !== "none";
+        
+        if (isVisible) {
+          container.style.display = "none";
+          btn.textContent = btn.textContent.replace("▲ Ocultar", "▼ Mostrar");
+        } else {
+          container.style.display = "block";
+          btn.textContent = btn.textContent.replace("▼ Mostrar", "▲ Ocultar");
+        }
+      }
+    });
+  });
 
   // Map por id para abrir modal de un print concreto
   const verById = new Map();
