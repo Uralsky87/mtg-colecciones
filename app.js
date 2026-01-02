@@ -2,6 +2,14 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
+// Función para normalizar texto (remover acentos)
+function normalizarTexto(texto) {
+  return (texto || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 const cartas = [];
 const expandedCardIds = new Set(); // ids desplegados en esta sesión
 
@@ -1464,7 +1472,7 @@ const LS_FILTERS_KEY = "mtg_colecciones_filtros_v1";
 
 
 function setFiltroTextoColecciones(texto) {
-  filtroTextoColecciones = (texto || "").trim().toLowerCase();
+  filtroTextoColecciones = normalizarTexto((texto || "").trim());
   guardarFiltrosColecciones();
   renderColecciones();
 }
@@ -1602,7 +1610,7 @@ function renderColecciones() {
 
   // filtro texto
   if (filtroTextoColecciones) {
-    sets = sets.filter(s => (s.nombre || "").toLowerCase().includes(filtroTextoColecciones));
+    sets = sets.filter(s => normalizarTexto(s.nombre).includes(filtroTextoColecciones));
   }
 
   if (sets.length === 0) {
@@ -1783,7 +1791,7 @@ function aplicarUIFiltrosSet() {
 }
 
 function setFiltroTextoSet(texto) {
-  filtroTextoSet = (texto || "").trim().toLowerCase();
+  filtroTextoSet = normalizarTexto((texto || "").trim());
   if (setActualKey) renderTablaSet(setActualKey);
 }
 
@@ -1796,9 +1804,9 @@ function getListaSetFiltrada(setKey) {
   let lista = cartasDeSetKey(setKey)
     .sort((a, b) => compareCollectorNumbers(a.numero, b.numero));
 
-  const ft = String(filtroTextoSet || "").trim().toLowerCase();
+  const ft = String(filtroTextoSet || "").trim();
 if (ft) {
-  lista = lista.filter(c => (c.nombre || "").toLowerCase().includes(ft));
+  lista = lista.filter(c => normalizarTexto(c.nombre).includes(ft));
 }
 
   if (filtroSoloFaltanSet) {
@@ -2124,10 +2132,10 @@ function aplicarRangosCartas(rangosTexto) {
 // ===============================
 
 function buscarCartasPorNombre(texto) {
-  const q = texto.trim().toLowerCase();
+  const q = normalizarTexto(texto.trim());
   if (!q) return [];
 
-  const coincidencias = cartas.filter(c => c.nombre.toLowerCase().includes(q));
+  const coincidencias = cartas.filter(c => normalizarTexto(c.nombre).includes(q));
 
   const porNombre = new Map();
   coincidencias.forEach(c => {
