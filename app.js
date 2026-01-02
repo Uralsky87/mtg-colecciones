@@ -2203,33 +2203,65 @@ async function renderResultadosBuscar(texto) {
 
     for (const v of g.versiones) {
       const qty = v.st.qty || 0;
-      const tengoTxt = qty > 0 ? `✅ x${qty}` : `❌ 0`;
-      const foilTxt = v.st.foil ? " · ✨ Foil" : "";
-      const playedTxt = (v.st.playedQty || 0) > 0 ? ` · 🧱 Played x${v.st.playedQty}` : "";
-      const riTxt = v.st.wantMore ? " · 🟣 Ri" : "";
+      const foilQty = v.st.foilQty || 0;
 
       html += `
         <li class="item-version">
           <div class="item-version-main">
-            <div>
+            <div class="version-info">
               <img src="icons/${qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
               <button class="btn-link-carta" type="button" data-accion="ver-print" data-id="${v.id}">
                 <strong>${v.set_name}</strong>
                 <span class="lang-pill">${formatLang(v.lang)}</span>
                 <span class="hint"> (#${v.collector_number}, ${v.rareza})</span>
               </button>
+            </div>
 
-              <div class="hint">${tengoTxt}${foilTxt}${playedTxt}${riTxt}</div>
+            <div class="version-controls">
+              <!-- Cantidad -->
+              <div class="control-fila-buscar">
+                <span class="lbl-buscar">Cantidad</span>
+                <div class="stepper stepper-buscar">
+                  <button class="btn-step btn-qty-minus-buscar" data-id="${v.id}" ${qty <= 0 ? "disabled" : ""}>−</button>
+                  <input
+                    type="number"
+                    class="inp-num inp-qty-buscar"
+                    data-id="${v.id}"
+                    min="0"
+                    max="999"
+                    value="${qty}"
+                  />
+                  <button class="btn-step btn-qty-plus-buscar" data-id="${v.id}">+</button>
+                </div>
+              </div>
+
+              <!-- Foil -->
+              <div class="control-fila-buscar">
+                <span class="lbl-buscar">Foil</span>
+                <div class="stepper stepper-buscar">
+                  <button class="btn-step btn-foil-minus-buscar" data-id="${v.id}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
+                  <input
+                    type="number"
+                    class="inp-num inp-foil-buscar"
+                    data-id="${v.id}"
+                    min="0"
+                    max="${qty}"
+                    value="${foilQty}"
+                    ${qty === 0 ? "disabled" : ""}
+                  />
+                  <button class="btn-step btn-foil-plus-buscar" data-id="${v.id}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
+                </div>
+              </div>
             </div>
 
             <button
-  class="btn-secundario btn-ir-set"
-  type="button"
-  data-setkey="${v.setKey}"
-  data-cardname="${escapeAttr(v.nombre || "")}"
->
-  Ir
-</button>
+              class="btn-secundario btn-ir-set"
+              type="button"
+              data-setkey="${v.setKey}"
+              data-cardname="${escapeAttr(v.nombre || "")}"
+            >
+              Ir
+            </button>
           </div>
         </li>
       `;
@@ -2268,6 +2300,66 @@ async function renderResultadosBuscar(texto) {
       const data = mapaOracleAImg.get(btn.dataset.oracle);
       if (!data) return;
       abrirModalCarta({ titulo: data.titulo, imageUrl: data.img });
+    });
+  });
+
+  // Controles de cantidad en búsqueda
+  cont.querySelectorAll(".btn-qty-minus-buscar").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const st = getEstadoCarta(id);
+      setQty(id, st.qty - 1);
+      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+      renderColecciones();
+    });
+  });
+
+  cont.querySelectorAll(".btn-qty-plus-buscar").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const st = getEstadoCarta(id);
+      setQty(id, st.qty + 1);
+      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+      renderColecciones();
+    });
+  });
+
+  cont.querySelectorAll(".inp-qty-buscar").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const id = inp.dataset.id;
+      setQty(id, inp.value);
+      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+      renderColecciones();
+    });
+  });
+
+  // Controles de foil en búsqueda
+  cont.querySelectorAll(".btn-foil-minus-buscar").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const st = getEstadoCarta(id);
+      setFoilQty(id, (st.foilQty || 0) - 1);
+      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+      renderColecciones();
+    });
+  });
+
+  cont.querySelectorAll(".btn-foil-plus-buscar").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const st = getEstadoCarta(id);
+      setFoilQty(id, (st.foilQty || 0) + 1);
+      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+      renderColecciones();
+    });
+  });
+
+  cont.querySelectorAll(".inp-foil-buscar").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const id = inp.dataset.id;
+      setFoilQty(id, inp.value);
+      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+      renderColecciones();
     });
   });
 

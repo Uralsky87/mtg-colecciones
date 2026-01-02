@@ -690,9 +690,78 @@ input[type="text"] {
 
 .item-version-main {
   display: grid;
-  grid-template-columns: 1fr auto;
   gap: 10px;
   align-items: center;
+}
+
+/* En PC: info + controles + botón Ir en fila */
+@media (min-width: 769px) {
+  .item-version-main {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .version-controls {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+  }
+}
+
+/* En móvil: info en una fila, controles debajo, botón Ir a la derecha */
+@media (max-width: 768px) {
+  .item-version-main {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "info btn"
+      "controls controls";
+  }
+
+  .version-info {
+    grid-area: info;
+  }
+
+  .version-controls {
+    grid-area: controls;
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .btn-ir-set {
+    grid-area: btn;
+  }
+}
+
+.control-fila-buscar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lbl-buscar {
+  font-size: 0.85rem;
+  font-weight: 500;
+  width: 70px;
+  text-align: right;
+}
+
+.stepper-buscar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.stepper-buscar .btn-step {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+}
+
+.stepper-buscar .inp-num {
+  width: 50px;
+  height: 28px;
+  font-size: 14px;
+  text-align: center;
 }
 
 /* Botón “título” clicable (para abrir modal) */
