@@ -305,6 +305,25 @@
         <strong>⏳ Agregando cartas a la colección...</strong><br>
         <small>Esto puede tardar unos segundos</small>
       </div>
+      <div id="mensajeCargandoImagenesDeck" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+        <strong>⏳ Cargando imágenes...</strong><br>
+        <small>Esto puede tardar unos segundos</small>
+      </div>
+    </div>
+
+    <!-- Modo de visualización -->
+    <div class="card">
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <span style="font-weight: 600;">Vista:</span>
+        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+          <input type="radio" name="modoDeck" value="lista" id="radioModoDeckLista" checked>
+          <span>Lista</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+          <input type="radio" name="modoDeck" value="imagenes" id="radioModoDeckImagenes">
+          <span>Imágenes</span>
+        </label>
+      </div>
     </div>
 
     <!-- Leyenda de LEDs -->

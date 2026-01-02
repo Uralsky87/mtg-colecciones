@@ -2454,6 +2454,7 @@ function importarEstadoDesdeTexto(jsonText) {
 const LS_DECKS_KEY = "mtg_decks_v1";
 let decks = [];
 let deckActual = null;
+let modoDeckVisualizacion = 'lista'; // 'lista' o 'imagenes'
 
 function cargarDecks() {
   const raw = localStorage.getItem(LS_DECKS_KEY);
@@ -2684,6 +2685,18 @@ function renderDeckCartas() {
   
   document.getElementById("resumenDeck").innerHTML = resumenTexto;
   
+  // Renderizar según el modo seleccionado
+  if (modoDeckVisualizacion === 'imagenes') {
+    // Limpiar contenido anterior inmediatamente
+    document.getElementById("listaCartasDeck").innerHTML = '';
+    renderDeckCartasModoImagenes();
+  } else {
+    renderDeckCartasModoLista();
+  }
+}
+
+function renderDeckCartasModoLista() {
+  
   // Separar tierras básicas
   const tierrasBasicas = ['plains', 'island', 'swamp', 'mountain', 'forest', 'wastes',
                           'llanura', 'llanuras', 'isla', 'islas', 'pantano', 'pantanos', 
@@ -2737,6 +2750,187 @@ function renderDeckCartas() {
   // Event listeners
   wireBotonesMostrarCartaDeck();
   wireBotonesIrDeckCarta();
+}
+
+async function renderDeckCartasModoImagenes() {
+  if (!deckActual) return;
+  
+  // Mostrar mensaje de carga
+  const mensajeCarga = document.getElementById("mensajeCargandoImagenesDeck");
+  if (mensajeCarga) mensajeCarga.style.display = "block";
+  
+  const tierrasBasicas = ['plains', 'island', 'swamp', 'mountain', 'forest', 'wastes',
+                          'llanura', 'llanuras', 'isla', 'islas', 'pantano', 'pantanos', 
+                          'montaña', 'montañas', 'bosque', 'bosques'];
+  
+  const cartasNormales = [];
+  const cartasTierras = [];
+  
+  deckActual.cartas.forEach(carta => {
+    const nombreNorm = normalizarTexto(carta.nombre);
+    if (tierrasBasicas.some(tb => nombreNorm === normalizarTexto(tb))) {
+      cartasTierras.push(carta);
+    } else {
+      cartasNormales.push(carta);
+    }
+  });
+  
+  let html = '<div class="cartas-grid">';
+  
+  // Cartas normales
+  let posicion = 1;
+  for (const carta of cartasNormales) {
+    html += await renderCartaDeckImagen(carta, posicion, 'normal');
+    posicion++;
+  }
+  
+  // Tierras básicas
+  for (const carta of cartasTierras) {
+    html += await renderCartaDeckImagen(carta, posicion, 'tierra');
+    posicion++;
+  }
+  
+  // Sideboard
+  if (deckActual.sideboard && deckActual.sideboard.length > 0) {
+    posicion = 1;
+    for (const carta of deckActual.sideboard) {
+      html += await renderCartaDeckImagen(carta, posicion, 'sideboard');
+      posicion++;
+    }
+  }
+  
+  html += '</div>';
+  document.getElementById("listaCartasDeck").innerHTML = html;
+  
+  // Ocultar mensaje de carga
+  if (mensajeCarga) mensajeCarga.style.display = "none";
+  
+  // Event listeners
+  wireControlesDeckImagenes();
+}
+
+async function renderCartaDeckImagen(carta, posicion, tipo) {
+  const ledIcon = carta.ledType === 'violeta' ? 'Ledvioleta' : (carta.tengo ? 'Ledazul' : 'Ledrojo');
+  const setKey = `${carta.set.toLowerCase()}__en`;
+  
+  // Cargar el set y obtener la imagen
+  await ensureSetCardsLoaded(setKey);
+  const listaSet = cartasDeSetKey(setKey);
+  const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
+  const tieneImg = cartaCatalogo?._img && cartaCatalogo._img.trim() !== "";
+  const imagenUrl = cartaCatalogo?._img || '';
+  
+  // Obtener cantidad real de la colección
+  const st = cartaCatalogo ? getEstadoCarta(cartaCatalogo.id) : { qty: 0, foilQty: 0 };
+  const cantidadMostrar = st.qty;
+  
+  const cartaId = cartaCatalogo?.id || `${carta.set}-${carta.numero}`;
+  
+  return `
+    <div class="carta-item ${cantidadMostrar > 0 ? 'has-qty' : ''}">
+      <!-- Header de la carta -->
+      <div class="carta-header">
+        <img src="icons/${ledIcon}.png" class="led-indicator" alt="" width="24" height="24">
+        <button
+          class="btn-link-carta btn-ver-carta-deck-img"
+          type="button"
+          data-nombre="${escapeAttr(carta.nombre)}"
+          data-set="${carta.set}"
+          data-numero="${carta.numero}"
+        >
+          ${carta.nombre}
+        </button>
+        <span class="carta-numero">#${posicion}</span>
+      </div>
+
+      <!-- Imagen de la carta -->
+      <div class="carta-imagen-container">
+        ${tieneImg 
+          ? `<img src="${imagenUrl}" alt="${carta.nombre}" class="carta-imagen" loading="lazy" />`
+          : `<div class="carta-imagen-placeholder">Sin imagen</div>`
+        }
+      </div>
+
+      <!-- Controles de cantidad -->
+      <div class="carta-controles">
+        <div class="control-fila">
+          <span class="lbl">Cantidad</span>
+          <div class="stepper">
+            <button class="btn-step btn-qty-minus-deck" data-id="${cartaId}" ${cantidadMostrar <= 0 ? "disabled" : ""}>−</button>
+            <input
+              type="number"
+              class="inp-num inp-qty-deck"
+              data-id="${cartaId}"
+              min="0"
+              max="999"
+              value="${cantidadMostrar}"
+            />
+            <button class="btn-step btn-qty-plus-deck" data-id="${cartaId}">+</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireControlesDeckImagenes() {
+  const cont = document.getElementById("listaCartasDeck");
+  if (!cont) return;
+  
+  // Ver carta
+  cont.querySelectorAll(".btn-ver-carta-deck-img").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const nombre = btn.dataset.nombre;
+      const set = btn.dataset.set;
+      const numero = btn.dataset.numero;
+      
+      const setKey = `${set.toLowerCase()}__en`;
+      await ensureSetCardsLoaded(setKey);
+      const listaSet = cartasDeSetKey(setKey);
+      const carta = listaSet.find(c => c.numero === numero);
+      
+      if (carta) {
+        abrirModalCarta({
+          titulo: carta.nombre || nombre,
+          imageUrl: carta._img || null,
+          numero: carta.numero || numero,
+          rareza: carta.rareza || "",
+          precio: formatPrecioEUR(carta._prices),
+          cardData: carta._raw || null
+        });
+      }
+    });
+  });
+  
+  // Controles de cantidad
+  cont.querySelectorAll(".btn-qty-minus-deck").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const st = getEstadoCarta(id);
+      setQty(id, st.qty - 1);
+      renderDeckCartas();
+      renderColecciones();
+    });
+  });
+
+  cont.querySelectorAll(".btn-qty-plus-deck").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      const st = getEstadoCarta(id);
+      setQty(id, st.qty + 1);
+      renderDeckCartas();
+      renderColecciones();
+    });
+  });
+
+  cont.querySelectorAll(".inp-qty-deck").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const id = inp.dataset.id;
+      setQty(id, inp.value);
+      renderDeckCartas();
+      renderColecciones();
+    });
+  });
 }
 
 function renderCartaDeck(carta, numero, tipo) {
@@ -3277,6 +3471,28 @@ if (btnStatsRecalcular) {
   if (btnCancelarDeck) {
     btnCancelarDeck.addEventListener("click", () => {
       document.getElementById("modalAgregarDeck").style.display = "none";
+    });
+  }
+  
+  // Event listeners para cambiar modo de visualización del deck
+  const radioModoDeckLista = document.getElementById("radioModoDeckLista");
+  const radioModoDeckImagenes = document.getElementById("radioModoDeckImagenes");
+  
+  if (radioModoDeckLista) {
+    radioModoDeckLista.addEventListener("change", () => {
+      if (radioModoDeckLista.checked) {
+        modoDeckVisualizacion = 'lista';
+        renderDeckCartas();
+      }
+    });
+  }
+  
+  if (radioModoDeckImagenes) {
+    radioModoDeckImagenes.addEventListener("change", () => {
+      if (radioModoDeckImagenes.checked) {
+        modoDeckVisualizacion = 'imagenes';
+        renderDeckCartas();
+      }
     });
   }
 
