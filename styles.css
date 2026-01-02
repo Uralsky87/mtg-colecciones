@@ -3099,6 +3099,50 @@ body{
   }
 }
 
+/* Modal overlay para agregar deck */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.modal-overlay .modal-content {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal-overlay .modal-content h3 {
+  margin-top: 0;
+}
+
+.modal-overlay .modal-content label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.modal-overlay .modal-content input,
+.modal-overlay .modal-content textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 1rem;
+  box-sizing: border-box;
+}
+
 /* =========================================================
    FONDO “VIDRIO” UNIFICADO (igual que el botón del título)
    PÉGALO AL FINAL

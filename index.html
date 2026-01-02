@@ -38,6 +38,7 @@
     <div class="menu">
       <button class="btn-menu" data-pantalla="colecciones">Colecciones</button>
       <button class="btn-menu" data-pantalla="buscar">Buscar</button>
+      <button class="btn-menu" data-pantalla="decks">Decks</button>
       <button class="btn-menu" data-pantalla="estadisticas">Estadísticas</button>
       <button class="btn-menu" data-pantalla="cuenta">Cuenta</button>
     </div>
@@ -246,6 +247,95 @@
     </div>
 
     <div id="resultadosBuscar"></div>
+  </section>
+
+    <!-- =======================
+       PANTALLA: DECKS
+  ======================= -->
+  <section id="pantallaDecks" class="pantalla">
+    <div class="topbar">
+      <img src="icons/flecharegresar.png" class="btn-back" data-action="volverMenu" aria-label="Volver al menú" alt="Volver" />
+      <h2>Decks</h2>
+    </div>
+
+    <div id="listaDecks"></div>
+
+    <div class="card">
+      <button id="btnAgregarDeck" class="btn-principal" type="button" style="width: 100%;">+ Agregar Deck</button>
+    </div>
+  </section>
+
+  <!-- Modal Agregar Deck -->
+  <div id="modalAgregarDeck" class="modal-overlay" style="display:none;">
+    <div class="modal-content">
+      <h3>Agregar Deck</h3>
+      
+      <label for="inputNombreDeck">Nombre del Deck:</label>
+      <input id="inputNombreDeck" type="text" placeholder="Ej: Mi Mazo Commander" />
+      
+      <label for="textareaListaDeck" style="margin-top: 15px;">Lista de cartas (formato Moxfield):</label>
+      <textarea id="textareaListaDeck" rows="10" placeholder="1 Argonath, Pillars of the Kings (LTC) 351&#10;1 Sol Ring (C21) 263&#10;..." style="width: 100%; font-family: monospace; font-size: 0.9rem;"></textarea>
+      
+      <div id="mensajeCargandoDeck" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+        <strong>⏳ Verificando cartas...</strong><br>
+        <small>Esto puede tardar unos segundos</small>
+      </div>
+      
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button id="btnGuardarDeck" class="btn-principal">Guardar</button>
+        <button id="btnCancelarDeck" class="btn-secundario">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pantalla Ver Deck -->
+  <section id="pantallaVerDeck" class="pantalla">
+    <div class="topbar">
+      <img src="icons/flecharegresar.png" class="btn-back" data-action="volverDecks" aria-label="Volver" alt="Volver" />
+      <h2 id="tituloVerDeck">Deck</h2>
+    </div>
+
+    <div class="card">
+      <div id="resumenDeck" class="hint"></div>
+      <div style="display: flex; gap: 10px; align-items: center; margin-top: 15px; flex-wrap: wrap;">
+        <button id="btnActualizarDeck" class="btn-secundario" type="button">Revisar colección</button>
+        <button id="btnCompletarMazo" class="btn-secundario" type="button">Completar mazo ❗</button>
+      </div>
+      <div id="mensajeCompletandoMazo" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+        <strong>⏳ Agregando cartas a la colección...</strong><br>
+        <small>Esto puede tardar unos segundos</small>
+      </div>
+    </div>
+
+    <!-- Leyenda de LEDs -->
+    <div class="card">
+      <h4 style="margin-top: 0; margin-bottom: 10px;">Leyenda</h4>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="icons/Ledazul.png" alt="" width="24" height="24">
+          <span>En posesión</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="icons/Ledrojo.png" alt="" width="24" height="24">
+          <span>Falta</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="icons/Ledvioleta.png" alt="" width="24" height="24">
+          <span>En posesión en otro set</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="listaCartasDeck"></div>
+    </div>
+
+    <div class="card">
+      <button id="btnEliminarDeck" class="btn-secundario" type="button" style="width: 100%; background: #dc3545;">Eliminar Deck</button>
+    </div>
+
+    <!-- Botón scroll to top -->
+    <button id="btnScrollTopDeck" class="btn-scroll-top" type="button" aria-label="Volver arriba" title="Volver arriba">▲</button>
   </section>
 
     <!-- =======================

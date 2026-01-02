@@ -1449,8 +1449,10 @@ const pantallas = {
   colecciones: document.getElementById("pantallaColecciones"),
   set: document.getElementById("pantallaSet"),
   buscar: document.getElementById("pantallaBuscar"),
+  decks: document.getElementById("pantallaDecks"),
+  verDeck: document.getElementById("pantallaVerDeck"),
   estadisticas: document.getElementById("pantallaEstadisticas"),
-  cuenta: document.getElementById("pantallaCuenta") // <- AÑADE ESTA
+  cuenta: document.getElementById("pantallaCuenta")
 };
 
 function mostrarPantalla(nombre) {
@@ -2446,6 +2448,466 @@ function importarEstadoDesdeTexto(jsonText) {
 
 
 // ===============================
+// DECKS: Gestión de mazos
+// ===============================
+
+const LS_DECKS_KEY = "mtg_decks_v1";
+let decks = [];
+let deckActual = null;
+
+function cargarDecks() {
+  const raw = localStorage.getItem(LS_DECKS_KEY);
+  if (!raw) return;
+  try {
+    decks = JSON.parse(raw);
+  } catch (e) {
+    console.error("Error cargando decks:", e);
+  }
+}
+
+function guardarDecks() {
+  localStorage.setItem(LS_DECKS_KEY, JSON.stringify(decks));
+}
+
+// Parser de formato Moxfield: "1 Argonath, Pillars of the Kings (LTC) 351"
+// Soporta: foil (*F*), números con guiones (MH2-12), etc.
+function parsearLineaDeck(linea) {
+  // Regex mejorado: permite números con guiones y caracteres opcionales al final
+  const match = linea.match(/^(\d+)\s+(.+?)\s+\(([A-Z0-9]+)\)\s+([\w-]+)(?:\s+\*F\*)?$/i);
+  if (!match) return null;
+  
+  return {
+    cantidad: parseInt(match[1], 10),
+    nombre: match[2].trim(),
+    set: match[3].toUpperCase(),
+    numero: match[4]
+  };
+}
+
+function parsearListaDeck(texto) {
+  const lineas = texto.split('\n').map(l => l.trim());
+  const cartas = [];
+  const sideboard = [];
+  let esSideboard = false;
+  
+  for (const linea of lineas) {
+    // Detectar inicio de sideboard
+    if (linea.toUpperCase() === 'SIDEBOARD:') {
+      esSideboard = true;
+      continue;
+    }
+    
+    if (!linea) continue;
+    
+    const carta = parsearLineaDeck(linea);
+    if (carta) {
+      if (esSideboard) {
+        sideboard.push(carta);
+      } else {
+        cartas.push(carta);
+      }
+    }
+  }
+  
+  return { cartas, sideboard };
+}
+
+function renderListaDecks() {
+  const cont = document.getElementById("listaDecks");
+  if (!cont) return;
+  
+  if (decks.length === 0) {
+    cont.innerHTML = `<div class="card"><p class="hint">No hay decks todavía. Pulsa "+ Agregar Deck" para crear uno.</p></div>`;
+    return;
+  }
+  
+  let html = "";
+  decks.forEach((deck, idx) => {
+    const totalCartas = deck.cartas.reduce((sum, c) => sum + c.cantidad, 0);
+    const tengo = deck.cartas.filter(c => c.tengo).length;
+    const faltantes = deck.cartas.length - tengo;
+    
+    html += `
+      <div class="card">
+        <h3 style="margin-top:0;">
+          <button class="btn-link-carta" data-deck-idx="${idx}" style="font-size: 1.1rem;">
+            ${deck.nombre}
+          </button>
+        </h3>
+        <div class="hint">
+          ${totalCartas} cartas · ${tengo} tengo · ${faltantes} faltan
+        </div>
+      </div>
+    `;
+  });
+  
+  cont.innerHTML = html;
+  
+  cont.querySelectorAll(".btn-link-carta").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.deckIdx, 10);
+      abrirDeck(idx);
+    });
+  });
+}
+
+function abrirDeck(idx) {
+  deckActual = decks[idx];
+  if (!deckActual) return;
+  
+  document.getElementById("tituloVerDeck").textContent = deckActual.nombre;
+  renderDeckCartas();
+  mostrarPantalla("verDeck");
+}
+
+async function verificarCartasEnColeccion(cartas) {
+  const cartasVerificadas = [];
+  
+  for (const carta of cartas) {
+    // Buscar si existe en la colección exacta (mismo set y número)
+    const setKey = `${carta.set.toLowerCase()}__en`;
+    await ensureSetCardsLoaded(setKey);
+    const listaSet = cartasDeSetKey(setKey);
+    const existeExacta = listaSet.find(c => c.numero === carta.numero);
+    
+    // Si existe exacta y la tengo con la cantidad necesaria
+    if (existeExacta && getEstadoCarta(existeExacta.id).qty >= carta.cantidad) {
+      cartasVerificadas.push({
+        ...carta,
+        tengo: true,
+        ledType: 'azul'
+      });
+      continue;
+    }
+    
+    // Buscar si tengo la carta en cualquier otra edición
+    let tieneEnOtraEdicion = false;
+    
+    // Buscar todas las versiones de esta carta en Scryfall
+    try {
+      const todasLasVersiones = await scrySearchPrintsByName(carta.nombre);
+      
+      // Verificar si tengo alguna versión de esta carta
+      for (const version of todasLasVersiones) {
+        const st = getEstadoCarta(version.id);
+        if (st.qty > 0) {
+          tieneEnOtraEdicion = true;
+          break;
+        }
+      }
+    } catch (error) {
+      console.error(`Error buscando versiones de ${carta.nombre}:`, error);
+      // Si falla la búsqueda, continuar sin marcar como encontrada
+    }
+    
+    cartasVerificadas.push({
+      ...carta,
+      tengo: tieneEnOtraEdicion,
+      ledType: tieneEnOtraEdicion ? 'violeta' : 'rojo'
+    });
+  }
+  
+  return cartasVerificadas;
+}
+
+// Funciones auxiliares para decks
+function renderDeckCartas() {
+  if (!deckActual) return;
+  
+  const totalCartas = deckActual.cartas.reduce((sum, c) => sum + c.cantidad, 0);
+  const tengo = deckActual.cartas.filter(c => c.tengo).length;
+  const faltantes = deckActual.cartas.length - tengo;
+  
+  let resumenTexto = `<strong>${totalCartas} cartas</strong> · ${tengo} tengo · ${faltantes} faltan`;
+  
+  if (deckActual.sideboard && deckActual.sideboard.length > 0) {
+    const totalSide = deckActual.sideboard.reduce((sum, c) => sum + c.cantidad, 0);
+    const tengoSide = deckActual.sideboard.filter(c => c.tengo).length;
+    resumenTexto += ` <span class="hint">(+${totalSide} sideboard)</span>`;
+  }
+  
+  document.getElementById("resumenDeck").innerHTML = resumenTexto;
+  
+  // Separar tierras básicas
+  const tierrasBasicas = ['plains', 'island', 'swamp', 'mountain', 'forest', 'wastes',
+                          'llanura', 'llanuras', 'isla', 'islas', 'pantano', 'pantanos', 
+                          'montaña', 'montañas', 'bosque', 'bosques'];
+  
+  const cartasNormales = [];
+  const cartasTierras = [];
+  
+  deckActual.cartas.forEach(carta => {
+    const nombreNorm = normalizarTexto(carta.nombre);
+    if (tierrasBasicas.some(tb => nombreNorm === normalizarTexto(tb))) {
+      cartasTierras.push(carta);
+    } else {
+      cartasNormales.push(carta);
+    }
+  });
+  
+  let html = "";
+  
+  // Cartas normales
+  if (cartasNormales.length > 0) {
+    html += "<ul style='list-style: none; padding: 0; margin: 0;'>";
+    cartasNormales.forEach((carta, idx) => {
+      html += renderCartaDeck(carta, idx + 1, 'normal');
+    });
+    html += "</ul>";
+  }
+  
+  // Tierras básicas
+  if (cartasTierras.length > 0) {
+    html += "<h4 style='margin-top: 20px; margin-bottom: 10px;'>Tierras básicas</h4>";
+    html += "<ul style='list-style: none; padding: 0; margin: 0;'>";
+    cartasTierras.forEach((carta, idx) => {
+      html += renderCartaDeck(carta, idx + 1, 'tierra');
+    });
+    html += "</ul>";
+  }
+  
+  // Sideboard
+  if (deckActual.sideboard && deckActual.sideboard.length > 0) {
+    html += "<h4 style='margin-top: 20px; margin-bottom: 10px;'>Sideboard</h4>";
+    html += "<ul style='list-style: none; padding: 0; margin: 0;'>";
+    deckActual.sideboard.forEach((carta, idx) => {
+      html += renderCartaDeck(carta, idx + 1, 'sideboard');
+    });
+    html += "</ul>";
+  }
+  
+  document.getElementById("listaCartasDeck").innerHTML = html;
+  
+  // Event listeners
+  wireBotonesMostrarCartaDeck();
+  wireBotonesIrDeckCarta();
+  
+  // Wire scroll to top button
+  setTimeout(() => {
+    const btnScroll = document.getElementById("btnScrollTopDeck");
+    if (btnScroll) {
+      btnScroll.onclick = () => {
+        const pantalla = document.getElementById("pantallaVerDeck");
+        if (pantalla) pantalla.scrollTop = 0;
+      };
+      
+      const pantalla = document.getElementById("pantallaVerDeck");
+      if (pantalla) {
+        pantalla.addEventListener("scroll", () => {
+          if (pantalla.scrollTop > 300) {
+            btnScroll.classList.add("visible");
+          } else {
+            btnScroll.classList.remove("visible");
+          }
+        });
+      }
+    }
+  }, 100);
+}
+
+function renderCartaDeck(carta, numero, tipo) {
+  const ledIcon = carta.ledType === 'violeta' ? 'Ledvioleta' : (carta.tengo ? 'Ledazul' : 'Ledrojo');
+  const cartaId = `${carta.set}-${carta.numero}-${tipo}`;
+  const setKey = `${carta.set.toLowerCase()}__en`;
+  
+  return `
+    <li style="padding: 8px 0; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;">
+      <span style="min-width: 25px; text-align: right; font-weight: 500; color: #666;">${numero}</span>
+      <img src="icons/${ledIcon}.png" alt="" width="24" height="24" class="deck-led" data-carta-id="${cartaId}">
+      <button class="btn-link-carta btn-ver-carta-deck" data-nombre="${escapeAttr(carta.nombre)}" data-set="${carta.set}" data-numero="${carta.numero}" style="text-align: left; flex: 1;">
+        <strong>${carta.cantidad}x</strong> ${carta.nombre} <span class="hint">(${carta.set} #${carta.numero})</span>
+      </button>
+      <button class="btn-secundario btn-ir-deck-carta" type="button" data-setkey="${setKey}" data-cardname="${escapeAttr(carta.nombre)}" style="padding: 4px 12px; font-size: 0.9rem;">Ir</button>
+    </li>
+  `;
+}
+
+async function completarMazo() {
+  if (!deckActual) return;
+  
+  const cartasFaltantes = [];
+  
+  // Recopilar todas las cartas faltantes (LED rojo)
+  const todasLasCartas = [...deckActual.cartas];
+  if (deckActual.sideboard) {
+    todasLasCartas.push(...deckActual.sideboard);
+  }
+  
+  for (const carta of todasLasCartas) {
+    if (carta.ledType === 'rojo' || (!carta.tengo && carta.ledType !== 'violeta')) {
+      cartasFaltantes.push(carta);
+    }
+  }
+  
+  if (cartasFaltantes.length === 0) {
+    alert("No hay cartas faltantes en este mazo.");
+    return;
+  }
+  
+  // Añadir todas las cartas faltantes
+  for (const carta of cartasFaltantes) {
+    await marcarCartaDeck(carta.nombre, carta.set, carta.numero);
+  }
+  
+  // Marcar que se completó el mazo
+  deckActual.completado = true;
+  guardarDecks();
+  
+  // Actualizar estado
+  actualizarEstadoDeck();
+  
+  alert(`Se han agregado ${cartasFaltantes.length} cartas a tu colección.`);
+}
+
+function wireCheckboxesDeck() {
+  const checkboxes = document.querySelectorAll(".chk-carta-deck");
+  checkboxes.forEach(chk => {
+    chk.addEventListener("change", async () => {
+      const nombre = chk.dataset.nombre;
+      const set = chk.dataset.set;
+      const numero = chk.dataset.numero;
+      const tipo = chk.dataset.tipo;
+      const cartaId = chk.dataset.cartaId;
+      
+      if (chk.checked) {
+        // Buscar la carta en el catálogo y marcarla
+        await marcarCartaDeck(nombre, set, numero);
+      }
+      
+      // Actualizar LED
+      const led = document.querySelector(`.deck-led[data-carta-id="${cartaId}"]`);
+      if (led && chk.checked) {
+        led.src = "icons/Ledazul.png";
+      }
+      
+      // Actualizar en el deck
+      actualizarEstadoCartaEnDeck(nombre, set, numero, tipo, chk.checked);
+    });
+  });
+  
+  // Checkbox maestro
+  const chkMaestro = document.getElementById("chkMarcarTodasDeck");
+  if (chkMaestro) {
+    chkMaestro.addEventListener("change", () => {
+      checkboxes.forEach(chk => {
+        if (!chk.checked && chkMaestro.checked) {
+          chk.checked = true;
+          chk.dispatchEvent(new Event('change'));
+        } else if (chk.checked && !chkMaestro.checked) {
+          chk.checked = false;
+        }
+      });
+      if (!chkMaestro.checked) {
+        renderDeckCartas();
+      }
+    });
+  }
+}
+
+async function marcarCartaDeck(nombre, set, numero) {
+  // Buscar la carta exacta
+  const setKey = `${set.toLowerCase()}__en`;
+  await ensureSetCardsLoaded(setKey);
+  const listaSet = cartasDeSetKey(setKey);
+  const carta = listaSet.find(c => c.numero === numero);
+  
+  if (carta) {
+    const st = getEstadoCarta(carta.id);
+    if (st.qty === 0) {
+      setQty(carta.id, 1);
+      renderColecciones();
+    }
+  }
+}
+
+function actualizarEstadoCartaEnDeck(nombre, set, numero, tipo, marcado) {
+  let lista;
+  if (tipo === 'sideboard') {
+    lista = deckActual.sideboard;
+  } else {
+    lista = deckActual.cartas;
+  }
+  
+  const carta = lista.find(c => c.nombre === nombre && c.set === set && c.numero === numero);
+  if (carta) {
+    carta.tengo = marcado;
+    if (marcado) carta.ledType = 'azul';
+    guardarDecks();
+  }
+}
+
+function wireBotonesMostrarCartaDeck() {
+  document.querySelectorAll(".btn-ver-carta-deck").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const nombre = btn.dataset.nombre;
+      const set = btn.dataset.set;
+      const numero = btn.dataset.numero;
+      
+      // Buscar la carta
+      const setKey = `${set.toLowerCase()}__en`;
+      await ensureSetCardsLoaded(setKey);
+      const listaSet = cartasDeSetKey(setKey);
+      const carta = listaSet.find(c => c.numero === numero);
+      
+      if (carta) {
+        abrirModalCarta({
+          titulo: carta.nombre || nombre,
+          imageUrl: carta._img || null,
+          numero: carta.numero || numero,
+          rareza: carta.rareza || "",
+          precio: formatPrecioEUR(carta._prices),
+          cardData: carta._raw || null
+        });
+      } else {
+        // Si no encuentra la carta exacta, mostrar solo el nombre
+        abrirModalCarta({
+          titulo: nombre,
+          imageUrl: null,
+          numero: numero,
+          rareza: "",
+          precio: null
+        });
+      }
+    });
+  });
+}
+
+function wireBotonesIrDeckCarta() {
+  document.querySelectorAll(".btn-ir-deck-carta").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const setKey = btn.dataset.setkey;
+      const cardName = btn.dataset.cardname || "";
+      if (!setKey) return;
+
+      filtroSoloFaltanSet = false;
+      setFiltroTextoSet(cardName);
+
+      if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
+        hiddenEmptySetKeys.delete(setKey);
+        if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
+      }
+
+      await abrirSet(setKey);
+      if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
+    });
+  });
+}
+
+async function actualizarEstadoDeck() {
+  if (!deckActual) return;
+  
+  // Re-verificar todas las cartas
+  deckActual.cartas = await verificarCartasEnColeccion(deckActual.cartas);
+  if (deckActual.sideboard) {
+    deckActual.sideboard = await verificarCartasEnColeccion(deckActual.sideboard);
+  }
+  
+  guardarDecks();
+  renderDeckCartas();
+}
+
+
+// ===============================
 // 7) Inicialización (botones + pantallas)
 // ===============================
 
@@ -2485,6 +2947,12 @@ if (btnStatsRecalcular) {
         return;
       }
 
+      if (destino === "decks") {
+        renderListaDecks();
+        mostrarPantalla("decks");
+        return;
+      }
+
       if (destino === "estadisticas") {
   renderEstadisticas({ forceRecalc: false }); // pinta rápido con lo guardado
   mostrarPantalla("estadisticas");
@@ -2501,6 +2969,14 @@ if (btnStatsRecalcular) {
   // Volver al menú
   document.querySelectorAll("[data-action='volverMenu']").forEach(btn => {
     btn.addEventListener("click", () => mostrarPantalla("menu"));
+  });
+
+  // Volver a decks
+  document.querySelectorAll("[data-action='volverDecks']").forEach(btn => {
+    btn.addEventListener("click", () => {
+      renderListaDecks();
+      mostrarPantalla("decks");
+    });
   });
 
   // Volver a colecciones
@@ -2752,6 +3228,215 @@ if (btnStatsRecalcular) {
   // Actualizar precios
   const btnActualizarPrecios = document.getElementById("btnActualizarPrecios");
   if (btnActualizarPrecios) btnActualizarPrecios.addEventListener("click", refrescarPreciosSetActual);
+
+  // Decks
+  const btnAgregarDeck = document.getElementById("btnAgregarDeck");
+  if (btnAgregarDeck) {
+    btnAgregarDeck.addEventListener("click", () => {
+      document.getElementById("inputNombreDeck").value = "";
+      document.getElementById("textareaListaDeck").value = "";
+      document.getElementById("modalAgregarDeck").style.display = "flex";
+    });
+  }
+
+  const btnCancelarDeck = document.getElementById("btnCancelarDeck");
+  if (btnCancelarDeck) {
+    btnCancelarDeck.addEventListener("click", () => {
+      document.getElementById("modalAgregarDeck").style.display = "none";
+    });
+  }
+
+  const btnGuardarDeck = document.getElementById("btnGuardarDeck");
+  if (btnGuardarDeck) {
+    btnGuardarDeck.addEventListener("click", async () => {
+      const nombre = document.getElementById("inputNombreDeck").value.trim();
+      const lista = document.getElementById("textareaListaDeck").value;
+
+      if (!nombre) {
+        alert("Por favor ingresa un nombre para el deck.");
+        return;
+      }
+
+      const resultado = parsearListaDeck(lista);
+      if (resultado.cartas.length === 0 && resultado.sideboard.length === 0) {
+        alert("No se pudo parsear ninguna carta. Verifica el formato.");
+        return;
+      }
+
+      // Mostrar indicador de carga
+      const mensajeCarga = document.getElementById("mensajeCargandoDeck");
+      const btnCancelar = document.getElementById("btnCancelarDeck");
+      
+      btnGuardarDeck.disabled = true;
+      btnGuardarDeck.textContent = "Verificando...";
+      if (btnCancelar) btnCancelar.disabled = true;
+      if (mensajeCarga) mensajeCarga.style.display = "block";
+
+      try {
+        const cartasVerificadas = await verificarCartasEnColeccion(resultado.cartas);
+        const sideboardVerificado = await verificarCartasEnColeccion(resultado.sideboard);
+
+        decks.push({
+          nombre,
+          cartas: cartasVerificadas,
+          sideboard: sideboardVerificado
+        });
+
+        guardarDecks();
+        renderListaDecks();
+        document.getElementById("modalAgregarDeck").style.display = "none";
+        mostrarPantalla("decks");
+        
+        // Resetear el formulario
+        document.getElementById("inputNombreDeck").value = "";
+        document.getElementById("textareaListaDeck").value = "";
+      } catch (error) {
+        console.error("Error al verificar cartas:", error);
+        alert("Hubo un error al verificar las cartas. Por favor intenta de nuevo.");
+      } finally {
+        // Restaurar estado de botones
+        btnGuardarDeck.disabled = false;
+        btnGuardarDeck.textContent = "Guardar";
+        if (btnCancelar) btnCancelar.disabled = false;
+        if (mensajeCarga) mensajeCarga.style.display = "none";
+      }
+    });
+  }
+
+  const btnEliminarDeck = document.getElementById("btnEliminarDeck");
+  if (btnEliminarDeck) {
+    btnEliminarDeck.addEventListener("click", async () => {
+      if (!deckActual) return;
+      
+      // Verificar si se completó el mazo previamente
+      if (deckActual.completado) {
+        const eliminarCartas = confirm(`¿Deseas eliminar las cartas de este mazo de tu colección?`);
+        
+        if (eliminarCartas) {
+          // Eliminar cartas en posesión (LED azul)
+          const todasLasCartas = [...deckActual.cartas];
+          if (deckActual.sideboard) {
+            todasLasCartas.push(...deckActual.sideboard);
+          }
+          
+          let cartasEliminadas = 0;
+          for (const carta of todasLasCartas) {
+            if (carta.tengo && carta.ledType === 'azul') {
+              const setKey = `${carta.set.toLowerCase()}__en`;
+              await ensureSetCardsLoaded(setKey);
+              const listaSet = cartasDeSetKey(setKey);
+              const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
+              
+              if (cartaCatalogo) {
+                const st = getEstadoCarta(cartaCatalogo.id);
+                if (st.qty > 0) {
+                  setQty(cartaCatalogo.id, st.qty - 1);
+                  cartasEliminadas++;
+                }
+              }
+            }
+          }
+          
+          renderColecciones();
+          
+          // Segunda confirmación
+          const confirmarFinal = confirm(
+            `El mazo y ${cartasEliminadas} cartas van a ser eliminadas de la colección. ¿Está seguro?`
+          );
+          
+          if (confirmarFinal) {
+            const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
+            if (idx >= 0) {
+              decks.splice(idx, 1);
+              guardarDecks();
+              renderListaDecks();
+              mostrarPantalla("decks");
+            }
+          } else {
+            // Revertir cambios en la colección
+            for (const carta of todasLasCartas) {
+              if (carta.tengo && carta.ledType === 'azul') {
+                const setKey = `${carta.set.toLowerCase()}__en`;
+                await ensureSetCardsLoaded(setKey);
+                const listaSet = cartasDeSetKey(setKey);
+                const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
+                
+                if (cartaCatalogo) {
+                  const st = getEstadoCarta(cartaCatalogo.id);
+                  setQty(cartaCatalogo.id, st.qty + 1);
+                }
+              }
+            }
+            renderColecciones();
+          }
+        } else {
+          // No eliminar cartas, solo mazo
+          const confirmarSoloMazo = confirm(
+            `Se eliminará el mazo, pero las cartas se quedarán en la colección. ¿Está seguro?`
+          );
+          
+          if (confirmarSoloMazo) {
+            const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
+            if (idx >= 0) {
+              decks.splice(idx, 1);
+              guardarDecks();
+              renderListaDecks();
+              mostrarPantalla("decks");
+            }
+          }
+        }
+      } else {
+        // Si no se completó el mazo, solo preguntar una vez
+        if (confirm(`¿Eliminar el deck "${deckActual.nombre}"?`)) {
+          const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
+          if (idx >= 0) {
+            decks.splice(idx, 1);
+            guardarDecks();
+            renderListaDecks();
+            mostrarPantalla("decks");
+          }
+        }
+      }
+    });
+  }
+
+  const btnActualizarDeck = document.getElementById("btnActualizarDeck");
+  if (btnActualizarDeck) {
+    btnActualizarDeck.addEventListener("click", async () => {
+      await actualizarEstadoDeck();
+    });
+  }
+
+  const btnCompletarMazo = document.getElementById("btnCompletarMazo");
+  if (btnCompletarMazo) {
+    btnCompletarMazo.addEventListener("click", async () => {
+      if (confirm(
+        "El botón 'Completar mazo' añadirá automáticamente 1 unidad en la colección de todas las cartas que actualmente estén marcadas como 'Falta' (LED rojo).\n\n" +
+        "Cada carta se agregará en el set específico que aparece en la descripción (código y número de colector).\n\n" +
+        "Nota: Las cartas que ya posees (LED azul) o que tienes en otro set (LED violeta) no se verán afectadas.\n\n" +
+        "¿Deseas continuar?"
+      )) {
+        // Mostrar indicador de carga
+        const mensajeCarga = document.getElementById("mensajeCompletandoMazo");
+        const btnActualizar = document.getElementById("btnActualizarDeck");
+        
+        btnCompletarMazo.disabled = true;
+        btnCompletarMazo.textContent = "Completando...";
+        if (btnActualizar) btnActualizar.disabled = true;
+        if (mensajeCarga) mensajeCarga.style.display = "block";
+        
+        try {
+          await completarMazo();
+        } finally {
+          // Restaurar estado de botones
+          btnCompletarMazo.disabled = false;
+          btnCompletarMazo.textContent = "Completar mazo ❗";
+          if (btnActualizar) btnActualizar.disabled = false;
+          if (mensajeCarga) mensajeCarga.style.display = "none";
+        }
+      }
+    });
+  }
 }
 
 function wireBackupButtons() {
@@ -2799,6 +3484,7 @@ async function init() {
   cargarHiddenEmptySets();
   cargarHiddenCollections();
   cargarStatsSnapshot();
+  cargarDecks();
 
   wireGlobalButtons();
   wireBackupButtons();
