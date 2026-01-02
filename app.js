@@ -1146,7 +1146,15 @@ function reconstruirCatalogoColecciones() {
 const cacheCartasPorSetLang = {}; // key: "khm__es" -> array de cartas internas
 
 async function ensureSetCardsLoaded(setKey) {
-  if (cacheCartasPorSetLang[setKey]) return;
+  // Verificar si necesita recarga (si no tiene type_line es estructura antigua)
+  if (cacheCartasPorSetLang[setKey]) {
+    const primeracarta = cacheCartasPorSetLang[setKey][0];
+    if (primeracarta && primeracarta.type_line !== undefined) {
+      return; // Ya está cargado con la estructura correcta
+    }
+    // Si no tiene type_line, recargar
+    delete cacheCartasPorSetLang[setKey];
+  }
 
   const [codeRaw, langRaw] = String(setKey).split("__");
   const code = String(codeRaw || "").toLowerCase();
@@ -1161,6 +1169,9 @@ async function ensureSetCardsLoaded(setKey) {
     numero: card.collector_number,
     rareza: mapRarity(card.rarity),
     lang,
+    type_line: card.type_line || '',
+    cmc: card.cmc || 0,
+    color_identity: card.color_identity || [],
     _img: pickImage(card),
     _prices: card.prices || null,
     _colors: card.colors || null,
@@ -2514,10 +2525,10 @@ function guardarDecks() {
 }
 
 // Parser de formato Moxfield: "1 Argonath, Pillars of the Kings (LTC) 351"
-// Soporta: foil (*F*), números con guiones (MH2-12), etc.
+// Soporta: foil (*F*), etched (*E*), números con guiones (MH2-12), etc.
 function parsearLineaDeck(linea) {
-  // Regex mejorado: permite números con guiones y caracteres opcionales al final
-  const match = linea.match(/^(\d+)\s+(.+?)\s+\(([A-Z0-9]+)\)\s+([\w-]+)(?:\s+\*F\*)?$/i);
+  // Regex mejorado: permite números con guiones y caracteres opcionales al final (*F*, *E*, etc.)
+  const match = linea.match(/^(\d+)\s+(.+?)\s+\(([A-Z0-9]+)\)\s+([\w-]+)(?:\s+\*[A-Z]\*)?$/i);
   if (!match) return null;
   
   return {
@@ -2600,8 +2611,28 @@ function abrirDeck(idx) {
   if (!deckActual) return;
   
   document.getElementById("tituloVerDeck").textContent = deckActual.nombre;
-  renderDeckCartas();
   mostrarPantalla("verDeck");
+  
+  // Verificar si necesita cargar información adicional
+  const primeracarta = deckActual.cartas[0];
+  const necesitaVerificacion = !primeracarta || !primeracarta.tipoLinea;
+  
+  if (necesitaVerificacion) {
+    // Mostrar indicador de carga
+    document.getElementById("mensajeCargandoDeck").style.display = "block";
+    document.getElementById("listaCartasDeck").innerHTML = '';
+    
+    // Verificar en segundo plano
+    actualizarEstadoDeck().then(() => {
+      document.getElementById("mensajeCargandoDeck").style.display = "none";
+    }).catch(err => {
+      console.error('Error actualizando deck:', err);
+      document.getElementById("mensajeCargandoDeck").style.display = "none";
+      renderDeckCartas();
+    });
+  } else {
+    renderDeckCartas();
+  }
 }
 
 async function verificarCartasEnColeccion(cartas) {
@@ -2629,10 +2660,47 @@ async function verificarCartasEnColeccion(cartas) {
     const listaSet = cartasDeSetKey(setKey);
     const existeExacta = listaSet.find(c => c.numero === carta.numero);
     
+    // Guardar información adicional de la carta
+    let infoAdicional = {};
+    
+    // Intentar obtener de la carta existente en el catálogo
+    if (existeExacta && existeExacta._raw) {
+      const raw = existeExacta._raw;
+      infoAdicional = {
+        tipoLinea: raw.type_line || existeExacta.type_line || '',
+        cmc: raw.cmc !== undefined ? raw.cmc : (existeExacta.cmc || 0),
+        colorIdentity: raw.color_identity?.length > 1 ? 'M' : (raw.color_identity?.[0] || existeExacta.color_identity?.[0] || 'C')
+      };
+    } else if (existeExacta) {
+      infoAdicional = {
+        tipoLinea: existeExacta.type_line || '',
+        cmc: existeExacta.cmc || 0,
+        colorIdentity: existeExacta.color_identity?.length > 1 ? 'M' : (existeExacta.color_identity?.[0] || 'C')
+      };
+    }
+    
+    // Si no tenemos información de tipo, buscar en Scryfall
+    if (!infoAdicional.tipoLinea) {
+      try {
+        const versiones = await scrySearchPrintsByName(carta.nombre);
+        if (versiones.length > 0) {
+          const primeraVersion = versiones[0];
+          infoAdicional = {
+            tipoLinea: primeraVersion.type_line || '',
+            cmc: primeraVersion.cmc !== undefined ? primeraVersion.cmc : 0,
+            colorIdentity: primeraVersion.color_identity?.length > 1 ? 'M' : (primeraVersion.color_identity?.[0] || 'C')
+          };
+        }
+      } catch (error) {
+        console.error(`Error obteniendo info de ${carta.nombre}:`, error);
+      }
+    }
+    
     // Si existe exacta y la tengo con la cantidad necesaria
     if (existeExacta && getEstadoCarta(existeExacta.id).qty >= carta.cantidad) {
       cartasVerificadas.push({
         ...carta,
+        ...infoAdicional,
         tengo: true,
         ledType: 'azul'
       });
@@ -2702,6 +2770,7 @@ async function verificarCartasEnColeccion(cartas) {
     
     cartasVerificadas.push({
       ...carta,
+      ...infoAdicional,
       tengo: tieneEnOtraEdicion,
       ledType: tieneEnOtraEdicion ? 'violeta' : 'rojo'
     });
@@ -2711,6 +2780,74 @@ async function verificarCartasEnColeccion(cartas) {
 }
 
 // Funciones auxiliares para decks
+let ordenDeckActual = 'default';
+
+function extraerTipoPrincipal(carta) {
+  // Si la carta tiene información de tipo, la usamos
+  if (carta.tipoLinea) {
+    const tipo = carta.tipoLinea.toLowerCase();
+    if (tipo.includes('creature')) return 'Criatura';
+    if (tipo.includes('planeswalker')) return 'Planeswalker';
+    if (tipo.includes('instant')) return 'Instantáneo';
+    if (tipo.includes('sorcery')) return 'Conjuro';
+    if (tipo.includes('enchantment')) return 'Encantamiento';
+    if (tipo.includes('artifact')) return 'Artefacto';
+    if (tipo.includes('land')) return 'Tierra';
+  }
+  return 'Otro';
+}
+
+function ordenarCartasDeck(cartas, criterio) {
+  const copiaCartas = [...cartas];
+  
+  switch (criterio) {
+    case 'tipo':
+      const ordenTipos = {
+        'Criatura': 1,
+        'Planeswalker': 2,
+        'Instantáneo': 3,
+        'Conjuro': 4,
+        'Encantamiento': 5,
+        'Artefacto': 6,
+        'Tierra': 7,
+        'Otro': 8
+      };
+      return copiaCartas.sort((a, b) => {
+        const tipoA = extraerTipoPrincipal(a);
+        const tipoB = extraerTipoPrincipal(b);
+        const diff = ordenTipos[tipoA] - ordenTipos[tipoB];
+        if (diff !== 0) return diff;
+        return normalizarTexto(a.nombre).localeCompare(normalizarTexto(b.nombre));
+      });
+      
+    case 'cmc':
+      return copiaCartas.sort((a, b) => {
+        const cmcA = a.cmc || 0;
+        const cmcB = b.cmc || 0;
+        if (cmcA !== cmcB) return cmcA - cmcB;
+        return normalizarTexto(a.nombre).localeCompare(normalizarTexto(b.nombre));
+      });
+      
+    case 'color':
+      const ordenColores = { 'W': 1, 'U': 2, 'B': 3, 'R': 4, 'G': 5, 'C': 6, 'M': 7 };
+      return copiaCartas.sort((a, b) => {
+        const colorA = a.colorIdentity || 'C';
+        const colorB = b.colorIdentity || 'C';
+        const diff = ordenColores[colorA] - ordenColores[colorB];
+        if (diff !== 0) return diff;
+        return normalizarTexto(a.nombre).localeCompare(normalizarTexto(b.nombre));
+      });
+      
+    case 'nombre':
+      return copiaCartas.sort((a, b) => {
+        return normalizarTexto(a.nombre).localeCompare(normalizarTexto(b.nombre));
+      });
+      
+    default:
+      return copiaCartas;
+  }
+}
+
 function renderDeckCartas() {
   if (!deckActual) return;
   
@@ -2740,42 +2877,44 @@ function renderDeckCartas() {
 
 function renderDeckCartasModoLista() {
   
-  // Separar tierras básicas
-  const tierrasBasicas = ['plains', 'island', 'swamp', 'mountain', 'forest', 'wastes',
-                          'llanura', 'llanuras', 'isla', 'islas', 'pantano', 'pantanos', 
-                          'montaña', 'montañas', 'bosque', 'bosques'];
+  let cartasNormales = [...deckActual.cartas];
   
-  const cartasNormales = [];
-  const cartasTierras = [];
-  
-  deckActual.cartas.forEach(carta => {
-    const nombreNorm = normalizarTexto(carta.nombre);
-    if (tierrasBasicas.some(tb => nombreNorm === normalizarTexto(tb))) {
-      cartasTierras.push(carta);
-    } else {
-      cartasNormales.push(carta);
-    }
-  });
+  // Ordenar según el criterio seleccionado
+  if (ordenDeckActual !== 'default') {
+    cartasNormales = ordenarCartasDeck(cartasNormales, ordenDeckActual);
+  }
   
   let html = "";
   
-  // Cartas normales
-  if (cartasNormales.length > 0) {
-    html += "<ul style='list-style: none; padding: 0; margin: 0;'>";
-    cartasNormales.forEach((carta, idx) => {
-      html += renderCartaDeck(carta, idx + 1, 'normal');
+  // Si se ordena por tipo, agrupar visualmente
+  if (ordenDeckActual === 'tipo' && cartasNormales.length > 0) {
+    const gruposPorTipo = {};
+    cartasNormales.forEach(carta => {
+      const tipo = extraerTipoPrincipal(carta);
+      if (!gruposPorTipo[tipo]) gruposPorTipo[tipo] = [];
+      gruposPorTipo[tipo].push(carta);
     });
-    html += "</ul>";
-  }
-  
-  // Tierras básicas
-  if (cartasTierras.length > 0) {
-    html += "<h4 style='margin-top: 20px; margin-bottom: 10px;'>Tierras básicas</h4>";
-    html += "<ul style='list-style: none; padding: 0; margin: 0;'>";
-    cartasTierras.forEach((carta, idx) => {
-      html += renderCartaDeck(carta, idx + 1, 'tierra');
-    });
-    html += "</ul>";
+    
+    const ordenTipos = ['Criatura', 'Planeswalker', 'Instantáneo', 'Conjuro', 'Encantamiento', 'Artefacto', 'Tierra', 'Otro'];
+    for (const tipo of ordenTipos) {
+      if (gruposPorTipo[tipo] && gruposPorTipo[tipo].length > 0) {
+        html += `<h4 style='margin-top: 20px; margin-bottom: 10px;'>${tipo}s (${gruposPorTipo[tipo].length})</h4>`;
+        html += "<ul style='list-style: none; padding: 0; margin: 0;'>";
+        gruposPorTipo[tipo].forEach((carta, idx) => {
+          html += renderCartaDeck(carta, idx + 1, 'normal');
+        });
+        html += "</ul>";
+      }
+    }
+  } else {
+    // Cartas normales
+    if (cartasNormales.length > 0) {
+      html += "<ul style='list-style: none; padding: 0; margin: 0;'>";
+      cartasNormales.forEach((carta, idx) => {
+        html += renderCartaDeck(carta, idx + 1, 'normal');
+      });
+      html += "</ul>";
+    }
   }
   
   // Sideboard
@@ -2802,47 +2941,61 @@ async function renderDeckCartasModoImagenes() {
   const mensajeCarga = document.getElementById("mensajeCargandoImagenesDeck");
   if (mensajeCarga) mensajeCarga.style.display = "block";
   
-  const tierrasBasicas = ['plains', 'island', 'swamp', 'mountain', 'forest', 'wastes',
-                          'llanura', 'llanuras', 'isla', 'islas', 'pantano', 'pantanos', 
-                          'montaña', 'montañas', 'bosque', 'bosques'];
+  let cartasNormales = [...deckActual.cartas];
   
-  const cartasNormales = [];
-  const cartasTierras = [];
-  
-  deckActual.cartas.forEach(carta => {
-    const nombreNorm = normalizarTexto(carta.nombre);
-    if (tierrasBasicas.some(tb => nombreNorm === normalizarTexto(tb))) {
-      cartasTierras.push(carta);
-    } else {
-      cartasNormales.push(carta);
-    }
-  });
-  
-  let html = '<div class="cartas-grid">';
-  
-  // Cartas normales
-  let posicion = 1;
-  for (const carta of cartasNormales) {
-    html += await renderCartaDeckImagen(carta, posicion, 'normal');
-    posicion++;
+  // Ordenar según el criterio seleccionado
+  if (ordenDeckActual !== 'default') {
+    cartasNormales = ordenarCartasDeck(cartasNormales, ordenDeckActual);
   }
   
-  // Tierras básicas
-  for (const carta of cartasTierras) {
-    html += await renderCartaDeckImagen(carta, posicion, 'tierra');
-    posicion++;
+  let html = '';
+  
+  // Si se ordena por tipo, agrupar visualmente
+  if (ordenDeckActual === 'tipo') {
+    const gruposPorTipo = {};
+    cartasNormales.forEach(carta => {
+      const tipo = extraerTipoPrincipal(carta);
+      if (!gruposPorTipo[tipo]) gruposPorTipo[tipo] = [];
+      gruposPorTipo[tipo].push(carta);
+    });
+    
+    const ordenTipos = ['Criatura', 'Planeswalker', 'Instantáneo', 'Conjuro', 'Encantamiento', 'Artefacto', 'Tierra', 'Otro'];
+    let posicion = 1;
+    
+    for (const tipo of ordenTipos) {
+      if (gruposPorTipo[tipo] && gruposPorTipo[tipo].length > 0) {
+        html += `<h4 style='margin-top: 20px; margin-bottom: 10px;'>${tipo}s (${gruposPorTipo[tipo].length})</h4>`;
+        html += '<div class="cartas-grid">';
+        for (const carta of gruposPorTipo[tipo]) {
+          html += await renderCartaDeckImagen(carta, posicion, 'normal');
+          posicion++;
+        }
+        html += '</div>';
+      }
+    }
+  } else {
+    // Sin agrupación
+    html += '<div class="cartas-grid">';
+    let posicion = 1;
+    for (const carta of cartasNormales) {
+      html += await renderCartaDeckImagen(carta, posicion, 'normal');
+      posicion++;
+    }
+    html += '</div>';
   }
   
   // Sideboard
   if (deckActual.sideboard && deckActual.sideboard.length > 0) {
-    posicion = 1;
+    html += `<h4 style='margin-top: 20px; margin-bottom: 10px;'>Sideboard (${deckActual.sideboard.length})</h4>`;
+    html += '<div class="cartas-grid">';
+    let posicionSide = 1;
     for (const carta of deckActual.sideboard) {
-      html += await renderCartaDeckImagen(carta, posicion, 'sideboard');
-      posicion++;
+      html += await renderCartaDeckImagen(carta, posicionSide, 'sideboard');
+      posicionSide++;
     }
+    html += '</div>';
   }
   
-  html += '</div>';
   document.getElementById("listaCartasDeck").innerHTML = html;
   
   // Ocultar mensaje de carga
@@ -3536,6 +3689,15 @@ if (btnStatsRecalcular) {
         modoDeckVisualizacion = 'imagenes';
         renderDeckCartas();
       }
+    });
+  }
+
+  // Event listener para el selector de ordenación
+  const selectorOrdenDeck = document.getElementById("selectorOrdenDeck");
+  if (selectorOrdenDeck) {
+    selectorOrdenDeck.addEventListener("change", () => {
+      ordenDeckActual = selectorOrdenDeck.value;
+      renderDeckCartas();
     });
   }
 

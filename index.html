@@ -301,6 +301,10 @@
         <button id="btnActualizarDeck" class="btn-secundario" type="button">Revisar colección</button>
         <button id="btnCompletarMazo" class="btn-secundario" type="button">Completar mazo ❗</button>
       </div>
+      <div id="mensajeCargandoDeck" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+        <strong>⏳ Cargando información del deck...</strong><br>
+        <small>Esto puede tardar unos segundos</small>
+      </div>
       <div id="mensajeCompletandoMazo" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
         <strong>⏳ Agregando cartas a la colección...</strong><br>
         <small>Esto puede tardar unos segundos</small>
@@ -313,16 +317,28 @@
 
     <!-- Modo de visualización -->
     <div class="card">
-      <div style="display: flex; gap: 10px; align-items: center;">
-        <span style="font-weight: 600;">Vista:</span>
-        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-          <input type="radio" name="modoDeck" value="lista" id="radioModoDeckLista" checked>
-          <span>Lista</span>
-        </label>
-        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
-          <input type="radio" name="modoDeck" value="imagenes" id="radioModoDeckImagenes">
-          <span>Imágenes</span>
-        </label>
+      <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <span style="font-weight: 600;">Vista:</span>
+          <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+            <input type="radio" name="modoDeck" value="lista" id="radioModoDeckLista" checked>
+            <span>Lista</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+            <input type="radio" name="modoDeck" value="imagenes" id="radioModoDeckImagenes">
+            <span>Imágenes</span>
+          </label>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <span style="font-weight: 600;">Ordenar:</span>
+          <select id="selectorOrdenDeck" style="padding: 5px 10px; border-radius: 6px; border: 1px solid #ccc;">
+            <option value="default">Por defecto</option>
+            <option value="tipo">Por tipo</option>
+            <option value="cmc">Por coste (CMC)</option>
+            <option value="color">Por color</option>
+            <option value="nombre">Por nombre</option>
+          </select>
+        </div>
       </div>
     </div>
 
