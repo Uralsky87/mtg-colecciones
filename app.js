@@ -2737,28 +2737,6 @@ function renderDeckCartas() {
   // Event listeners
   wireBotonesMostrarCartaDeck();
   wireBotonesIrDeckCarta();
-  
-  // Wire scroll to top button
-  setTimeout(() => {
-    const btnScroll = document.getElementById("btnScrollTopDeck");
-    if (btnScroll) {
-      btnScroll.onclick = () => {
-        const pantalla = document.getElementById("pantallaVerDeck");
-        if (pantalla) pantalla.scrollTop = 0;
-      };
-      
-      const pantalla = document.getElementById("pantallaVerDeck");
-      if (pantalla) {
-        pantalla.addEventListener("scroll", () => {
-          if (pantalla.scrollTop > 300) {
-            btnScroll.classList.add("visible");
-          } else {
-            btnScroll.classList.remove("visible");
-          }
-        });
-      }
-    }
-  }, 100);
 }
 
 function renderCartaDeck(carta, numero, tipo) {
@@ -3369,47 +3347,25 @@ if (btnStatsRecalcular) {
         const eliminarCartas = confirm(`¿Deseas eliminar las cartas de este mazo de tu colección?`);
         
         if (eliminarCartas) {
-          // Eliminar cartas en posesión (LED azul)
-          const todasLasCartas = [...deckActual.cartas];
-          if (deckActual.sideboard) {
-            todasLasCartas.push(...deckActual.sideboard);
-          }
+          // Mostrar indicador de carga
+          const mensajeCarga = document.getElementById("mensajeEliminandoCartas");
+          const btnActualizar = document.getElementById("btnActualizarDeck");
+          const btnCompletar = document.getElementById("btnCompletarMazo");
           
-          let cartasEliminadas = 0;
-          for (const carta of todasLasCartas) {
-            if (carta.tengo && carta.ledType === 'azul') {
-              const setKey = `${carta.set.toLowerCase()}__en`;
-              await ensureSetCardsLoaded(setKey);
-              const listaSet = cartasDeSetKey(setKey);
-              const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
-              
-              if (cartaCatalogo) {
-                const st = getEstadoCarta(cartaCatalogo.id);
-                if (st.qty > 0) {
-                  setQty(cartaCatalogo.id, st.qty - 1);
-                  cartasEliminadas++;
-                }
-              }
+          btnEliminarDeck.disabled = true;
+          btnEliminarDeck.textContent = "Procesando...";
+          if (btnActualizar) btnActualizar.disabled = true;
+          if (btnCompletar) btnCompletar.disabled = true;
+          if (mensajeCarga) mensajeCarga.style.display = "block";
+          
+          try {
+            // Eliminar cartas en posesión (LED azul)
+            const todasLasCartas = [...deckActual.cartas];
+            if (deckActual.sideboard) {
+              todasLasCartas.push(...deckActual.sideboard);
             }
-          }
-          
-          renderColecciones();
-          
-          // Segunda confirmación
-          const confirmarFinal = confirm(
-            `El mazo y ${cartasEliminadas} cartas van a ser eliminadas de la colección. ¿Está seguro?`
-          );
-          
-          if (confirmarFinal) {
-            const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
-            if (idx >= 0) {
-              decks.splice(idx, 1);
-              guardarDecks();
-              renderListaDecks();
-              mostrarPantalla("decks");
-            }
-          } else {
-            // Revertir cambios en la colección
+            
+            let cartasEliminadas = 0;
             for (const carta of todasLasCartas) {
               if (carta.tengo && carta.ledType === 'azul') {
                 const setKey = `${carta.set.toLowerCase()}__en`;
@@ -3419,11 +3375,62 @@ if (btnStatsRecalcular) {
                 
                 if (cartaCatalogo) {
                   const st = getEstadoCarta(cartaCatalogo.id);
-                  setQty(cartaCatalogo.id, st.qty + 1);
+                  if (st.qty > 0) {
+                    setQty(cartaCatalogo.id, st.qty - 1);
+                    cartasEliminadas++;
+                  }
                 }
               }
             }
+            
             renderColecciones();
+            
+            // Restaurar estado de botones antes del confirm
+            btnEliminarDeck.disabled = false;
+            btnEliminarDeck.textContent = "Eliminar Deck";
+            if (btnActualizar) btnActualizar.disabled = false;
+            if (btnCompletar) btnCompletar.disabled = false;
+            if (mensajeCarga) mensajeCarga.style.display = "none";
+            
+            // Segunda confirmación
+            const confirmarFinal = confirm(
+              `El mazo y ${cartasEliminadas} cartas van a ser eliminadas de la colección. ¿Está seguro?`
+            );
+            
+            if (confirmarFinal) {
+              const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
+              if (idx >= 0) {
+                decks.splice(idx, 1);
+                guardarDecks();
+                renderListaDecks();
+                mostrarPantalla("decks");
+              }
+            } else {
+              // Revertir cambios en la colección
+              for (const carta of todasLasCartas) {
+                if (carta.tengo && carta.ledType === 'azul') {
+                  const setKey = `${carta.set.toLowerCase()}__en`;
+                  await ensureSetCardsLoaded(setKey);
+                  const listaSet = cartasDeSetKey(setKey);
+                  const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
+                  
+                  if (cartaCatalogo) {
+                    const st = getEstadoCarta(cartaCatalogo.id);
+                    setQty(cartaCatalogo.id, st.qty + 1);
+                  }
+                }
+              }
+              renderColecciones();
+            }
+          } catch (error) {
+            console.error("Error al eliminar cartas:", error);
+            alert("Hubo un error al procesar la eliminación. Por favor intenta de nuevo.");
+            // Restaurar estado en caso de error
+            btnEliminarDeck.disabled = false;
+            btnEliminarDeck.textContent = "Eliminar Deck";
+            if (btnActualizar) btnActualizar.disabled = false;
+            if (btnCompletar) btnCompletar.disabled = false;
+            if (mensajeCarga) mensajeCarga.style.display = "none";
           }
         } else {
           // No eliminar cartas, solo mazo
@@ -3673,3 +3680,4 @@ function setupScrollToTopButton(buttonId, containerId) {
 // Inicializar botones
 setupScrollToTopButton("btnScrollTopColecciones", "pantallaColecciones");
 setupScrollToTopButton("btnScrollTopSet", "pantallaSet");
+setupScrollToTopButton("btnScrollTopDeck", "pantallaVerDeck");
