@@ -723,8 +723,10 @@ input[type="text"] {
   .version-controls {
     grid-area: controls;
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    gap: 5px;
     margin-top: 10px;
+    align-items: flex-start;
   }
 
   .btn-ir-set {
