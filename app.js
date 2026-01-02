@@ -2563,10 +2563,25 @@ function abrirDeck(idx) {
 async function verificarCartasEnColeccion(cartas) {
   const cartasVerificadas = [];
   
+  // Pre-cargar sets donde el usuario tiene cartas (según progreso guardado)
+  const setsConProgreso = Object.keys(progresoPorSet || {});
+  const setsACargar = new Set(setsConProgreso);
+  
+  // Agregar los sets de las cartas del deck
   for (const carta of cartas) {
-    // Buscar si existe en la colección exacta (mismo set y número)
+    setsACargar.add(`${carta.set.toLowerCase()}__en`);
+  }
+  
+  // Cargar todos los sets necesarios en paralelo (más rápido)
+  await Promise.all(
+    Array.from(setsACargar).map(setKey => ensureSetCardsLoaded(setKey).catch(() => {}))
+  );
+  
+  // Caché de búsquedas por nombre para evitar duplicados
+  const cacheBusquedas = new Map();
+  
+  for (const carta of cartas) {
     const setKey = `${carta.set.toLowerCase()}__en`;
-    await ensureSetCardsLoaded(setKey);
     const listaSet = cartasDeSetKey(setKey);
     const existeExacta = listaSet.find(c => c.numero === carta.numero);
     
@@ -2582,22 +2597,63 @@ async function verificarCartasEnColeccion(cartas) {
     
     // Buscar si tengo la carta en cualquier otra edición
     let tieneEnOtraEdicion = false;
+    const oracleId = existeExacta?.oracle_id;
     
-    // Buscar todas las versiones de esta carta en Scryfall
-    try {
-      const todasLasVersiones = await scrySearchPrintsByName(carta.nombre);
-      
-      // Verificar si tengo alguna versión de esta carta
-      for (const version of todasLasVersiones) {
-        const st = getEstadoCarta(version.id);
-        if (st.qty > 0) {
-          tieneEnOtraEdicion = true;
-          break;
+    if (oracleId) {
+      // Buscar por oracle_id en todos los sets cargados (muy rápido)
+      for (const [setKeyCargado, cartasCargadas] of Object.entries(cacheCartasPorSetLang)) {
+        for (const c of cartasCargadas) {
+          if (c.oracle_id === oracleId) {
+            const st = getEstadoCarta(c.id);
+            if (st.qty > 0) {
+              tieneEnOtraEdicion = true;
+              break;
+            }
+          }
         }
+        if (tieneEnOtraEdicion) break;
       }
-    } catch (error) {
-      console.error(`Error buscando versiones de ${carta.nombre}:`, error);
-      // Si falla la búsqueda, continuar sin marcar como encontrada
+    } else {
+      // Si no tenemos oracle_id, buscar por nombre (más lento)
+      const nombreNorm = normalizarTexto(carta.nombre);
+      
+      // Verificar si ya buscamos este nombre antes
+      if (!cacheBusquedas.has(nombreNorm)) {
+        // Buscar en sets cargados primero
+        let encontradaEnCache = false;
+        for (const [setKeyCargado, cartasCargadas] of Object.entries(cacheCartasPorSetLang)) {
+          for (const c of cartasCargadas) {
+            if (normalizarTexto(c.nombre) === nombreNorm) {
+              const st = getEstadoCarta(c.id);
+              if (st.qty > 0) {
+                encontradaEnCache = true;
+                break;
+              }
+            }
+          }
+          if (encontradaEnCache) break;
+        }
+        
+        // Si no se encontró en caché, buscar en Scryfall (último recurso)
+        if (!encontradaEnCache) {
+          try {
+            const todasLasVersiones = await scrySearchPrintsByName(carta.nombre);
+            for (const version of todasLasVersiones) {
+              const st = getEstadoCarta(version.id);
+              if (st.qty > 0) {
+                encontradaEnCache = true;
+                break;
+              }
+            }
+          } catch (error) {
+            console.error(`Error buscando versiones de ${carta.nombre}:`, error);
+          }
+        }
+        
+        cacheBusquedas.set(nombreNorm, encontradaEnCache);
+      }
+      
+      tieneEnOtraEdicion = cacheBusquedas.get(nombreNorm);
     }
     
     cartasVerificadas.push({
