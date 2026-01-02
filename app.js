@@ -2279,7 +2279,7 @@ async function renderResultadosBuscar(texto) {
       if (!setKey) return;
 
       filtroSoloFaltanSet = false;
-      filtroTextoSet = String(cardName).trim();
+      setFiltroTextoSet(cardName);
 
       if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
         hiddenEmptySetKeys.delete(setKey);
