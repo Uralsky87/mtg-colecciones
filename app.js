@@ -1972,6 +1972,15 @@ function renderTablaSet(setKey) {
   const cont = document.getElementById("listaCartasSet");
 cont.innerHTML = html;
 
+// Preservar el estado del checkbox "Ver cartas"
+const chkVerCartasMovil = document.getElementById("chkVerCartasMovil");
+const gridCartas = cont.querySelector(".cartas-grid");
+if (chkVerCartasMovil && gridCartas) {
+  if (!chkVerCartasMovil.checked) {
+    gridCartas.classList.add("ocultar-imagenes");
+  }
+}
+
 // Modal al clickar nombre
 cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
   btn.addEventListener("click", () => {
