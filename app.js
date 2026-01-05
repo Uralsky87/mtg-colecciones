@@ -55,6 +55,7 @@ let sbLoginInFlight = false;
 let sbPullInFlight = false;
 let sbExchangeInFlight = false;
 let sbJustExchanged = false;
+let sbApplyingCloudData = false; // Bandera para prevenir marcar como dirty durante sincronización
 
 function uiSetSyncStatus(msg) {
   const el = document.getElementById("syncStatus");
@@ -62,6 +63,8 @@ function uiSetSyncStatus(msg) {
 }
 
 function sbUpdateAuthUI() {
+  console.log("sbUpdateAuthUI: actualizando UI", { hasUser: !!sbUser, email: sbUser?.email, dirty: sbDirty });
+  
   const inputEmail = document.getElementById("inputEmail");
   const btnLogin = document.getElementById("btnLogin");
   const btnLogout = document.getElementById("btnLogout");
@@ -71,12 +74,18 @@ function sbUpdateAuthUI() {
     if (inputEmail) inputEmail.value = sbUser.email || "";
     if (btnLogin) btnLogin.disabled = true;
     if (btnLogout) btnLogout.style.display = "inline-block";
-    if (btnPushNow) btnPushNow.disabled = false;
+    if (btnPushNow) {
+      btnPushNow.disabled = false;
+      console.log("sbUpdateAuthUI: btnPushNow habilitado");
+    }
     uiSetSyncStatus(`Conectado como ${sbUser.email || "usuario"} ✅`);
   } else {
     if (btnLogin) btnLogin.disabled = false;
     if (btnLogout) btnLogout.style.display = "none";
-    if (btnPushNow) btnPushNow.disabled = true;
+    if (btnPushNow) {
+      btnPushNow.disabled = true;
+      console.log("sbUpdateAuthUI: btnPushNow deshabilitado (no hay sesión)");
+    }
     uiSetSyncStatus("No has iniciado sesión.");
   }
 }
@@ -103,51 +112,63 @@ function sbBuildCloudPayload() {
 function sbApplyCloudPayload(payload) {
   if (!payload || typeof payload !== "object") return;
 
-  if (payload.estado && typeof payload.estado === "object") {
-    estado = payload.estado;
-    migrarEstadoSiHaceFalta();
-    guardarEstado();
-  }
-
-  if (payload.progresoPorSet && typeof payload.progresoPorSet === "object") {
-    progresoPorSet = payload.progresoPorSet;
-    guardarProgresoPorSet();
-  }
-
-  if (Array.isArray(payload.hiddenEmptySetKeys)) {
-    hiddenEmptySetKeys = new Set(payload.hiddenEmptySetKeys);
-    guardarHiddenEmptySets();
-  }
-
-  if (Array.isArray(payload.hiddenCollections)) {
-    hiddenCollections = new Set(payload.hiddenCollections);
-    guardarHiddenCollections();
-  }
-
-  // ✅ NUEVO: aplicar snapshot de estadísticas desde nube
-  if (payload.statsSnapshot && typeof payload.statsSnapshot === "object") {
-    statsSnapshot = payload.statsSnapshot;
-    try {
-      localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
-    } catch {}
-  }
-
-  const f = payload.filtros || {};
-  if (typeof f.filtroIdiomaColecciones === "string") filtroIdiomaColecciones = f.filtroIdiomaColecciones;
-  if (typeof f.filtroTextoColecciones === "string") filtroTextoColecciones = f.filtroTextoColecciones;
-  if (Array.isArray(f.filtroTiposSet)) filtroTiposSet = new Set(f.filtroTiposSet);
-  if (typeof f.ocultarTokens === "boolean") ocultarTokens = f.ocultarTokens;
-  if (typeof f.ocultarArte === "boolean") ocultarArte = f.ocultarArte;
-
-  renderColecciones();
-  if (setActualKey) renderTablaSet(setActualKey);
-
-  // ✅ Bonus: pinta estadísticas con snapshot (NO recalcula aquí)
+  console.log("sbApplyCloudPayload: aplicando datos desde la nube...");
+  
+  // Activar bandera para prevenir marcar como dirty
+  sbApplyingCloudData = true;
+  
   try {
-    if (typeof renderEstadisticas === "function") {
-      renderEstadisticas({ forceRecalc: false });
+    if (payload.estado && typeof payload.estado === "object") {
+      estado = payload.estado;
+      migrarEstadoSiHaceFalta();
+      guardarEstado();
     }
-  } catch {}
+
+    if (payload.progresoPorSet && typeof payload.progresoPorSet === "object") {
+      progresoPorSet = payload.progresoPorSet;
+      guardarProgresoPorSet();
+    }
+
+    if (Array.isArray(payload.hiddenEmptySetKeys)) {
+      hiddenEmptySetKeys = new Set(payload.hiddenEmptySetKeys);
+      guardarHiddenEmptySets();
+    }
+
+    if (Array.isArray(payload.hiddenCollections)) {
+      hiddenCollections = new Set(payload.hiddenCollections);
+      guardarHiddenCollections();
+    }
+
+    // ✅ NUEVO: aplicar snapshot de estadísticas desde nube
+    if (payload.statsSnapshot && typeof payload.statsSnapshot === "object") {
+      statsSnapshot = payload.statsSnapshot;
+      try {
+        localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
+      } catch {}
+    }
+
+    const f = payload.filtros || {};
+    if (typeof f.filtroIdiomaColecciones === "string") filtroIdiomaColecciones = f.filtroIdiomaColecciones;
+    if (typeof f.filtroTextoColecciones === "string") filtroTextoColecciones = f.filtroTextoColecciones;
+    if (Array.isArray(f.filtroTiposSet)) filtroTiposSet = new Set(f.filtroTiposSet);
+    if (typeof f.ocultarTokens === "boolean") ocultarTokens = f.ocultarTokens;
+    if (typeof f.ocultarArte === "boolean") ocultarArte = f.ocultarArte;
+
+    renderColecciones();
+    if (setActualKey) renderTablaSet(setActualKey);
+
+    // ✅ Bonus: pinta estadísticas con snapshot (NO recalcula aquí)
+    try {
+      if (typeof renderEstadisticas === "function") {
+        renderEstadisticas({ forceRecalc: false });
+      }
+    } catch {}
+    
+    console.log("sbApplyCloudPayload: datos aplicados correctamente");
+  } finally {
+    // Desactivar bandera
+    sbApplyingCloudData = false;
+  }
 }
 
 async function sbLoginWithEmail(email) {
@@ -221,9 +242,17 @@ async function sbPullNow() {
 
         sbKnownCloudUpdatedAt = data.updated_at || null;
     sbApplyCloudPayload(data.data || {});
+    
+    // Asegurar que no quede marcado como dirty después de descargar
     sbDirty = false;
+    console.log("sbPullNow: datos descargados, sbDirty =", sbDirty);
 
-    uiSetSyncStatus("Descargado ✅");
+    // Actualizar UI con el estado correcto
+    if (sbUser) {
+      uiSetSyncStatus(`Conectado como ${sbUser.email || "usuario"} ✅`);
+    } else {
+      uiSetSyncStatus("Descargado ✅");
+    }
   } finally {
     sbPullInFlight = false;
   }
@@ -431,8 +460,15 @@ function onClickOnce(el, handler) {
 }
 
 function sbMarkDirty() {
+  // No marcar como dirty si estamos aplicando datos desde la nube
+  if (sbApplyingCloudData) {
+    console.log("sbMarkDirty: ignorado (aplicando datos de la nube)");
+    return;
+  }
+  
   sbDirty = true;
   sbTouchLocalUpdatedAt();
+  console.log("sbMarkDirty: marcado como dirty");
   uiSetSyncStatus("Cambios sin guardar…");
 }
 
