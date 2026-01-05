@@ -339,14 +339,24 @@ async function sbLogout() {
   const wasDisabled = btnLogout?.disabled;
   
   try {
-    if (btnLogout) btnLogout.disabled = true;
+    if (btnLogout) {
+      btnLogout.disabled = true;
+      console.log("sbLogout: botón deshabilitado");
+    }
     if (btnPushNow) btnPushNow.disabled = true;
     
     uiSetSyncStatus("Cerrando sesión...");
+    console.log("sbLogout: llamando a signOut()...");
     
-    await supabaseClient.auth.signOut();
+    // Timeout de 5 segundos para signOut
+    const signOutPromise = supabaseClient.auth.signOut();
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Timeout al cerrar sesión")), 5000)
+    );
     
-    console.log("sbLogout: sesión cerrada exitosamente");
+    await Promise.race([signOutPromise, timeoutPromise]);
+    
+    console.log("sbLogout: signOut() completado");
     
     // Limpiar estado local
     sbUser = null;
@@ -354,15 +364,17 @@ async function sbLogout() {
     sbKnownCloudUpdatedAt = null;
     sbStopAutoSave();
     
+    console.log("sbLogout: estado limpio");
+    
     // Actualizar UI inmediatamente
     sbUpdateAuthUI();
     uiSetSyncStatus("Sesión cerrada correctamente");
     
-    console.log("sbLogout: UI actualizada, estado limpio");
+    console.log("sbLogout: completado exitosamente");
     
   } catch (err) {
     console.error("sbLogout: error al cerrar sesión", err);
-    uiSetSyncStatus("Error al cerrar sesión");
+    uiSetSyncStatus("Error al cerrar sesión: " + (err.message || "desconocido"));
     
     // Re-habilitar botón si hubo error
     if (btnLogout && !wasDisabled) btnLogout.disabled = false;
@@ -489,16 +501,18 @@ function onClickOnce(el, handler) {
     return;
   }
   if (el.dataset.wired === "1") {
-    console.log("onClickOnce: elemento ya conectado", el.id || el);
+    console.log("onClickOnce: elemento ya conectado, OMITIENDO", el.id || el);
     return;
   }
   el.dataset.wired = "1";
   
-  // Wrapper que registra el click
+  // Wrapper que registra el click y previene doble-click
+  let processing = false;
   const wrappedHandler = async (event) => {
     console.log(`[CLICK] Botón ${el.id || 'sin-id'} clickeado`, { 
       disabled: el.disabled, 
-      visible: el.style.display !== 'none' 
+      visible: el.style.display !== 'none',
+      processing: processing
     });
     
     if (el.disabled) {
@@ -506,10 +520,18 @@ function onClickOnce(el, handler) {
       return;
     }
     
+    if (processing) {
+      console.warn(`[CLICK] Botón ${el.id} ya está procesando, ignorando click duplicado`);
+      return;
+    }
+    
+    processing = true;
     try {
       await handler(event);
     } catch (err) {
       console.error(`[CLICK] Error en handler de ${el.id}:`, err);
+    } finally {
+      processing = false;
     }
   };
   
@@ -3551,8 +3573,7 @@ if (btnStatsRecalcular) {
 
       if (destino === "cuenta") {
         mostrarPantalla("cuenta");
-        // Re-wire botones por si acaso
-        sbEnsureButtonsWired();
+        // onClickOnce ya previene duplicados, no necesitamos re-wire
         return;
       }
     });
