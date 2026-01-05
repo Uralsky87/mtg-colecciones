@@ -17,54 +17,6 @@ const expandedCardIds = new Set(); // ids desplegados en esta sesión
 const SUPABASE_URL = "https://slvpktkrfbsxwagibfjx.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsdnBrdGtyZmJzeHdhZ2liZmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MTE3MTQsImV4cCI6MjA4MTk4NzcxNH0.-U3ijfDUuSFNKG2001QBzSH3pGlgYXLT2Z8TCRvV6rM";
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// === DETECTAR SI ESTA VENTANA ES UN CALLBACK DE MAGIC LINK ===
-// Si la URL contiene parámetros de autenticación de Supabase, significa que 
-// esta ventana se abrió desde el email. Procesamos la auth y cerramos esta ventana.
-(function detectAuthCallback() {
-  const params = new URLSearchParams(window.location.hash.substring(1));
-  const hasAuthParams = params.has('access_token') || params.has('refresh_token');
-  
-  if (hasAuthParams) {
-    console.log('🔐 Ventana de callback de autenticación detectada');
-    
-    // Esperar a que Supabase procese la sesión
-    supabaseClient.auth.getSession().then(({ data }) => {
-      if (data?.session) {
-        console.log('✅ Sesión autenticada, notificando a otras ventanas...');
-        
-        // Notificar a todas las demás pestañas/ventanas
-        try {
-          localStorage.setItem('mtg-auth-event', Date.now().toString());
-          if (typeof BroadcastChannel !== 'undefined') {
-            const bc = new BroadcastChannel('mtg-auth-channel');
-            bc.postMessage({ type: 'AUTH_COMPLETE' });
-            bc.close();
-          }
-        } catch (e) {
-          console.error('Error notificando auth:', e);
-        }
-        
-        // Limpiar la URL de los parámetros de auth
-        const cleanUrl = window.location.pathname + window.location.search;
-        window.history.replaceState({}, document.title, cleanUrl);
-        
-        // Cerrar esta ventana después de un pequeño delay
-        setTimeout(() => {
-          // Intentar cerrar la ventana si fue abierta por script
-          if (window.opener) {
-            console.log('🔒 Cerrando ventana de callback (tiene opener)');
-            window.close();
-          } else {
-            // Si no podemos cerrar, redirigir a la app principal
-            console.log('🔄 No se puede cerrar la ventana, recargando...');
-            window.location.replace(cleanUrl);
-          }
-        }, 1000);
-      }
-    });
-  }
-})();
 const LS_LOCAL_UPDATED_AT = "mtg_local_updated_at_v1";
 const LS_CATALOGO_SETS = "mtg_catalogo_sets_v1";
 const LS_CATALOGO_TIMESTAMP = "mtg_catalogo_timestamp_v1";
@@ -398,10 +350,10 @@ async function sbLogout() {
     uiSetSyncStatus("Cerrando sesión...");
     console.log("sbLogout: llamando a signOut()...");
     
-    // Timeout de 5 segundos para signOut
+    // Timeout de 15 segundos para signOut (aumentado para evitar falsos positivos)
     const signOutPromise = supabaseClient.auth.signOut();
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Timeout al cerrar sesión")), 5000)
+      setTimeout(() => reject(new Error("Timeout al cerrar sesión")), 15000)
     );
     
     await Promise.race([signOutPromise, timeoutPromise]);
@@ -498,48 +450,78 @@ async function sbCompleteMagicLinkIfPresent() {
   try {
     const url = new URL(window.location.href);
     const code = url.searchParams.get("code");
-    if (!code) return;
+    
+    // También verificar si hay tokens en el hash (método alternativo de Supabase)
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const hasHashAuth = hashParams.has('access_token') || hashParams.has('refresh_token');
+    
+    // Si no hay parámetros de auth, salir
+    if (!code && !hasHashAuth) return;
 
+    console.log('🔐 Callback de autenticación detectado', { hasCode: !!code, hasHashAuth });
     uiSetSyncStatus("Completando inicio de sesión…");
 
-    const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
+    // Si hay code, intercambiarlo por sesión
+    if (code) {
+      const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
 
-    if (error) {
-      console.error("exchangeCodeForSession:", error);
-      uiSetSyncStatus("Login ya completado en otra pestaña. Actualizando sesión…");
-    } else {
+      if (error) {
+        console.error("exchangeCodeForSession:", error);
+        uiSetSyncStatus("Login ya completado en otra pestaña. Actualizando sesión…");
+      } else {
+        console.log('✅ Sesión intercambiada exitosamente');
+        sbJustExchanged = true;
+        setTimeout(() => { sbJustExchanged = false; }, 1500);
+      }
+      
+      // Limpia ?code=... de la URL
+      url.searchParams.delete("code");
+      window.history.replaceState({}, document.title, url.toString());
+    }
+    
+    // Si hay hash auth, dejar que Supabase lo procese automáticamente
+    // y solo limpiar el hash después
+    if (hasHashAuth) {
+      console.log('✅ Auth por hash detectado, esperando procesamiento...');
+      // Esperar un momento para que Supabase procese
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Limpiar el hash
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      
       sbJustExchanged = true;
       setTimeout(() => { sbJustExchanged = false; }, 1500);
-      
-      // Notificar a otras pestañas que el login se completó
-      if (authChannel) {
-        authChannel.postMessage({ type: 'AUTH_COMPLETE' });
-      }
-      localStorage.setItem('mtg-auth-event', Date.now().toString());
-      
-      // En desktop: si esta pestaña fue abierta por el magic link, cerrarla automáticamente
-      // Detectamos si es una pestaña nueva (poca historia) y no es standalone (PWA)
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
-                          window.navigator.standalone === true;
-      const hasLittleHistory = window.history.length <= 2;
-      
-      if (!isStandalone && hasLittleHistory) {
-        uiSetSyncStatus("Login completado. Cerrando esta ventana…");
-        setTimeout(() => {
-          window.close();
-          // Si no se puede cerrar (algunas restricciones de navegador), mostrar mensaje
-          setTimeout(() => {
-            if (!window.closed) {
-              uiSetSyncStatus("Login completo. Puedes cerrar esta ventana.");
-            }
-          }, 500);
-        }, 1500);
-      }
     }
-
-    // Limpia ?code=... para que al refrescar no lo reintente
-    url.searchParams.delete("code");
-    window.history.replaceState({}, document.title, url.toString());
+    
+    // Notificar a otras pestañas que el login se completó
+    if (authChannel) {
+      authChannel.postMessage({ type: 'AUTH_COMPLETE' });
+    }
+    localStorage.setItem('mtg-auth-event', Date.now().toString());
+    
+    // Detectar si esta ventana debe cerrarse (fue abierta por el magic link)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+                        window.navigator.standalone === true;
+    const hasLittleHistory = window.history.length <= 2;
+    
+    if (!isStandalone && hasLittleHistory) {
+      console.log('🔒 Intentando cerrar ventana de callback...');
+      uiSetSyncStatus("Login completado. Cerrando esta ventana…");
+      
+      setTimeout(() => {
+        // Intentar cerrar
+        window.close();
+        
+        // Verificar si se cerró
+        setTimeout(() => {
+          if (!window.closed) {
+            console.log('⚠️ No se pudo cerrar la ventana automáticamente');
+            uiSetSyncStatus("✅ Login completo. Puedes cerrar esta ventana manualmente.");
+          }
+        }, 500);
+      }, 1500);
+    }
+    
   } finally {
     sbExchangeInFlight = false;
   }
