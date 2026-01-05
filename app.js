@@ -230,12 +230,25 @@ async function sbPullNow() {
 }
 
 async function sbPushNow() {
-  if (!sbUser?.id) { uiSetSyncStatus("Inicia sesión primero."); return; }
-  if (!sbDirty) { uiSetSyncStatus("No hay cambios que guardar."); return; }
+  console.log("sbPushNow: iniciando...", { userId: sbUser?.id, isDirty: sbDirty });
+  
+  if (!sbUser?.id) { 
+    console.warn("sbPushNow: no hay usuario logueado");
+    uiSetSyncStatus("Inicia sesión primero."); 
+    return; 
+  }
+  
+  if (!sbDirty) { 
+    console.log("sbPushNow: no hay cambios pendientes");
+    uiSetSyncStatus("No hay cambios que guardar."); 
+    return; 
+  }
 
   // Anti-pisado
   let cloudUpdatedAt = null;
-  try { cloudUpdatedAt = await sbGetCloudMeta(); } catch {}
+  try { cloudUpdatedAt = await sbGetCloudMeta(); } catch (err) {
+    console.warn("sbPushNow: error obteniendo meta de la nube", err);
+  }
 
   if (sbKnownCloudUpdatedAt && cloudUpdatedAt && cloudUpdatedAt > sbKnownCloudUpdatedAt) {
     uiSetSyncStatus("⚠️ La nube tiene cambios de otro dispositivo. Pulsa “Actualizar” antes de guardar.");
@@ -243,6 +256,7 @@ async function sbPushNow() {
   }
 
   uiSetSyncStatus("Subiendo a la nube…");
+  console.log("sbPushNow: subiendo datos...");
 
   const payload = sbBuildCloudPayload();
   const { error } = await supabaseClient
@@ -250,12 +264,13 @@ async function sbPushNow() {
     .upsert({ user_id: sbUser.id, data: payload }, { onConflict: "user_id" });
 
   if (error) {
-    console.error(error);
+    console.error("sbPushNow: error al subir", error);
     uiSetSyncStatus("Error subiendo (mira consola).");
     return;
   }
 
   sbDirty = false;
+  console.log("sbPushNow: datos guardados exitosamente");
 
   // refrescar meta
   try { sbKnownCloudUpdatedAt = await sbGetCloudMeta(); } catch {}
@@ -280,8 +295,59 @@ function sbStopAutoSave() {
 }
 
 async function sbLogout() {
-  await supabaseClient.auth.signOut();
-  // onAuthStateChange se encargará de UI
+  console.log("sbLogout: cerrando sesión...");
+  try {
+    await supabaseClient.auth.signOut();
+    console.log("sbLogout: sesión cerrada exitosamente");
+    // onAuthStateChange se encargará de UI
+  } catch (err) {
+    console.error("sbLogout: error al cerrar sesión", err);
+  }
+}
+
+// Asegurar que los botones están conectados (puede ser llamado múltiples veces)
+function sbEnsureButtonsWired() {
+  console.log("sbEnsureButtonsWired: verificando botones...");
+  
+  const btnLogin = document.getElementById("btnLogin");
+  const btnLogout = document.getElementById("btnLogout");
+  const btnPushNow = document.getElementById("btnPushNow");
+  const inputEmail = document.getElementById("inputEmail");
+
+  if (!btnLogin) console.warn("sbEnsureButtonsWired: btnLogin no encontrado");
+  if (!btnLogout) console.warn("sbEnsureButtonsWired: btnLogout no encontrado");
+  if (!btnPushNow) console.warn("sbEnsureButtonsWired: btnPushNow no encontrado");
+  if (!inputEmail) console.warn("sbEnsureButtonsWired: inputEmail no encontrado");
+
+  // onClickOnce ya previene duplicados con dataset.wired
+  onClickOnce(btnLogin, async () => {
+    try {
+      await sbLoginWithEmail(inputEmail ? inputEmail.value : "");
+    } catch (err) {
+      console.error("Error en btnLogin:", err);
+      uiSetSyncStatus("Error al intentar iniciar sesión");
+    }
+  });
+
+  onClickOnce(btnLogout, async () => {
+    try {
+      await sbLogout();
+    } catch (err) {
+      console.error("Error en btnLogout:", err);
+      uiSetSyncStatus("Error al cerrar sesión");
+    }
+  });
+  
+  onClickOnce(btnPushNow, async () => {
+    try {
+      await sbPushNow();
+    } catch (err) {
+      console.error("Error en btnPushNow:", err);
+      uiSetSyncStatus("Error al guardar");
+    }
+  });
+  
+  console.log("sbEnsureButtonsWired: verificación completa");
 }
 
 let sbInitDone = false;
@@ -351,10 +417,17 @@ async function sbCompleteMagicLinkIfPresent() {
 }
 
 function onClickOnce(el, handler) {
-  if (!el) return;
-  if (el.dataset.wired === "1") return;
+  if (!el) {
+    console.warn("onClickOnce: elemento no encontrado");
+    return;
+  }
+  if (el.dataset.wired === "1") {
+    console.log("onClickOnce: elemento ya conectado", el.id || el);
+    return;
+  }
   el.dataset.wired = "1";
   el.addEventListener("click", handler);
+  console.log("onClickOnce: listener añadido a", el.id || el);
 }
 
 function sbMarkDirty() {
@@ -378,17 +451,7 @@ async function sbInit() {
   sbUpdateAuthUI();
 
   // 2) wire botones (una sola vez)
-  const btnLogin = document.getElementById("btnLogin");
-  const btnLogout = document.getElementById("btnLogout");
-  const btnPushNow = document.getElementById("btnPushNow");
-  const inputEmail = document.getElementById("inputEmail");
-
-  onClickOnce(btnLogin, async () => {
-    await sbLoginWithEmail(inputEmail ? inputEmail.value : "");
-  });
-
-  onClickOnce(btnLogout, sbLogout);
-  onClickOnce(btnPushNow, sbPushNow);
+  sbEnsureButtonsWired();
 
   // 3) Si ya estaba logueado, hacemos pull y arrancamos autosave
   if (sbUser) {
@@ -3394,6 +3457,8 @@ if (btnStatsRecalcular) {
 
       if (destino === "cuenta") {
         mostrarPantalla("cuenta");
+        // Re-wire botones por si acaso
+        sbEnsureButtonsWired();
         return;
       }
     });
