@@ -635,11 +635,26 @@ async function sbInit() {
       if (!k) return;
 
       if (k.includes("supabase") || k.includes("auth-token") || k === 'mtg-auth-event') {
+        console.log('📦 Evento storage detectado:', k);
+        
         const { data } = await supabaseClient.auth.getSession();
         sbUser = data?.session?.user || null;
         sbUpdateAuthUI();
 
-        if (sbUser) await sbPullNow();
+        if (sbUser) {
+          await sbPullNow();
+          
+          // En PC: forzar recarga para actualizar completamente la UI
+          const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+          const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+          
+          if (!isMobile && !isStandalone && !sbJustExchanged && k === 'mtg-auth-event') {
+            console.log('🔄 Recargando página para actualizar UI completamente...');
+            setTimeout(() => {
+              window.location.reload();
+            }, 500);
+          }
+        }
       }
     });
 
@@ -647,10 +662,27 @@ async function sbInit() {
     if (authChannel) {
       authChannel.onmessage = async (e) => {
         if (e.data?.type === 'AUTH_COMPLETE') {
+          console.log('📩 Mensaje de autenticación recibido de otra ventana');
+          
           const { data } = await supabaseClient.auth.getSession();
           sbUser = data?.session?.user || null;
           sbUpdateAuthUI();
-          if (sbUser) await sbPullNow();
+          
+          if (sbUser) {
+            await sbPullNow();
+            
+            // En PC: forzar recarga para actualizar completamente la UI
+            // Detectar si NO es móvil y NO es la ventana que acaba de hacer login
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+            
+            if (!isMobile && !isStandalone && !sbJustExchanged) {
+              console.log('🔄 Recargando página para actualizar UI completamente...');
+              setTimeout(() => {
+                window.location.reload();
+              }, 500);
+            }
+          }
         }
       };
     }
