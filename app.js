@@ -108,6 +108,7 @@ function sbBuildCloudPayload() {
     hiddenEmptySetKeys: [...(hiddenEmptySetKeys || new Set())],
     hiddenCollections: [...(hiddenCollections || new Set())],
     statsSnapshot: statsSnapshot || null,
+    decks: decks || [],
     filtros: {
       filtroIdiomaColecciones: filtroIdiomaColecciones ?? "all",
       filtroTextoColecciones: filtroTextoColecciones ?? "",
@@ -154,6 +155,12 @@ function sbApplyCloudPayload(payload) {
       try {
         localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
       } catch {}
+    }
+
+    // ✅ Aplicar decks desde la nube
+    if (Array.isArray(payload.decks)) {
+      decks = payload.decks;
+      guardarDecks();
     }
 
     const f = payload.filtros || {};
@@ -2868,6 +2875,7 @@ function cargarDecks() {
 
 function guardarDecks() {
   localStorage.setItem(LS_DECKS_KEY, JSON.stringify(decks));
+  sbMarkDirty(); // Marcar como dirty para sincronizar con la nube
 }
 
 // Parser de formato Moxfield: "1 Argonath, Pillars of the Kings (LTC) 351"
