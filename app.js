@@ -17,7 +17,57 @@ const expandedCardIds = new Set(); // ids desplegados en esta sesión
 const SUPABASE_URL = "https://slvpktkrfbsxwagibfjx.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsdnBrdGtyZmJzeHdhZ2liZmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MTE3MTQsImV4cCI6MjA4MTk4NzcxNH0.-U3ijfDUuSFNKG2001QBzSH3pGlgYXLT2Z8TCRvV6rM";
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// === DETECTAR SI ESTA VENTANA ES UN CALLBACK DE MAGIC LINK ===
+// Si la URL contiene parámetros de autenticación de Supabase, significa que 
+// esta ventana se abrió desde el email. Procesamos la auth y cerramos esta ventana.
+(function detectAuthCallback() {
+  const params = new URLSearchParams(window.location.hash.substring(1));
+  const hasAuthParams = params.has('access_token') || params.has('refresh_token');
+  
+  if (hasAuthParams) {
+    console.log('🔐 Ventana de callback de autenticación detectada');
+    
+    // Esperar a que Supabase procese la sesión
+    supabaseClient.auth.getSession().then(({ data }) => {
+      if (data?.session) {
+        console.log('✅ Sesión autenticada, notificando a otras ventanas...');
+        
+        // Notificar a todas las demás pestañas/ventanas
+        try {
+          localStorage.setItem('mtg-auth-event', Date.now().toString());
+          if (typeof BroadcastChannel !== 'undefined') {
+            const bc = new BroadcastChannel('mtg-auth-channel');
+            bc.postMessage({ type: 'AUTH_COMPLETE' });
+            bc.close();
+          }
+        } catch (e) {
+          console.error('Error notificando auth:', e);
+        }
+        
+        // Limpiar la URL de los parámetros de auth
+        const cleanUrl = window.location.pathname + window.location.search;
+        window.history.replaceState({}, document.title, cleanUrl);
+        
+        // Cerrar esta ventana después de un pequeño delay
+        setTimeout(() => {
+          // Intentar cerrar la ventana si fue abierta por script
+          if (window.opener) {
+            console.log('🔒 Cerrando ventana de callback (tiene opener)');
+            window.close();
+          } else {
+            // Si no podemos cerrar, redirigir a la app principal
+            console.log('🔄 No se puede cerrar la ventana, recargando...');
+            window.location.replace(cleanUrl);
+          }
+        }, 1000);
+      }
+    });
+  }
+})();
 const LS_LOCAL_UPDATED_AT = "mtg_local_updated_at_v1";
+const LS_CATALOGO_SETS = "mtg_catalogo_sets_v1";
+const LS_CATALOGO_TIMESTAMP = "mtg_catalogo_timestamp_v1";
 let sbLocalUpdatedAt = 0;
 
 function sbLoadLocalUpdatedAt() {
@@ -1137,6 +1187,45 @@ async function scryGetSets() {
   return data.data || [];
 }
 
+// Actualizar catálogo desde Scryfall
+async function actualizarCatalogo({ silent = false } = {}) {
+  const msgEl = document.getElementById("msgCatalogo");
+  
+  try {
+    if (!silent && msgEl) msgEl.textContent = "Actualizando catálogo...";
+    console.log("Actualizando catálogo desde Scryfall...");
+    
+    const sets = await scryGetSets();
+    catalogoSets = sets.filter(s => !s.digital);
+    
+    console.log("Catálogo actualizado:", catalogoSets.length, "sets");
+    
+    // Guardar en cache
+    guardarCatalogo();
+    
+    // Reconstruir lista para UI
+    reconstruirCatalogoColecciones();
+    
+    // Actualizar UI si estamos en colecciones
+    if (typeof renderColecciones === "function") {
+      renderColecciones();
+    }
+    
+    if (!silent && msgEl) {
+      msgEl.textContent = `Actualizado correctamente (${catalogoSets.length} sets)`;
+      setTimeout(() => { if (msgEl) msgEl.textContent = ""; }, 3000);
+    }
+    
+    return true;
+  } catch (err) {
+    console.error("Error actualizando catálogo:", err);
+    if (!silent && msgEl) {
+      msgEl.textContent = `Error: ${err.message || "No se pudo conectar"}`;
+    }
+    return false;
+  }
+}
+
 async function scryGetCardsBySetAndLang(setCode, lang) {
   const code = String(setCode || "").toLowerCase();
   const l = String(lang || "en").toLowerCase();
@@ -1284,6 +1373,61 @@ function agruparResultadosBusqueda(cards) {
 let catalogoSets = [];
 let catalogoColecciones = [];     // lista lista para render
 const setMetaByKey = new Map();   // key -> entry (base)
+let catalogoLastUpdate = null;    // timestamp de última actualización
+
+// Guardar catálogo en localStorage
+function guardarCatalogo() {
+  try {
+    localStorage.setItem(LS_CATALOGO_SETS, JSON.stringify(catalogoSets));
+    const timestamp = Date.now();
+    localStorage.setItem(LS_CATALOGO_TIMESTAMP, timestamp.toString());
+    catalogoLastUpdate = timestamp;
+    console.log("Catálogo guardado en cache:", catalogoSets.length, "sets");
+  } catch (err) {
+    console.warn("Error guardando catálogo en localStorage:", err);
+  }
+}
+
+// Cargar catálogo desde localStorage
+function cargarCatalogo() {
+  try {
+    const rawSets = localStorage.getItem(LS_CATALOGO_SETS);
+    const rawTimestamp = localStorage.getItem(LS_CATALOGO_TIMESTAMP);
+    
+    if (rawSets) {
+      catalogoSets = JSON.parse(rawSets);
+      catalogoLastUpdate = rawTimestamp ? parseInt(rawTimestamp, 10) : null;
+      console.log("Catálogo cargado desde cache:", catalogoSets.length, "sets");
+      return true;
+    }
+  } catch (err) {
+    console.warn("Error cargando catálogo desde localStorage:", err);
+  }
+  return false;
+}
+
+// Obtener fecha de última actualización formateada
+function getFechaUltimaActualizacion() {
+  if (!catalogoLastUpdate) return "Nunca";
+  
+  const fecha = new Date(catalogoLastUpdate);
+  const ahora = new Date();
+  const diffMs = ahora - fecha;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHoras = Math.floor(diffMs / 3600000);
+  const diffDias = Math.floor(diffMs / 86400000);
+  
+  if (diffMins < 1) return "Hace un momento";
+  if (diffMins < 60) return `Hace ${diffMins} min`;
+  if (diffHoras < 24) return `Hace ${diffHoras}h`;
+  if (diffDias < 7) return `Hace ${diffDias} días`;
+  
+  return fecha.toLocaleDateString('es-ES', { 
+    day: '2-digit', 
+    month: '2-digit', 
+    year: 'numeric' 
+  });
+}
 
 function reconstruirCatalogoColecciones() {
   catalogoColecciones = [];
@@ -3573,7 +3717,8 @@ if (btnStatsRecalcular) {
 
       if (destino === "cuenta") {
         mostrarPantalla("cuenta");
-        // onClickOnce ya previene duplicados, no necesitamos re-wire
+        // Actualizar fecha del catálogo
+        actualizarFechaCatalogo();
         return;
       }
     });
@@ -4143,6 +4288,25 @@ function wireBackupButtons() {
       reader.readAsText(file);
     });
   }
+  
+  // Botón actualizar catálogo
+  const btnActualizarCatalogo = document.getElementById("btnActualizarCatalogo");
+  if (btnActualizarCatalogo) {
+    btnActualizarCatalogo.addEventListener("click", async () => {
+      btnActualizarCatalogo.disabled = true;
+      await actualizarCatalogo({ silent: false });
+      actualizarFechaCatalogo();
+      btnActualizarCatalogo.disabled = false;
+    });
+  }
+}
+
+// Actualizar el texto de fecha de catálogo
+function actualizarFechaCatalogo() {
+  const fechaEl = document.getElementById("fechaCatalogo");
+  if (fechaEl) {
+    fechaEl.textContent = `Última actualización: ${getFechaUltimaActualizacion()}`;
+  }
 }
 
 async function init() {
@@ -4177,20 +4341,46 @@ async function init() {
   }
 
   try {
-    // 1) Sets (Scryfall)
-    catalogoSets = (await scryGetSets()).filter(s => !s.digital);
-    console.log("Sets cargados:", catalogoSets.length);
-
-    // 2) Traducciones ES (MTGJSON) - opcional
-    try {
-      await cargarSetNameEsDesdeMTGJSON();
-      console.log("Traducciones ES cargadas:", Object.keys(setNameEsByCode).length);
-    } catch (err) {
-      console.warn("No se pudieron cargar traducciones de MTGJSON:", err);
+    // 1) Cargar catálogo desde cache (rápido)
+    const tieneCacheLocal = cargarCatalogo();
+    
+    if (tieneCacheLocal) {
+      console.log("Catálogo cargado desde cache, mostrando UI...");
+      
+      // 2) Traducciones ES (MTGJSON) - opcional
+      try {
+        await cargarSetNameEsDesdeMTGJSON();
+        console.log("Traducciones ES cargadas:", Object.keys(setNameEsByCode).length);
+      } catch (err) {
+        console.warn("No se pudieron cargar traducciones de MTGJSON:", err);
+      }
+      
+      // 3) Reconstruir catálogo para la UI
+      reconstruirCatalogoColecciones();
+      catalogoListo = true;
+      renderColecciones();
+      
+      // 4) Actualizar en background desde Scryfall
+      console.log("Actualizando catálogo en background...");
+      actualizarCatalogo({ silent: true }).catch(err => {
+        console.warn("No se pudo actualizar catálogo en background:", err);
+      });
+    } else {
+      // No hay cache, descargar ahora
+      console.log("Sin cache local, descargando catálogo...");
+      await actualizarCatalogo({ silent: true });
+      
+      // 2) Traducciones ES (MTGJSON) - opcional
+      try {
+        await cargarSetNameEsDesdeMTGJSON();
+        console.log("Traducciones ES cargadas:", Object.keys(setNameEsByCode).length);
+      } catch (err) {
+        console.warn("No se pudieron cargar traducciones de MTGJSON:", err);
+      }
+      
+      // 3) Reconstruir catálogo para la UI
+      reconstruirCatalogoColecciones();
     }
-
-    // 3) Reconstruir catálogo para la UI
-    reconstruirCatalogoColecciones();
 
   } catch (err) {
     console.error("Error cargando sets de Scryfall:", err);
