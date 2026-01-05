@@ -73,7 +73,11 @@ function sbUpdateAuthUI() {
   if (sbUser) {
     if (inputEmail) inputEmail.value = sbUser.email || "";
     if (btnLogin) btnLogin.disabled = true;
-    if (btnLogout) btnLogout.style.display = "inline-block";
+    if (btnLogout) {
+      btnLogout.style.display = "inline-block";
+      btnLogout.disabled = false; // Asegurar que está habilitado
+      console.log("sbUpdateAuthUI: btnLogout visible y habilitado");
+    }
     if (btnPushNow) {
       btnPushNow.disabled = false;
       console.log("sbUpdateAuthUI: btnPushNow habilitado");
@@ -81,7 +85,10 @@ function sbUpdateAuthUI() {
     uiSetSyncStatus(`Conectado como ${sbUser.email || "usuario"} ✅`);
   } else {
     if (btnLogin) btnLogin.disabled = false;
-    if (btnLogout) btnLogout.style.display = "none";
+    if (btnLogout) {
+      btnLogout.style.display = "none";
+      console.log("sbUpdateAuthUI: btnLogout oculto");
+    }
     if (btnPushNow) {
       btnPushNow.disabled = true;
       console.log("sbUpdateAuthUI: btnPushNow deshabilitado (no hay sesión)");
@@ -325,12 +332,41 @@ function sbStopAutoSave() {
 
 async function sbLogout() {
   console.log("sbLogout: cerrando sesión...");
+  
+  // Deshabilitar botones temporalmente
+  const btnLogout = document.getElementById("btnLogout");
+  const btnPushNow = document.getElementById("btnPushNow");
+  const wasDisabled = btnLogout?.disabled;
+  
   try {
+    if (btnLogout) btnLogout.disabled = true;
+    if (btnPushNow) btnPushNow.disabled = true;
+    
+    uiSetSyncStatus("Cerrando sesión...");
+    
     await supabaseClient.auth.signOut();
+    
     console.log("sbLogout: sesión cerrada exitosamente");
-    // onAuthStateChange se encargará de UI
+    
+    // Limpiar estado local
+    sbUser = null;
+    sbDirty = false;
+    sbKnownCloudUpdatedAt = null;
+    sbStopAutoSave();
+    
+    // Actualizar UI inmediatamente
+    sbUpdateAuthUI();
+    uiSetSyncStatus("Sesión cerrada correctamente");
+    
+    console.log("sbLogout: UI actualizada, estado limpio");
+    
   } catch (err) {
     console.error("sbLogout: error al cerrar sesión", err);
+    uiSetSyncStatus("Error al cerrar sesión");
+    
+    // Re-habilitar botón si hubo error
+    if (btnLogout && !wasDisabled) btnLogout.disabled = false;
+    if (btnPushNow && sbUser) btnPushNow.disabled = false;
   }
 }
 
@@ -359,12 +395,14 @@ function sbEnsureButtonsWired() {
   });
 
   onClickOnce(btnLogout, async () => {
+    console.log("=== CLICK EN BOTÓN SALIR ===");
     try {
       await sbLogout();
     } catch (err) {
       console.error("Error en btnLogout:", err);
       uiSetSyncStatus("Error al cerrar sesión");
     }
+    console.log("=== FIN CLICK EN BOTÓN SALIR ===");
   });
   
   onClickOnce(btnPushNow, async () => {
@@ -455,7 +493,27 @@ function onClickOnce(el, handler) {
     return;
   }
   el.dataset.wired = "1";
-  el.addEventListener("click", handler);
+  
+  // Wrapper que registra el click
+  const wrappedHandler = async (event) => {
+    console.log(`[CLICK] Botón ${el.id || 'sin-id'} clickeado`, { 
+      disabled: el.disabled, 
+      visible: el.style.display !== 'none' 
+    });
+    
+    if (el.disabled) {
+      console.warn(`[CLICK] Botón ${el.id} está deshabilitado, ignorando`);
+      return;
+    }
+    
+    try {
+      await handler(event);
+    } catch (err) {
+      console.error(`[CLICK] Error en handler de ${el.id}:`, err);
+    }
+  };
+  
+  el.addEventListener("click", wrappedHandler);
   console.log("onClickOnce: listener añadido a", el.id || el);
 }
 
