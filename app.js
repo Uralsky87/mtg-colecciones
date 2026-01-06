@@ -1813,6 +1813,7 @@ const pantallas = {
 // Sistema de navegación con historial para manejo del botón de retroceso del móvil
 let historialNavegacion = ["inicio"];
 let manejandoPopstate = false;
+let impedirSalidaApp = true; // Evita que la app se cierre al presionar retroceso
 
 function mostrarPantalla(nombre, agregarAlHistorial = true) {
   Object.values(pantallas).forEach(p => {
@@ -1866,6 +1867,11 @@ function navegarAtras() {
     
     // Mostrar la pantalla anterior sin agregar al historial
     mostrarPantalla(pantallaAnterior, false);
+    return true;
+  } else if (impedirSalidaApp) {
+    // Si estamos en la pantalla inicial, mantener la app abierta
+    // agregando de nuevo una entrada al historial
+    window.history.pushState({ pantalla: "inicio" }, "", "");
     return true;
   }
   return false;
@@ -4560,22 +4566,25 @@ setupScrollToTopButton("btnScrollTopDeck", "pantallaVerDeck");
 // Manejo del botón de retroceso del móvil
 // ===============================
 
+// Inicializar el historial del navegador al cargar la app
+// Esto asegura que siempre haya al menos una entrada en el historial
+if (!window.history.state || !window.history.state.pantalla) {
+  window.history.replaceState({ pantalla: "inicio" }, "", "");
+  // Agregar una segunda entrada para que el botón de retroceso funcione
+  window.history.pushState({ pantalla: "inicio" }, "", "");
+}
+
 // Interceptar el evento popstate (botón de retroceso del navegador/móvil)
 window.addEventListener("popstate", (event) => {
   manejandoPopstate = true;
   
-  // Navegar a la pantalla anterior en el historial interno
-  const pudoNavegar = navegarAtras();
+  // Prevenir el comportamiento por defecto
+  event.preventDefault();
   
-  if (!pudoNavegar) {
-    // Si no pudimos navegar atrás (estamos en inicio), dejar que se cierre la app
-    // No hacemos nada y permitimos el comportamiento por defecto
-  }
+  // Navegar a la pantalla anterior en el historial interno
+  navegarAtras();
   
   setTimeout(() => {
     manejandoPopstate = false;
   }, 100);
 });
-
-// Agregar un estado inicial al cargar la app
-window.history.replaceState({ pantalla: "inicio" }, "", "");
