@@ -1810,11 +1810,65 @@ const pantallas = {
   cuenta: document.getElementById("pantallaCuenta")
 };
 
-function mostrarPantalla(nombre) {
+// Sistema de navegación con historial para manejo del botón de retroceso del móvil
+let historialNavegacion = ["inicio"];
+let manejandoPopstate = false;
+
+function mostrarPantalla(nombre, agregarAlHistorial = true) {
   Object.values(pantallas).forEach(p => {
     if (p) p.classList.remove("active");
   });
   if (pantallas[nombre]) pantallas[nombre].classList.add("active");
+  
+  // Agregar al historial de navegación interna
+  if (agregarAlHistorial && !manejandoPopstate) {
+    historialNavegacion.push(nombre);
+    // Agregar un estado al historial del navegador para que el botón de retroceso funcione
+    window.history.pushState({ pantalla: nombre }, "", "");
+  }
+}
+
+function navegarAtras() {
+  if (historialNavegacion.length > 1) {
+    // Quitar la pantalla actual del historial
+    historialNavegacion.pop();
+    // Obtener la pantalla anterior
+    const pantallaAnterior = historialNavegacion[historialNavegacion.length - 1];
+    
+    // Ejecutar lógica específica según la pantalla de destino
+    if (pantallaAnterior === "colecciones") {
+      aplicarUIFiltrosColecciones();
+      aplicarUIFiltrosTipo();
+      renderColecciones();
+    } else if (pantallaAnterior === "decks") {
+      renderListaDecks();
+    } else if (pantallaAnterior === "buscar") {
+      const inputBuscar = document.getElementById("inputBuscar");
+      if (inputBuscar) inputBuscar.value = "";
+      renderResultadosBuscar("");
+    } else if (pantallaAnterior === "estadisticas") {
+      renderEstadisticas({ forceRecalc: false });
+    } else if (pantallaAnterior === "cuenta") {
+      actualizarFechaCatalogo();
+    } else if (pantallaAnterior === "menu") {
+      // No necesita lógica especial, solo mostrar el menú
+    } else if (pantallaAnterior === "set") {
+      // Al volver a set, renderizar la tabla con los filtros actuales
+      if (setActualKey) {
+        renderTablaSet(setActualKey);
+      }
+    } else if (pantallaAnterior === "verDeck") {
+      // Al volver a ver deck, renderizar las cartas actuales
+      if (typeof renderDeckCartas === "function") {
+        renderDeckCartas();
+      }
+    }
+    
+    // Mostrar la pantalla anterior sin agregar al historial
+    mostrarPantalla(pantallaAnterior, false);
+    return true;
+  }
+  return false;
 }
 
 // ===============================
@@ -3748,24 +3802,22 @@ if (btnStatsRecalcular) {
 
   // Volver al menú
   document.querySelectorAll("[data-action='volverMenu']").forEach(btn => {
-    btn.addEventListener("click", () => mostrarPantalla("menu"));
+    btn.addEventListener("click", () => {
+      window.history.back(); // Usar el historial del navegador
+    });
   });
 
   // Volver a decks
   document.querySelectorAll("[data-action='volverDecks']").forEach(btn => {
     btn.addEventListener("click", () => {
-      renderListaDecks();
-      mostrarPantalla("decks");
+      window.history.back(); // Usar el historial del navegador
     });
   });
 
   // Volver a colecciones
   document.querySelectorAll("[data-action='volverColecciones']").forEach(btn => {
     btn.addEventListener("click", () => {
-      aplicarUIFiltrosColecciones();
-      aplicarUIFiltrosTipo();
-      renderColecciones();
-      mostrarPantalla("colecciones");
+      window.history.back(); // Usar el historial del navegador
     });
   });
 
@@ -4503,3 +4555,27 @@ function setupScrollToTopButton(buttonId, containerId) {
 setupScrollToTopButton("btnScrollTopColecciones", "pantallaColecciones");
 setupScrollToTopButton("btnScrollTopSet", "pantallaSet");
 setupScrollToTopButton("btnScrollTopDeck", "pantallaVerDeck");
+
+// ===============================
+// Manejo del botón de retroceso del móvil
+// ===============================
+
+// Interceptar el evento popstate (botón de retroceso del navegador/móvil)
+window.addEventListener("popstate", (event) => {
+  manejandoPopstate = true;
+  
+  // Navegar a la pantalla anterior en el historial interno
+  const pudoNavegar = navegarAtras();
+  
+  if (!pudoNavegar) {
+    // Si no pudimos navegar atrás (estamos en inicio), dejar que se cierre la app
+    // No hacemos nada y permitimos el comportamiento por defecto
+  }
+  
+  setTimeout(() => {
+    manejandoPopstate = false;
+  }, 100);
+});
+
+// Agregar un estado inicial al cargar la app
+window.history.replaceState({ pantalla: "inicio" }, "", "");
