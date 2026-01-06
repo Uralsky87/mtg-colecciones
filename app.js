@@ -1867,6 +1867,9 @@ function navegarAtras() {
     
     // Mostrar la pantalla anterior sin agregar al historial
     mostrarPantalla(pantallaAnterior, false);
+    
+    // Inmediatamente agregar una nueva entrada para mantener el historial
+    window.history.pushState({ pantalla: pantallaAnterior }, "", "");
     return true;
   } else if (impedirSalidaApp) {
     // Si estamos en la pantalla inicial, mantener la app abierta
@@ -4566,25 +4569,21 @@ setupScrollToTopButton("btnScrollTopDeck", "pantallaVerDeck");
 // Manejo del botón de retroceso del móvil
 // ===============================
 
-// Inicializar el historial del navegador al cargar la app
-// Esto asegura que siempre haya al menos una entrada en el historial
-if (!window.history.state || !window.history.state.pantalla) {
-  window.history.replaceState({ pantalla: "inicio" }, "", "");
-  // Agregar una segunda entrada para que el botón de retroceso funcione
-  window.history.pushState({ pantalla: "inicio" }, "", "");
-}
-
 // Interceptar el evento popstate (botón de retroceso del navegador/móvil)
 window.addEventListener("popstate", (event) => {
-  manejandoPopstate = true;
+  // Prevenir que popstate se procese durante nuestra navegación interna
+  if (manejandoPopstate) return;
   
-  // Prevenir el comportamiento por defecto
-  event.preventDefault();
+  manejandoPopstate = true;
   
   // Navegar a la pantalla anterior en el historial interno
   navegarAtras();
   
   setTimeout(() => {
     manejandoPopstate = false;
-  }, 100);
+  }, 50);
 });
+
+// Inicializar el historial del navegador
+// Agregar una entrada inicial inmediatamente para que el botón de retroceso funcione
+window.history.pushState({ pantalla: "inicio" }, "", "");
