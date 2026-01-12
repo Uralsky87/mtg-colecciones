@@ -1252,6 +1252,116 @@ function setRiLang(oracle_id, lang, value) {
   sbMarkDirty();
 }
 
+// ===== UI: Alternancia de idioma por carta =====
+let uiLangByOracle = {}; // { oracle_id: "en"|"es" } - idioma activo en UI para cada carta
+let cacheCardByOracleLang = {}; // { oracle_id: { en: cardData, es: cardData } } - cache de prints por idioma
+let fetchingPrints = new Set(); // oracle_ids siendo buscados (evitar duplicados)
+
+const LS_UI_LANG = "mtg_ui_lang_by_oracle_v1";
+
+function cargarUILangByOracle() {
+  const raw = localStorage.getItem(LS_UI_LANG);
+  if (!raw) return;
+  try {
+    uiLangByOracle = JSON.parse(raw) || {};
+  } catch (e) {
+    console.warn("UI lang cache corrupto:", e);
+    uiLangByOracle = {};
+  }
+}
+
+function guardarUILangByOracle() {
+  try {
+    localStorage.setItem(LS_UI_LANG, JSON.stringify(uiLangByOracle));
+  } catch (e) {
+    console.warn("Error guardando UI lang:", e);
+  }
+}
+
+function getUILang(oracle_id) {
+  return uiLangByOracle[oracle_id] || "en";
+}
+
+function setUILang(oracle_id, lang) {
+  uiLangByOracle[oracle_id] = lang;
+  guardarUILangByOracle();
+}
+
+// Buscar print de una carta por oracle_id y lang en Scryfall
+async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, preferredCollectorNumber = null) {
+  if (!oracle_id) return null;
+  
+  // Si es EN, devolver la carta ya cargada (no fetch adicional)
+  if (lang === "en") {
+    // Buscar en cache de cartas cargadas
+    for (const [setKey, cartas] of Object.entries(cacheCartasPorSetLang)) {
+      const found = cartas.find(c => c.oracle_id === oracle_id && c.lang === "en");
+      if (found) {
+        if (!cacheCardByOracleLang[oracle_id]) cacheCardByOracleLang[oracle_id] = {};
+        cacheCardByOracleLang[oracle_id].en = found;
+        return found;
+      }
+    }
+    return null;
+  }
+  
+  // Para ES, revisar cache primero
+  if (cacheCardByOracleLang[oracle_id]?.es) {
+    return cacheCardByOracleLang[oracle_id].es;
+  }
+  
+  // Evitar búsquedas duplicadas simultáneas
+  const fetchKey = `${oracle_id}_${lang}`;
+  if (fetchingPrints.has(fetchKey)) {
+    console.log(`Ya se está buscando print ${lang} para oracle ${oracle_id}`);
+    return null;
+  }
+  
+  fetchingPrints.add(fetchKey);
+  
+  try {
+    let query = `oracleid:${oracle_id} lang:${lang}`;
+    
+    // Priorizar mismo set si se proporciona
+    if (preferredSetCode) {
+      query += ` set:${preferredSetCode}`;
+    }
+    
+    const cards = await scrySearchCards(query);
+    
+    if (cards.length === 0) {
+      console.log(`No se encontró print ${lang} para oracle ${oracle_id}`);
+      fetchingPrints.delete(fetchKey);
+      return null;
+    }
+    
+    // Intentar encontrar con mismo collector_number
+    let selectedCard = null;
+    if (preferredCollectorNumber) {
+      selectedCard = cards.find(c => c.collector_number === preferredCollectorNumber);
+    }
+    
+    // Si no hay match exacto, tomar el primero
+    if (!selectedCard) {
+      selectedCard = cards[0];
+    }
+    
+    // Guardar en cache
+    if (!cacheCardByOracleLang[oracle_id]) {
+      cacheCardByOracleLang[oracle_id] = {};
+    }
+    cacheCardByOracleLang[oracle_id][lang] = selectedCard;
+    
+    fetchingPrints.delete(fetchKey);
+    return selectedCard;
+    
+  } catch (err) {
+    console.error(`Error buscando print ${lang} para oracle ${oracle_id}:`, err);
+    fetchingPrints.delete(fetchKey);
+    return null;
+  }
+}
+
 // ===== Guardado/Carga v2 =====
 
 function cargarEstado2() {
@@ -2089,71 +2199,84 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
 
 function generarControlesModalCarta(oracleId) {
   const st2 = getEstadoCarta2(oracleId);
-  const qty_en = st2.qty_en;
-  const qty_es = st2.qty_es;
-  const foil_en = st2.foil_en;
-  const foil_es = st2.foil_es;
-  const ri_en = st2.ri_en;
-  const ri_es = st2.ri_es;
+  const langActivo = getUILang(oracleId);
 
   return `
     <div class="card" style="margin-top: 16px;">
-      <div class="carta-controles" style="background: rgba(0,0,0,.06);">
-        <!-- Cantidad -->
-        <div class="control-fila-dual">
-          <div class="control-lang-block">
-            <span class="flag">🇬🇧</span>
-            <div class="stepper">
-              <button class="btn-step btn-modal-qty-minus-en" data-oracle="${oracleId}" ${qty_en <= 0 ? "disabled" : ""}>−</button>
-              <input type="number" class="inp-num inp-modal-qty-en" data-oracle="${oracleId}" min="0" max="999" value="${qty_en}" />
-              <button class="btn-step btn-modal-qty-plus-en" data-oracle="${oracleId}">+</button>
-            </div>
-          </div>
-          <div class="control-lang-block">
-            <span class="flag">🇪🇸</span>
-            <div class="stepper">
-              <button class="btn-step btn-modal-qty-minus-es" data-oracle="${oracleId}" ${qty_es <= 0 ? "disabled" : ""}>−</button>
-              <input type="number" class="inp-num inp-modal-qty-es" data-oracle="${oracleId}" min="0" max="999" value="${qty_es}" />
-              <button class="btn-step btn-modal-qty-plus-es" data-oracle="${oracleId}">+</button>
-            </div>
-          </div>
+      <div class="carta-controles modal-controles" data-active-lang="${langActivo}" style="background: rgba(0,0,0,.06);">
+        <!-- Header con botón de cambio -->
+        <div class="controles-header">
+          <button class="btn-lang-switch btn-modal-lang-switch" data-oracle="${oracleId}" type="button" title="Cambiar idioma">
+            <span class="lang-icon-left">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
+            <span class="arrow">⇄</span>
+            <span class="lang-icon-right">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+          </button>
         </div>
 
-        <!-- Foil -->
-        <div class="control-foil-section">
-          <div class="foil-title">Foil</div>
-          <div class="control-fila-dual">
-            <div class="control-lang-block">
-              <span class="flag">🇬🇧</span>
-              <div class="stepper">
-                <button class="btn-step btn-modal-foil-minus-en" data-oracle="${oracleId}" ${foil_en <= 0 || qty_en === 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-modal-foil-en" data-oracle="${oracleId}" min="0" max="${qty_en}" value="${foil_en}" ${qty_en === 0 ? "disabled" : ""} />
-                <button class="btn-step btn-modal-foil-plus-en" data-oracle="${oracleId}" ${qty_en === 0 || foil_en >= qty_en ? "disabled" : ""}>+</button>
+        <!-- Slider viewport -->
+        <div class="lang-slider">
+          <div class="lang-track">
+            <!-- Panel EN -->
+            <div class="lang-panel" data-lang="en">
+              <!-- Cantidad EN -->
+              <div class="control-fila">
+                <span class="lbl">Cantidad</span>
+                <div class="stepper">
+                  <button class="btn-step btn-modal-qty-minus" data-oracle="${oracleId}" data-lang="en" ${st2.qty_en <= 0 ? "disabled" : ""}>−</button>
+                  <input type="number" class="inp-num inp-modal-qty" data-oracle="${oracleId}" data-lang="en" min="0" max="999" value="${st2.qty_en}" />
+                  <button class="btn-step btn-modal-qty-plus" data-oracle="${oracleId}" data-lang="en">+</button>
+                </div>
               </div>
-            </div>
-            <div class="control-lang-block">
-              <span class="flag">🇪🇸</span>
-              <div class="stepper">
-                <button class="btn-step btn-modal-foil-minus-es" data-oracle="${oracleId}" ${foil_es <= 0 || qty_es === 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-modal-foil-es" data-oracle="${oracleId}" min="0" max="${qty_es}" value="${foil_es}" ${qty_es === 0 ? "disabled" : ""} />
-                <button class="btn-step btn-modal-foil-plus-es" data-oracle="${oracleId}" ${qty_es === 0 || foil_es >= qty_es ? "disabled" : ""}>+</button>
-              </div>
-            </div>
-          </div>
-        </div>
 
-        <!-- Ri -->
-        <div class="control-ri-dual">
-          <span class="lbl">Ri</span>
-          <div class="ri-checkboxes">
-            <label class="chkline">
-              <span class="flag">🇬🇧</span>
-              <input type="checkbox" class="chk-modal-want-en" data-oracle="${oracleId}" ${ri_en ? "checked" : ""}>
-            </label>
-            <label class="chkline">
-              <span class="flag">🇪🇸</span>
-              <input type="checkbox" class="chk-modal-want-es" data-oracle="${oracleId}" ${ri_es ? "checked" : ""}>
-            </label>
+              <!-- Foil EN -->
+              <div class="control-fila">
+                <span class="lbl">Foil</span>
+                <div class="stepper">
+                  <button class="btn-step btn-modal-foil-minus" data-oracle="${oracleId}" data-lang="en" ${st2.foil_en <= 0 || st2.qty_en === 0 ? "disabled" : ""}>−</button>
+                  <input type="number" class="inp-num inp-modal-foil" data-oracle="${oracleId}" data-lang="en" min="0" max="${st2.qty_en}" value="${st2.foil_en}" ${st2.qty_en === 0 ? "disabled" : ""} />
+                  <button class="btn-step btn-modal-foil-plus" data-oracle="${oracleId}" data-lang="en" ${st2.qty_en === 0 || st2.foil_en >= st2.qty_en ? "disabled" : ""}>+</button>
+                </div>
+              </div>
+
+              <!-- Ri EN -->
+              <div class="control-fila">
+                <span class="lbl">Ri</span>
+                <label class="chkline">
+                  <input type="checkbox" class="chk-modal-want" data-oracle="${oracleId}" data-lang="en" ${st2.ri_en ? "checked" : ""}>
+                </label>
+              </div>
+            </div>
+
+            <!-- Panel ES -->
+            <div class="lang-panel" data-lang="es">
+              <!-- Cantidad ES -->
+              <div class="control-fila">
+                <span class="lbl">Cantidad</span>
+                <div class="stepper">
+                  <button class="btn-step btn-modal-qty-minus" data-oracle="${oracleId}" data-lang="es" ${st2.qty_es <= 0 ? "disabled" : ""}>−</button>
+                  <input type="number" class="inp-num inp-modal-qty" data-oracle="${oracleId}" data-lang="es" min="0" max="999" value="${st2.qty_es}" />
+                  <button class="btn-step btn-modal-qty-plus" data-oracle="${oracleId}" data-lang="es">+</button>
+                </div>
+              </div>
+
+              <!-- Foil ES -->
+              <div class="control-fila">
+                <span class="lbl">Foil</span>
+                <div class="stepper">
+                  <button class="btn-step btn-modal-foil-minus" data-oracle="${oracleId}" data-lang="es" ${st2.foil_es <= 0 || st2.qty_es === 0 ? "disabled" : ""}>−</button>
+                  <input type="number" class="inp-num inp-modal-foil" data-oracle="${oracleId}" data-lang="es" min="0" max="${st2.qty_es}" value="${st2.foil_es}" ${st2.qty_es === 0 ? "disabled" : ""} />
+                  <button class="btn-step btn-modal-foil-plus" data-oracle="${oracleId}" data-lang="es" ${st2.qty_es === 0 || st2.foil_es >= st2.qty_es ? "disabled" : ""}>+</button>
+                </div>
+              </div>
+
+              <!-- Ri ES -->
+              <div class="control-fila">
+                <span class="lbl">Ri</span>
+                <label class="chkline">
+                  <input type="checkbox" class="chk-modal-want" data-oracle="${oracleId}" data-lang="es" ${st2.ri_es ? "checked" : ""}>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2162,105 +2285,134 @@ function generarControlesModalCarta(oracleId) {
 }
 
 function wireControlesModalCarta(container, oracleId) {
-  // Qty EN
-  container.querySelectorAll('.btn-modal-qty-minus-en').forEach(btn => {
+  // Helper para actualizar panel en modal
+  function actualizarPanelModalLang(lang) {
+    const st2 = getEstadoCarta2(oracleId);
+    const qty = lang === "en" ? st2.qty_en : st2.qty_es;
+    const foil = lang === "en" ? st2.foil_en : st2.foil_es;
+    
+    const panel = container.querySelector(`.lang-panel[data-lang="${lang}"]`);
+    if (!panel) return;
+    
+    // Actualizar valores
+    const qtyInput = panel.querySelector('.inp-modal-qty');
+    const foilInput = panel.querySelector('.inp-modal-foil');
+    if (qtyInput) qtyInput.value = qty;
+    if (foilInput) {
+      foilInput.value = foil;
+      foilInput.max = qty;
+      foilInput.disabled = qty === 0;
+    }
+    
+    // Actualizar botones qty
+    const btnQtyMinus = panel.querySelector('.btn-modal-qty-minus');
+    if (btnQtyMinus) btnQtyMinus.disabled = qty <= 0;
+    
+    // Actualizar botones foil
+    const btnFoilMinus = panel.querySelector('.btn-modal-foil-minus');
+    const btnFoilPlus = panel.querySelector('.btn-modal-foil-plus');
+    if (btnFoilMinus) btnFoilMinus.disabled = foil <= 0 || qty === 0;
+    if (btnFoilPlus) btnFoilPlus.disabled = qty === 0 || foil >= qty;
+  }
+
+  // Toggle de idioma
+  container.querySelectorAll('.btn-modal-lang-switch').forEach(btn => {
     btn.addEventListener('click', () => {
-      const st2 = getEstadoCarta2(oracleId);
-      setQtyLang(oracleId, 'en', st2.qty_en - 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId }); // Reabrir para actualizar
-    });
-  });
-  container.querySelectorAll('.btn-modal-qty-plus-en').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const st2 = getEstadoCarta2(oracleId);
-      setQtyLang(oracleId, 'en', st2.qty_en + 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
-    });
-  });
-  container.querySelectorAll('.inp-modal-qty-en').forEach(inp => {
-    inp.addEventListener('change', () => {
-      setQtyLang(oracleId, 'en', inp.value);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const cartaControles = btn.closest('.carta-controles');
+      if (!cartaControles) return;
+      
+      // Prevenir clics múltiples
+      if (cartaControles.dataset.animating === "true") return;
+      cartaControles.dataset.animating = "true";
+      
+      const currentLang = cartaControles.dataset.activeLang || "en";
+      const newLang = currentLang === "en" ? "es" : "en";
+      setUILang(oracleId, newLang);
+      
+      // Actualizar atributo para animación CSS
+      cartaControles.dataset.activeLang = newLang;
+      
+      // Actualizar iconos del botón
+      const iconLeft = btn.querySelector(".lang-icon-left");
+      const iconRight = btn.querySelector(".lang-icon-right");
+      if (iconLeft && iconRight) {
+        iconLeft.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
+        iconRight.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
+      }
+      
+      // Desbloquear después de animación
+      setTimeout(() => {
+        cartaControles.dataset.animating = "false";
+      }, 220);
     });
   });
 
-  // Qty ES
-  container.querySelectorAll('.btn-modal-qty-minus-es').forEach(btn => {
+  // Qty
+  container.querySelectorAll('.btn-modal-qty-minus').forEach(btn => {
     btn.addEventListener('click', () => {
+      const lang = btn.dataset.lang;
       const st2 = getEstadoCarta2(oracleId);
-      setQtyLang(oracleId, 'es', st2.qty_es - 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+      setQtyLang(oracleId, lang, currentQty - 1);
+      actualizarPanelModalLang(lang);
+      renderColecciones();
     });
   });
-  container.querySelectorAll('.btn-modal-qty-plus-es').forEach(btn => {
+  container.querySelectorAll('.btn-modal-qty-plus').forEach(btn => {
     btn.addEventListener('click', () => {
+      const lang = btn.dataset.lang;
       const st2 = getEstadoCarta2(oracleId);
-      setQtyLang(oracleId, 'es', st2.qty_es + 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+      setQtyLang(oracleId, lang, currentQty + 1);
+      actualizarPanelModalLang(lang);
+      renderColecciones();
     });
   });
-  container.querySelectorAll('.inp-modal-qty-es').forEach(inp => {
+  container.querySelectorAll('.inp-modal-qty').forEach(inp => {
     inp.addEventListener('change', () => {
-      setQtyLang(oracleId, 'es', inp.value);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const lang = inp.dataset.lang;
+      setQtyLang(oracleId, lang, inp.value);
+      actualizarPanelModalLang(lang);
+      renderColecciones();
     });
   });
 
-  // Foil EN
-  container.querySelectorAll('.btn-modal-foil-minus-en').forEach(btn => {
+  // Foil
+  container.querySelectorAll('.btn-modal-foil-minus').forEach(btn => {
     btn.addEventListener('click', () => {
+      const lang = btn.dataset.lang;
       const st2 = getEstadoCarta2(oracleId);
-      setFoilLang(oracleId, 'en', st2.foil_en - 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+      setFoilLang(oracleId, lang, currentFoil - 1);
+      actualizarPanelModalLang(lang);
+      renderColecciones();
     });
   });
-  container.querySelectorAll('.btn-modal-foil-plus-en').forEach(btn => {
+  container.querySelectorAll('.btn-modal-foil-plus').forEach(btn => {
     btn.addEventListener('click', () => {
+      const lang = btn.dataset.lang;
       const st2 = getEstadoCarta2(oracleId);
-      setFoilLang(oracleId, 'en', st2.foil_en + 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+      setFoilLang(oracleId, lang, currentFoil + 1);
+      actualizarPanelModalLang(lang);
+      renderColecciones();
     });
   });
-  container.querySelectorAll('.inp-modal-foil-en').forEach(inp => {
+  container.querySelectorAll('.inp-modal-foil').forEach(inp => {
     inp.addEventListener('change', () => {
-      setFoilLang(oracleId, 'en', inp.value);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const lang = inp.dataset.lang;
+      setFoilLang(oracleId, lang, inp.value);
+      actualizarPanelModalLang(lang);
+      renderColecciones();
     });
   });
 
-  // Foil ES
-  container.querySelectorAll('.btn-modal-foil-minus-es').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const st2 = getEstadoCarta2(oracleId);
-      setFoilLang(oracleId, 'es', st2.foil_es - 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
-    });
-  });
-  container.querySelectorAll('.btn-modal-foil-plus-es').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const st2 = getEstadoCarta2(oracleId);
-      setFoilLang(oracleId, 'es', st2.foil_es + 1);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
-    });
-  });
-  container.querySelectorAll('.inp-modal-foil-es').forEach(inp => {
-    inp.addEventListener('change', () => {
-      setFoilLang(oracleId, 'es', inp.value);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
-    });
-  });
-
-  // Ri EN/ES
-  container.querySelectorAll('.chk-modal-want-en').forEach(chk => {
+  // Ri
+  container.querySelectorAll('.chk-modal-want').forEach(chk => {
     chk.addEventListener('change', () => {
-      setRiLang(oracleId, 'en', chk.checked);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
-    });
-  });
-  container.querySelectorAll('.chk-modal-want-es').forEach(chk => {
-    chk.addEventListener('change', () => {
-      setRiLang(oracleId, 'es', chk.checked);
-      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+      const lang = chk.dataset.lang;
+      setRiLang(oracleId, lang, chk.checked);
+      // No need to re-render for Ri
     });
   });
 }
@@ -2899,19 +3051,17 @@ function renderTablaSet(setKey) {
       st2 = { qty_en: stLegacy.qty, qty_es: 0, foil_en: stLegacy.foilQty, foil_es: 0, ri_en: stLegacy.wantMore, ri_es: false };
     }
     
-    // Layout dual EN/ES
-    const qty_en = st2.qty_en;
-    const qty_es = st2.qty_es;
-    const foil_en = st2.foil_en;
-    const foil_es = st2.foil_es;
-    const ri_en = st2.ri_en;
-    const ri_es = st2.ri_es;
+    // Layout clásico con toggle EN <-> ES
+    const langActivo = getUILang(c.oracle_id);
+    const qty = langActivo === "en" ? st2.qty_en : st2.qty_es;
+    const foil = langActivo === "en" ? st2.foil_en : st2.foil_es;
+    const ri = langActivo === "en" ? st2.ri_en : st2.ri_es;
     
     const tieneImg = c._img && c._img.trim() !== "";
     const hasQty = totalQty > 0;
 
     html += `
-  <div class="carta-item ${hasQty ? 'has-qty' : ''}">
+  <div class="carta-item ${hasQty ? 'has-qty' : ''}" data-oracle="${c.oracle_id || ''}" data-card-id="${c.id}">
     <!-- Header de la carta -->
     <div class="carta-header">
       <img src="icons/${hasQty ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="24" height="24">
@@ -2936,103 +3086,81 @@ function renderTablaSet(setKey) {
       }
     </div>
 
-    <!-- Controles de cantidad (Dual EN/ES) -->
-    <div class="carta-controles">
-      <!-- Cantidad (sin título, solo dos bloques con banderas) -->
-      <div class="control-fila-dual">
-        <!-- Bloque EN -->
-        <div class="control-lang-block">
-          <span class="flag">🇬🇧</span>
-          <div class="stepper">
-            <button class="btn-step btn-qty-minus-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${qty_en <= 0 ? "disabled" : ""}>−</button>
-            <input
-              type="number"
-              class="inp-num inp-qty-en"
-              data-oracle="${c.oracle_id || ''}"
-              data-lang="en"
-              min="0"
-              max="999"
-              value="${qty_en}"
-            />
-            <button class="btn-step btn-qty-plus-en" data-oracle="${c.oracle_id || ''}" data-lang="en">+</button>
-          </div>
-        </div>
-        
-        <!-- Bloque ES -->
-        <div class="control-lang-block">
-          <span class="flag">🇪🇸</span>
-          <div class="stepper">
-            <button class="btn-step btn-qty-minus-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${qty_es <= 0 ? "disabled" : ""}>−</button>
-            <input
-              type="number"
-              class="inp-num inp-qty-es"
-              data-oracle="${c.oracle_id || ''}"
-              data-lang="es"
-              min="0"
-              max="999"
-              value="${qty_es}"
-            />
-            <button class="btn-step btn-qty-plus-es" data-oracle="${c.oracle_id || ''}" data-lang="es">+</button>
-          </div>
-        </div>
+    <!-- Controles de cantidad (Slider con animación EN/ES) -->
+    <div class="carta-controles" data-active-lang="${langActivo}">
+      <!-- Header con botón de cambio -->
+      <div class="controles-header">
+        <button class="btn-lang-switch" data-oracle="${c.oracle_id || ''}" type="button" title="Cambiar idioma">
+          <span class="lang-icon-left">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
+          <span class="arrow">⇄</span>
+          <span class="lang-icon-right">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+        </button>
       </div>
 
-      <!-- Foil (centrado con título) -->
-      <div class="control-foil-section">
-        <div class="foil-title">Foil</div>
-        <div class="control-fila-dual">
-          <!-- Foil EN -->
-          <div class="control-lang-block">
-            <span class="flag">🇬🇧</span>
-            <div class="stepper">
-              <button class="btn-step btn-foil-minus-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${foil_en <= 0 || qty_en === 0 ? "disabled" : ""}>−</button>
-              <input
-                type="number"
-                class="inp-num inp-foil-en"
-                data-oracle="${c.oracle_id || ''}"
-                data-lang="en"
-                min="0"
-                max="${qty_en}"
-                value="${foil_en}"
-                ${qty_en === 0 ? "disabled" : ""}
-              />
-              <button class="btn-step btn-foil-plus-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${qty_en === 0 || foil_en >= qty_en ? "disabled" : ""}>+</button>
+      <!-- Slider viewport -->
+      <div class="lang-slider">
+        <div class="lang-track">
+          <!-- Panel EN -->
+          <div class="lang-panel" data-lang="en">
+            <!-- Cantidad EN -->
+            <div class="control-fila">
+              <span class="lbl">Cantidad</span>
+              <div class="stepper">
+                <button class="btn-step btn-qty-minus" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.qty_en <= 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-qty" data-oracle="${c.oracle_id || ''}" data-lang="en" min="0" max="999" value="${st2.qty_en}" />
+                <button class="btn-step btn-qty-plus" data-oracle="${c.oracle_id || ''}" data-lang="en">+</button>
+              </div>
             </div>
-          </div>
-          
-          <!-- Foil ES -->
-          <div class="control-lang-block">
-            <span class="flag">🇪🇸</span>
-            <div class="stepper">
-              <button class="btn-step btn-foil-minus-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${foil_es <= 0 || qty_es === 0 ? "disabled" : ""}>−</button>
-              <input
-                type="number"
-                class="inp-num inp-foil-es"
-                data-oracle="${c.oracle_id || ''}"
-                data-lang="es"
-                min="0"
-                max="${qty_es}"
-                value="${foil_es}"
-                ${qty_es === 0 ? "disabled" : ""}
-              />
-              <button class="btn-step btn-foil-plus-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${qty_es === 0 || foil_es >= qty_es ? "disabled" : ""}>+</button>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- Ri (dos checkboxes) -->
-      <div class="control-fila-dual control-ri-dual">
-        <span class="lbl">Ri</span>
-        <div class="ri-checkboxes">
-          <label class="chkline">
-            <span class="flag">🇬🇧</span>
-            <input type="checkbox" class="chk-want-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${ri_en ? "checked" : ""}>
-          </label>
-          <label class="chkline">
-            <span class="flag">🇪🇸</span>
-            <input type="checkbox" class="chk-want-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${ri_es ? "checked" : ""}>
-          </label>
+            <!-- Foil EN -->
+            <div class="control-fila">
+              <span class="lbl">Foil</span>
+              <div class="stepper">
+                <button class="btn-step btn-foil-minus" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.foil_en <= 0 || st2.qty_en === 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-foil" data-oracle="${c.oracle_id || ''}" data-lang="en" min="0" max="${st2.qty_en}" value="${st2.foil_en}" ${st2.qty_en === 0 ? "disabled" : ""} />
+                <button class="btn-step btn-foil-plus" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.qty_en === 0 || st2.foil_en >= st2.qty_en ? "disabled" : ""}>+</button>
+              </div>
+            </div>
+
+            <!-- Ri EN -->
+            <div class="control-fila">
+              <span class="lbl">Ri</span>
+              <label class="chkline">
+                <input type="checkbox" class="chk-want" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.ri_en ? "checked" : ""}>
+              </label>
+            </div>
+          </div>
+
+          <!-- Panel ES -->
+          <div class="lang-panel" data-lang="es">
+            <!-- Cantidad ES -->
+            <div class="control-fila">
+              <span class="lbl">Cantidad</span>
+              <div class="stepper">
+                <button class="btn-step btn-qty-minus" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.qty_es <= 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-qty" data-oracle="${c.oracle_id || ''}" data-lang="es" min="0" max="999" value="${st2.qty_es}" />
+                <button class="btn-step btn-qty-plus" data-oracle="${c.oracle_id || ''}" data-lang="es">+</button>
+              </div>
+            </div>
+
+            <!-- Foil ES -->
+            <div class="control-fila">
+              <span class="lbl">Foil</span>
+              <div class="stepper">
+                <button class="btn-step btn-foil-minus" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.foil_es <= 0 || st2.qty_es === 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-foil" data-oracle="${c.oracle_id || ''}" data-lang="es" min="0" max="${st2.qty_es}" value="${st2.foil_es}" ${st2.qty_es === 0 ? "disabled" : ""} />
+                <button class="btn-step btn-foil-plus" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.qty_es === 0 || st2.foil_es >= st2.qty_es ? "disabled" : ""}>+</button>
+              </div>
+            </div>
+
+            <!-- Ri ES -->
+            <div class="control-fila">
+              <span class="lbl">Ri</span>
+              <label class="chkline">
+                <input type="checkbox" class="chk-want" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.ri_es ? "checked" : ""}>
+              </label>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -3051,6 +3179,55 @@ const gridCartas = cont.querySelector(".cartas-grid");
 if (chkVerCartasMovil && gridCartas) {
   if (!chkVerCartasMovil.checked) {
     gridCartas.classList.add("ocultar-imagenes");
+  }
+}
+
+// Helper: Actualizar panel de idioma específico sin re-render completo
+function actualizarPanelLang(oracleId, lang) {
+  const st2 = getEstadoCarta2(oracleId);
+  const qty = lang === "en" ? st2.qty_en : st2.qty_es;
+  const foil = lang === "en" ? st2.foil_en : st2.foil_es;
+  
+  // Buscar el panel específico de este oracle_id y lang
+  const cartaItem = document.querySelector(`.carta-item[data-oracle="${oracleId}"]`);
+  if (!cartaItem) return;
+  
+  const panel = cartaItem.querySelector(`.lang-panel[data-lang="${lang}"]`);
+  if (!panel) return;
+  
+  // Actualizar valores de inputs
+  const qtyInput = panel.querySelector('.inp-qty');
+  const foilInput = panel.querySelector('.inp-foil');
+  if (qtyInput) qtyInput.value = qty;
+  if (foilInput) {
+    foilInput.value = foil;
+    foilInput.max = qty;
+    foilInput.disabled = qty === 0;
+  }
+  
+  // Actualizar botones qty
+  const btnQtyMinus = panel.querySelector('.btn-qty-minus');
+  const btnQtyPlus = panel.querySelector('.btn-qty-plus');
+  if (btnQtyMinus) btnQtyMinus.disabled = qty <= 0;
+  
+  // Actualizar botones foil
+  const btnFoilMinus = panel.querySelector('.btn-foil-minus');
+  const btnFoilPlus = panel.querySelector('.btn-foil-plus');
+  if (btnFoilMinus) btnFoilMinus.disabled = foil <= 0 || qty === 0;
+  if (btnFoilPlus) btnFoilPlus.disabled = qty === 0 || foil >= qty;
+  
+  // Actualizar LED (suma de ambos idiomas)
+  const totalQty = st2.qty_en + st2.qty_es;
+  const ledIndicator = cartaItem.querySelector('.led-indicator');
+  if (ledIndicator) {
+    ledIndicator.src = `icons/${totalQty > 0 ? 'Ledazul' : 'Ledrojo'}.png`;
+  }
+  
+  // Actualizar has-qty class
+  if (totalQty > 0) {
+    cartaItem.classList.add('has-qty');
+  } else {
+    cartaItem.classList.remove('has-qty');
   }
 }
 
@@ -3074,157 +3251,164 @@ cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
   });
 });
 
-// ===== Event listeners usando oracle_id y estado2 (dual EN/ES) =====
+// ===== Event listeners usando oracle_id y estado2 (clásico con toggle) =====
 
-// Cantidad EN
-cont.querySelectorAll(".btn-qty-minus-en").forEach(btn => {
-  btn.addEventListener("click", () => {
+// Toggle de idioma
+cont.querySelectorAll(".btn-lang-switch").forEach(btn => {
+  btn.addEventListener("click", async () => {
     const oracleId = btn.dataset.oracle;
     if (!oracleId) return;
+    
+    // Buscar el contenedor de controles
+    const cartaControles = btn.closest(".carta-controles");
+    if (!cartaControles) return;
+    
+    // Prevenir clics múltiples durante animación
+    if (cartaControles.dataset.animating === "true") return;
+    cartaControles.dataset.animating = "true";
+    
+    // Obtener idioma actual y calcular nuevo
+    const currentLang = cartaControles.dataset.activeLang || "en";
+    const newLang = currentLang === "en" ? "es" : "en";
+    
+    // Actualizar UI language preference
+    setUILang(oracleId, newLang);
+    
+    // Actualizar el atributo data-active-lang para que CSS anime
+    cartaControles.dataset.activeLang = newLang;
+    
+    // Actualizar iconos del botón
+    const iconLeft = btn.querySelector(".lang-icon-left");
+    const iconRight = btn.querySelector(".lang-icon-right");
+    if (iconLeft && iconRight) {
+      iconLeft.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
+      iconRight.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
+    }
+    
+    // Carga de imagen ES en paralelo (no bloquea animación)
+    const cartaItem = btn.closest(".carta-item");
+    if (cartaItem && newLang === "es") {
+      const cardId = cartaItem.dataset.cardId;
+      const carta = (cacheCartasPorSetLang[setActualKey] || []).find(x => x.id === cardId);
+      
+      if (carta) {
+        getPrintByOracleLang(
+          oracleId,
+          "es",
+          carta.setCode || "",
+          carta.numero || ""
+        ).then(printES => {
+          if (printES && printES.image_uris) {
+            const imgElement = cartaItem.querySelector(".carta-imagen");
+            if (imgElement && imgElement.src !== printES.image_uris.normal) {
+              imgElement.src = printES.image_uris.normal || printES.image_uris.small;
+            }
+          }
+        });
+      }
+    } else if (cartaItem && newLang === "en") {
+      // Restaurar imagen EN
+      const cardId = cartaItem.dataset.cardId;
+      const carta = (cacheCartasPorSetLang[setActualKey] || []).find(x => x.id === cardId);
+      if (carta && carta._img) {
+        const imgElement = cartaItem.querySelector(".carta-imagen");
+        if (imgElement && imgElement.src !== carta._img) {
+          imgElement.src = carta._img;
+        }
+      }
+    }
+    
+    // Desbloquear después de la animación (220ms)
+    setTimeout(() => {
+      cartaControles.dataset.animating = "false";
+    }, 220);
+  });
+});
+
+// Cantidad
+cont.querySelectorAll(".btn-qty-minus").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const oracleId = btn.dataset.oracle;
+    const lang = btn.dataset.lang;
+    if (!oracleId || !lang) return;
     const st2 = getEstadoCarta2(oracleId);
-    setQtyLang(oracleId, "en", st2.qty_en - 1);
-    renderTablaSet(setActualKey);
+    const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+    setQtyLang(oracleId, lang, currentQty - 1);
+    actualizarPanelLang(oracleId, lang);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".btn-qty-plus-en").forEach(btn => {
+cont.querySelectorAll(".btn-qty-plus").forEach(btn => {
   btn.addEventListener("click", () => {
     const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
+    const lang = btn.dataset.lang;
+    if (!oracleId || !lang) return;
     const st2 = getEstadoCarta2(oracleId);
-    setQtyLang(oracleId, "en", st2.qty_en + 1);
-    renderTablaSet(setActualKey);
+    const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+    setQtyLang(oracleId, lang, currentQty + 1);
+    actualizarPanelLang(oracleId, lang);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".inp-qty-en").forEach(inp => {
+cont.querySelectorAll(".inp-qty").forEach(inp => {
   inp.addEventListener("change", () => {
     const oracleId = inp.dataset.oracle;
-    if (!oracleId) return;
-    setQtyLang(oracleId, "en", inp.value);
-    renderTablaSet(setActualKey);
+    const lang = inp.dataset.lang;
+    if (!oracleId || !lang) return;
+    setQtyLang(oracleId, lang, inp.value);
+    actualizarPanelLang(oracleId, lang);
     renderColecciones();
   });
 });
 
-// Cantidad ES
-cont.querySelectorAll(".btn-qty-minus-es").forEach(btn => {
+// Foil
+cont.querySelectorAll(".btn-foil-minus").forEach(btn => {
   btn.addEventListener("click", () => {
     const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
+    const lang = btn.dataset.lang;
+    if (!oracleId || !lang) return;
     const st2 = getEstadoCarta2(oracleId);
-    setQtyLang(oracleId, "es", st2.qty_es - 1);
-    renderTablaSet(setActualKey);
+    const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+    setFoilLang(oracleId, lang, currentFoil - 1);
+    actualizarPanelLang(oracleId, lang);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".btn-qty-plus-es").forEach(btn => {
+cont.querySelectorAll(".btn-foil-plus").forEach(btn => {
   btn.addEventListener("click", () => {
     const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
+    const lang = btn.dataset.lang;
+    if (!oracleId || !lang) return;
     const st2 = getEstadoCarta2(oracleId);
-    setQtyLang(oracleId, "es", st2.qty_es + 1);
-    renderTablaSet(setActualKey);
+    const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+    setFoilLang(oracleId, lang, currentFoil + 1);
+    actualizarPanelLang(oracleId, lang);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".inp-qty-es").forEach(inp => {
+cont.querySelectorAll(".inp-foil").forEach(inp => {
   inp.addEventListener("change", () => {
     const oracleId = inp.dataset.oracle;
-    if (!oracleId) return;
-    setQtyLang(oracleId, "es", inp.value);
-    renderTablaSet(setActualKey);
+    const lang = inp.dataset.lang;
+    if (!oracleId || !lang) return;
+    setFoilLang(oracleId, lang, inp.value);
+    actualizarPanelLang(oracleId, lang);
     renderColecciones();
   });
 });
 
-// Foil EN
-cont.querySelectorAll(".btn-foil-minus-en").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
-    const st2 = getEstadoCarta2(oracleId);
-    setFoilLang(oracleId, "en", st2.foil_en - 1);
-    renderTablaSet(setActualKey);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".btn-foil-plus-en").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
-    const st2 = getEstadoCarta2(oracleId);
-    setFoilLang(oracleId, "en", st2.foil_en + 1);
-    renderTablaSet(setActualKey);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".inp-foil-en").forEach(inp => {
-  inp.addEventListener("change", () => {
-    const oracleId = inp.dataset.oracle;
-    if (!oracleId) return;
-    setFoilLang(oracleId, "en", inp.value);
-    renderTablaSet(setActualKey);
-    renderColecciones();
-  });
-});
-
-// Foil ES
-cont.querySelectorAll(".btn-foil-minus-es").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
-    const st2 = getEstadoCarta2(oracleId);
-    setFoilLang(oracleId, "es", st2.foil_es - 1);
-    renderTablaSet(setActualKey);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".btn-foil-plus-es").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
-    const st2 = getEstadoCarta2(oracleId);
-    setFoilLang(oracleId, "es", st2.foil_es + 1);
-    renderTablaSet(setActualKey);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".inp-foil-es").forEach(inp => {
-  inp.addEventListener("change", () => {
-    const oracleId = inp.dataset.oracle;
-    if (!oracleId) return;
-    setFoilLang(oracleId, "es", inp.value);
-    renderTablaSet(setActualKey);
-    renderColecciones();
-  });
-});
-
-// Ri EN
-cont.querySelectorAll(".chk-want-en").forEach(chk => {
+// Ri
+cont.querySelectorAll(".chk-want").forEach(chk => {
   chk.addEventListener("change", () => {
     const oracleId = chk.dataset.oracle;
-    if (!oracleId) return;
-    setRiLang(oracleId, "en", chk.checked);
-    renderTablaSet(setActualKey);
-  });
-});
-
-// Ri ES
-cont.querySelectorAll(".chk-want-es").forEach(chk => {
-  chk.addEventListener("change", () => {
-    const oracleId = chk.dataset.oracle;
-    if (!oracleId) return;
-    setRiLang(oracleId, "es", chk.checked);
-    renderTablaSet(setActualKey);
+    const lang = chk.dataset.lang;
+    if (!oracleId || !lang) return;
+    setRiLang(oracleId, lang, chk.checked);
+    // No need to re-render for Ri checkbox
   });
 });
 
@@ -5194,6 +5378,9 @@ async function init() {
   
   // Cargar estado legacy para compatibilidad/migración
   cargarEstado();
+  
+  // Cargar preferencias de idioma UI por carta
+  cargarUILangByOracle();
   
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
