@@ -1810,9 +1810,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 
 /* Badge del idioma activo (destacado tipo chip/píldora) */
 .lang-badge.lang-active {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 8px 16px;
   background: rgba(74, 158, 255, 0.25);
   border: 1px solid rgba(74, 158, 255, 0.4);
@@ -1820,6 +1820,17 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   transform: scale(1.05);
   transition: all 150ms ease;
+}
+
+/* Iconos de banderas */
+.flag-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
 }
 
 .lang-badge.lang-active .lang-label {
@@ -1831,7 +1842,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   line-height: 1;
 }
 
-/* Contenedor de acción: flecha + label destino */
+/* Contenedor de acción: flecha + bandera destino */
 .lang-switch-action {
   display: flex;
   align-items: center;
@@ -1851,16 +1862,8 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   color: rgba(255, 255, 255, 0.8);
 }
 
-.lang-switch-action .lang-target {
-  font-size: 13px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  line-height: 1;
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+.flag-target-icon {
+  opacity: 0.9;
 }
 
 /* Slider viewport (recorta el contenido) */
@@ -2029,7 +2032,12 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   
   .lang-badge.lang-active {
     padding: 6px 12px;
-    gap: 4px;
+    gap: 6px;
+  }
+  
+  .flag-icon {
+    width: 18px;
+    height: 18px;
   }
   
   .lang-badge.lang-active .lang-label {
@@ -2039,11 +2047,6 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   
   .lang-switch-action .arrow {
     font-size: 16px;
-  }
-  
-  .lang-switch-action .lang-target {
-    font-size: 12px;
-    padding: 3px 6px;
   }
   
   .lang-panel {

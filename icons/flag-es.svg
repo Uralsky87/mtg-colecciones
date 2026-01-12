@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">
+  <defs>
+    <clipPath id="a">
+      <path d="M0 0h60v40H0z"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#a)">
+    <!-- Red stripes -->
+    <path fill="#AA151B" d="M0 0h60v10H0zM0 30h60v10H0z"/>
+    <!-- Yellow center -->
+    <path fill="#F1BF00" d="M0 10h60v20H0z"/>
+  </g>
+</svg>

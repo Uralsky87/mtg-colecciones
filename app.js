@@ -2267,11 +2267,12 @@ function generarControlesModalCarta(oracleId) {
         <div class="controles-header">
           <button class="btn-lang-switch btn-modal-lang-switch" data-oracle="${oracleId}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
             <span class="lang-badge lang-active">
+              <img class="flag-icon" src="icons/flag-${langActivo === "en" ? "en" : "es"}.svg" alt="${langActivo === "en" ? "EN" : "ES"}" />
               <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
             </span>
             <span class="lang-switch-action">
               <span class="arrow">→</span>
-              <span class="lang-label lang-target">${langActivo === "en" ? "ES" : "EN"}</span>
+              <img class="flag-icon flag-target-icon" src="icons/flag-${langActivo === "en" ? "es" : "en"}.svg" alt="${langActivo === "en" ? "ES" : "EN"}" />
             </span>
           </button>
         </div>
@@ -2395,12 +2396,16 @@ function wireControlesModalCarta(container, oracleId) {
       // Actualizar atributo para animación CSS
       cartaControles.dataset.activeLang = newLang;
       
-      // Actualizar badge activo y label destino
+      // Actualizar badge activo: imagen y label
+      const flagIcon = btn.querySelector(".lang-badge.lang-active .flag-icon");
       const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
-      const targetLabel = btn.querySelector(".lang-target");
+      const targetIcon = btn.querySelector(".flag-target-icon");
       
+      if (flagIcon) flagIcon.src = `icons/flag-${newLang}.svg`;
+      if (flagIcon) flagIcon.alt = newLang.toUpperCase();
       if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
-      if (targetLabel) targetLabel.textContent = newLang === "en" ? "ES" : "EN";
+      if (targetIcon) targetIcon.src = `icons/flag-${newLang === "en" ? "es" : "en"}.svg`;
+      if (targetIcon) targetIcon.alt = newLang === "en" ? "ES" : "EN";
       
       // Actualizar aria-label
       btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
@@ -3200,11 +3205,12 @@ function renderTablaSet(setKey) {
       <div class="controles-header">
         <button class="btn-lang-switch" data-oracle="${c.oracle_id || ''}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
           <span class="lang-badge lang-active">
+            <img class="flag-icon" src="icons/flag-${langActivo === "en" ? "en" : "es"}.svg" alt="${langActivo === "en" ? "EN" : "ES"}" />
             <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
           </span>
           <span class="lang-switch-action">
             <span class="arrow">→</span>
-            <span class="lang-label lang-target">${langActivo === "en" ? "ES" : "EN"}</span>
+            <img class="flag-icon flag-target-icon" src="icons/flag-${langActivo === "en" ? "es" : "en"}.svg" alt="${langActivo === "en" ? "ES" : "EN"}" />
           </span>
         </button>
       </div>
@@ -3389,12 +3395,16 @@ cont.querySelectorAll(".btn-lang-switch").forEach(btn => {
     // Actualizar el atributo data-active-lang para que CSS anime
     cartaControles.dataset.activeLang = newLang;
     
-    // Actualizar badge activo y label destino
+    // Actualizar badge activo: imagen y label
+    const flagIcon = btn.querySelector(".lang-badge.lang-active .flag-icon");
     const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
-    const targetLabel = btn.querySelector(".lang-target");
+    const targetIcon = btn.querySelector(".flag-target-icon");
     
+    if (flagIcon) flagIcon.src = `icons/flag-${newLang}.svg`;
+    if (flagIcon) flagIcon.alt = newLang.toUpperCase();
     if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
-    if (targetLabel) targetLabel.textContent = newLang === "en" ? "ES" : "EN";
+    if (targetIcon) targetIcon.src = `icons/flag-${newLang === "en" ? "es" : "en"}.svg`;
+    if (targetIcon) targetIcon.alt = newLang === "en" ? "ES" : "EN";
     
     // Actualizar aria-label para accesibilidad
     btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
