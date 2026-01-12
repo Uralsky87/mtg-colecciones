@@ -1307,13 +1307,14 @@ async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, pr
   
   // Para ES, revisar cache primero
   if (cacheCardByOracleLang[oracle_id]?.es) {
+    console.log(`✓ Print ES cacheado para oracle ${oracle_id}`);
     return cacheCardByOracleLang[oracle_id].es;
   }
   
   // Evitar búsquedas duplicadas simultáneas
   const fetchKey = `${oracle_id}_${lang}`;
   if (fetchingPrints.has(fetchKey)) {
-    console.log(`Ya se está buscando print ${lang} para oracle ${oracle_id}`);
+    console.log(`⏳ Ya se está buscando print ${lang} para oracle ${oracle_id}`);
     return null;
   }
   
@@ -1321,16 +1322,31 @@ async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, pr
   
   try {
     let query = `oracleid:${oracle_id} lang:${lang}`;
+    let cards = [];
     
-    // Priorizar mismo set si se proporciona
+    // Estrategia 1: Priorizar mismo set si se proporciona
     if (preferredSetCode) {
-      query += ` set:${preferredSetCode}`;
+      const priorityQuery = `${query} set:${preferredSetCode}`;
+      console.log(`🔍 Buscando print ES prioritario: ${priorityQuery}`);
+      cards = await scrySearchCards(priorityQuery);
+      
+      if (cards.length > 0) {
+        console.log(`✓ Encontrados ${cards.length} prints ES en set ${preferredSetCode}`);
+      }
     }
     
-    const cards = await scrySearchCards(query);
+    // Estrategia 2: Si no hay match con set específico, buscar cualquier print ES
+    if (cards.length === 0) {
+      console.log(`🔍 Buscando cualquier print ES: ${query}`);
+      cards = await scrySearchCards(query);
+      
+      if (cards.length > 0) {
+        console.log(`✓ Encontrados ${cards.length} prints ES en otros sets`);
+      }
+    }
     
     if (cards.length === 0) {
-      console.log(`No se encontró print ${lang} para oracle ${oracle_id}`);
+      console.log(`✗ No se encontró ningún print ${lang} para oracle ${oracle_id}`);
       fetchingPrints.delete(fetchKey);
       return null;
     }
@@ -1339,11 +1355,25 @@ async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, pr
     let selectedCard = null;
     if (preferredCollectorNumber) {
       selectedCard = cards.find(c => c.collector_number === preferredCollectorNumber);
+      if (selectedCard) {
+        console.log(`✓ Match exacto: set ${selectedCard.set} #${selectedCard.collector_number}`);
+      }
     }
     
-    // Si no hay match exacto, tomar el primero
+    // Si no hay match exacto, tomar el primero con imagen
     if (!selectedCard) {
-      selectedCard = cards[0];
+      selectedCard = cards.find(c => {
+        const imgUrl = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal;
+        return imgUrl !== null && imgUrl !== undefined;
+      });
+      
+      if (!selectedCard) {
+        selectedCard = cards[0]; // Fallback al primero aunque no tenga imagen
+      }
+      
+      if (selectedCard) {
+        console.log(`→ Seleccionado: set ${selectedCard.set} #${selectedCard.collector_number}`);
+      }
     }
     
     // Guardar en cache
@@ -1356,7 +1386,7 @@ async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, pr
     return selectedCard;
     
   } catch (err) {
-    console.error(`Error buscando print ${lang} para oracle ${oracle_id}:`, err);
+    console.error(`✗ Error buscando print ${lang} para oracle ${oracle_id}:`, err);
     fetchingPrints.delete(fetchKey);
     return null;
   }
@@ -1664,6 +1694,35 @@ async function scryFetchAllPages(firstUrl) {
     url = data.has_more ? data.next_page : null;
   }
   return all;
+}
+
+// Búsqueda de cartas en Scryfall
+async function scrySearchCards(query, opts = {}) {
+  if (!query) return [];
+  
+  const params = new URLSearchParams();
+  params.append('q', query);
+  
+  if (opts.unique) {
+    params.append('unique', opts.unique);
+  }
+  
+  const url = `${SCY_BASE}/cards/search?${params.toString()}`;
+  
+  try {
+    const data = await scryFetchJson(url);
+    
+    // Scryfall devuelve object:"error" si no hay resultados
+    if (data.object === "error") {
+      console.log(`Scryfall search no results: ${data.details || data.code}`);
+      return [];
+    }
+    
+    return data.data || [];
+  } catch (err) {
+    console.error(`Error en scrySearchCards("${query}"):`, err);
+    return [];
+  }
 }
 
 // --- Helpers de mapeo al modelo interno ---
@@ -2206,10 +2265,15 @@ function generarControlesModalCarta(oracleId) {
       <div class="carta-controles modal-controles" data-active-lang="${langActivo}" style="background: rgba(0,0,0,.06);">
         <!-- Header con botón de cambio -->
         <div class="controles-header">
-          <button class="btn-lang-switch btn-modal-lang-switch" data-oracle="${oracleId}" type="button" title="Cambiar idioma">
-            <span class="lang-icon-left">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
-            <span class="arrow">⇄</span>
-            <span class="lang-icon-right">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+          <button class="btn-lang-switch btn-modal-lang-switch" data-oracle="${oracleId}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
+            <span class="lang-badge lang-active">
+              <span class="lang-flag">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
+              <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
+            </span>
+            <span class="lang-switch-action">
+              <span class="arrow">→</span>
+              <span class="lang-flag lang-target">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+            </span>
           </button>
         </div>
 
@@ -2317,7 +2381,7 @@ function wireControlesModalCarta(container, oracleId) {
 
   // Toggle de idioma
   container.querySelectorAll('.btn-modal-lang-switch').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const cartaControles = btn.closest('.carta-controles');
       if (!cartaControles) return;
       
@@ -2332,12 +2396,60 @@ function wireControlesModalCarta(container, oracleId) {
       // Actualizar atributo para animación CSS
       cartaControles.dataset.activeLang = newLang;
       
-      // Actualizar iconos del botón
-      const iconLeft = btn.querySelector(".lang-icon-left");
-      const iconRight = btn.querySelector(".lang-icon-right");
-      if (iconLeft && iconRight) {
-        iconLeft.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
-        iconRight.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
+      // Actualizar badge activo y bandera destino
+      const langBadge = btn.querySelector(".lang-badge.lang-active");
+      const langLabel = btn.querySelector(".lang-label");
+      const langFlag = langBadge?.querySelector(".lang-flag");
+      const targetFlag = btn.querySelector(".lang-target");
+      
+      if (langFlag) langFlag.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
+      if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
+      if (targetFlag) targetFlag.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
+      
+      // Actualizar aria-label
+      btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
+      
+      // Cambiar imagen del modal (si existe)
+      const imgModal = document.querySelector('#imgCartaModal');
+      const modalBody = document.getElementById('modalCartaBody');
+      
+      if (!imgModal && modalBody) {
+        // Si no existe #imgCartaModal, buscar cualquier img en el modal (excepto botón de voltear)
+        const allImgs = modalBody.querySelectorAll('img:not(#imgCartaModal)');
+        if (allImgs.length > 0) {
+          const firstImg = allImgs[0];
+          
+          if (newLang === "es") {
+            // Buscar print ES y actualizar imagen
+            const cartaItem = document.querySelector(`.carta-item[data-oracle="${oracleId}"]`);
+            if (cartaItem) {
+              const imgElement = cartaItem.querySelector('.carta-imagen');
+              const setCode = imgElement?.dataset?.set || "";
+              const numero = imgElement?.dataset?.numero || "";
+              
+              getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
+                if (printES) {
+                  const imgUrl = printES.image_uris?.normal || 
+                               printES.card_faces?.[0]?.image_uris?.normal;
+                  
+                  if (imgUrl) {
+                    if (!firstImg.dataset.imgEnOriginal) {
+                      firstImg.dataset.imgEnOriginal = firstImg.src;
+                    }
+                    console.log(`✅ Actualizando imagen modal a ES para ${oracleId}`);
+                    firstImg.src = imgUrl;
+                  }
+                }
+              });
+            }
+          } else if (newLang === "en") {
+            // Restaurar imagen EN
+            if (firstImg.dataset.imgEnOriginal) {
+              console.log(`✅ Restaurando imagen modal a EN para ${oracleId}`);
+              firstImg.src = firstImg.dataset.imgEnOriginal;
+            }
+          }
+        }
       }
       
       // Desbloquear después de animación
@@ -3081,7 +3193,7 @@ function renderTablaSet(setKey) {
     <!-- Imagen de la carta -->
     <div class="carta-imagen-container">
       ${tieneImg 
-        ? `<img src="${c._img}" alt="${c.nombre}" class="carta-imagen" loading="lazy" />`
+        ? `<img src="${c._img}" alt="${c.nombre}" class="carta-imagen" loading="lazy" data-img-en="${c._img}" data-oracle="${c.oracle_id || ''}" data-set="${c.set || ''}" data-numero="${c.numero || ''}" />`
         : `<div class="carta-imagen-placeholder">Sin imagen</div>`
       }
     </div>
@@ -3090,10 +3202,15 @@ function renderTablaSet(setKey) {
     <div class="carta-controles" data-active-lang="${langActivo}">
       <!-- Header con botón de cambio -->
       <div class="controles-header">
-        <button class="btn-lang-switch" data-oracle="${c.oracle_id || ''}" type="button" title="Cambiar idioma">
-          <span class="lang-icon-left">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
-          <span class="arrow">⇄</span>
-          <span class="lang-icon-right">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+        <button class="btn-lang-switch" data-oracle="${c.oracle_id || ''}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
+          <span class="lang-badge lang-active">
+            <span class="lang-flag">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
+            <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
+          </span>
+          <span class="lang-switch-action">
+            <span class="arrow">→</span>
+            <span class="lang-flag lang-target">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+          </span>
         </button>
       </div>
 
@@ -3277,43 +3394,52 @@ cont.querySelectorAll(".btn-lang-switch").forEach(btn => {
     // Actualizar el atributo data-active-lang para que CSS anime
     cartaControles.dataset.activeLang = newLang;
     
-    // Actualizar iconos del botón
-    const iconLeft = btn.querySelector(".lang-icon-left");
-    const iconRight = btn.querySelector(".lang-icon-right");
-    if (iconLeft && iconRight) {
-      iconLeft.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
-      iconRight.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
-    }
+    // Actualizar badge activo y bandera destino
+    const langBadge = btn.querySelector(".lang-badge.lang-active");
+    const langLabel = btn.querySelector(".lang-label");
+    const langFlag = langBadge?.querySelector(".lang-flag");
+    const targetFlag = btn.querySelector(".lang-target");
+    
+    if (langFlag) langFlag.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
+    if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
+    if (targetFlag) targetFlag.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
+    
+    // Actualizar aria-label para accesibilidad
+    btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
     
     // Carga de imagen ES en paralelo (no bloquea animación)
     const cartaItem = btn.closest(".carta-item");
-    if (cartaItem && newLang === "es") {
-      const cardId = cartaItem.dataset.cardId;
-      const carta = (cacheCartasPorSetLang[setActualKey] || []).find(x => x.id === cardId);
+    if (cartaItem) {
+      const imgElement = cartaItem.querySelector(".carta-imagen");
       
-      if (carta) {
-        getPrintByOracleLang(
-          oracleId,
-          "es",
-          carta.setCode || "",
-          carta.numero || ""
-        ).then(printES => {
-          if (printES && printES.image_uris) {
-            const imgElement = cartaItem.querySelector(".carta-imagen");
-            if (imgElement && imgElement.src !== printES.image_uris.normal) {
-              imgElement.src = printES.image_uris.normal || printES.image_uris.small;
+      if (newLang === "es" && imgElement) {
+        const setCode = imgElement.dataset.set || "";
+        const numero = imgElement.dataset.numero || "";
+        
+        getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
+          if (printES) {
+            const imgUrl = printES.image_uris?.normal || 
+                          printES.card_faces?.[0]?.image_uris?.normal;
+            
+            if (imgUrl) {
+              console.log(`✅ Actualizando a imagen ES para ${oracleId}`);
+              imgElement.src = imgUrl;
+            } else {
+              console.log(`⚠️ Print ES encontrado pero sin imagen para ${oracleId}`);
             }
+          } else {
+            console.log(`⚠️ No hay print ES disponible para ${oracleId}`);
           }
+        }).catch(err => {
+          console.error(`✗ Error cargando imagen ES para ${oracleId}:`, err);
         });
-      }
-    } else if (cartaItem && newLang === "en") {
-      // Restaurar imagen EN
-      const cardId = cartaItem.dataset.cardId;
-      const carta = (cacheCartasPorSetLang[setActualKey] || []).find(x => x.id === cardId);
-      if (carta && carta._img) {
-        const imgElement = cartaItem.querySelector(".carta-imagen");
-        if (imgElement && imgElement.src !== carta._img) {
-          imgElement.src = carta._img;
+        
+      } else if (newLang === "en" && imgElement) {
+        // Restaurar imagen EN desde data-attribute
+        const imgEnOriginal = imgElement.dataset.imgEn;
+        if (imgEnOriginal) {
+          console.log(`✅ Restaurando imagen EN para ${oracleId}`);
+          imgElement.src = imgEnOriginal;
         }
       }
     }

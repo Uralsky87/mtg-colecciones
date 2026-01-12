@@ -8,6 +8,12 @@ body {
   max-width: 720px;
   margin: 0 auto;
   padding: 18px;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 /* =========================================================
@@ -1633,6 +1639,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   display: flex;
   flex-direction: column;
   gap: 10px;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .carta-item.has-qty {
@@ -1730,6 +1739,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   background: rgba(0,0,0,.12);
   border-radius: 10px;
   border: 1px solid rgba(255,255,255,.08);
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* Header con botón de cambio */
@@ -1767,16 +1779,87 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   transform: scale(0.97);
 }
 
-.btn-lang-switch .lang-icon-left,
-.btn-lang-switch .lang-icon-right {
-  font-size: 20px;
-  line-height: 1;
+/* === Botón de cambio de idioma con badge activo destacado === */
+.btn-lang-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 150ms ease;
+  min-height: 44px; /* Área táctil mínima móvil */
+  justify-content: center;
 }
 
-.btn-lang-switch .arrow {
+.btn-lang-switch:hover {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn-lang-switch:focus-visible {
+  outline: 2px solid #4a9eff;
+  outline-offset: 2px;
+}
+
+.btn-lang-switch:active {
+  transform: scale(0.98);
+}
+
+/* Badge del idioma activo (destacado tipo chip/píldora) */
+.lang-badge.lang-active {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(74, 158, 255, 0.25);
+  border: 1px solid rgba(74, 158, 255, 0.4);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transform: scale(1.05);
+  transition: all 150ms ease;
+}
+
+.lang-badge.lang-active .lang-flag {
+  font-size: 22px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+}
+
+.lang-badge.lang-active .lang-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Contenedor de acción: flecha + bandera destino */
+.lang-switch-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.65;
+  transition: all 150ms ease;
+}
+
+.btn-lang-switch:hover .lang-switch-action {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+.lang-switch-action .arrow {
   font-weight: bold;
-  font-size: 16px;
-  color: rgba(255,255,255,0.6);
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.lang-switch-action .lang-target {
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0.8;
 }
 
 /* Slider viewport (recorta el contenido) */
@@ -1784,6 +1867,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   overflow: hidden;
   position: relative;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 /* Track que se desliza (contiene los 2 paneles) */
@@ -1792,6 +1878,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   width: 200%;
   transition: transform 220ms ease-out;
   will-change: transform;
+  box-sizing: border-box;
 }
 
 /* Cuando está activo EN -> translateX(0) */
@@ -1810,7 +1897,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-width: 0; /* Prevenir overflow */
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 2px;
 }
 
 /* Reducir animación si el usuario lo prefiere */
@@ -1827,6 +1916,8 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   justify-content: space-between;
   gap: 10px;
   min-height: 36px;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .control-fila .lbl {
@@ -1834,6 +1925,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   font-size: 13px;
   font-weight: 600;
   min-width: 60px;
+  flex-shrink: 0;
 }
 
 .control-fila .stepper {
@@ -1842,6 +1934,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   gap: 4px;
   flex: 1;
   max-width: 200px;
+  min-width: 0;
 }
 
 /* Botones +/- con tamaño táctil */
@@ -1917,19 +2010,76 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
    RESPONSIVE: Móvil
 ========================================================= */
 @media (max-width: 767px) {
-  .control-fila .btn-step {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
+  .carta-item {
+    padding: 10px;
   }
   
-  .control-fila .inp-num {
-    height: 40px;
+  .carta-controles {
+    padding: 10px;
+    gap: 6px;
+  }
+  
+  /* Botón de idioma más compacto en móvil pero táctil */
+  .btn-lang-switch {
+    gap: 6px;
+    padding: 8px 10px;
+    min-height: 48px; /* Mayor área táctil en móvil */
+  }
+  
+  .lang-badge.lang-active {
+    padding: 6px 10px;
+    gap: 5px;
+  }
+  
+  .lang-badge.lang-active .lang-flag {
+    font-size: 20px;
+  }
+  
+  .lang-badge.lang-active .lang-label {
+    font-size: 12px;
+  }
+  
+  .lang-switch-action .arrow {
     font-size: 16px;
+  }
+  
+  .lang-switch-action .lang-target {
+    font-size: 16px;
+  }
+  
+  .lang-panel {
+    gap: 8px;
+    padding: 0 1px;
   }
   
   .control-fila {
     min-height: 40px;
+    gap: 6px;
+  }
+  
+  .control-fila .lbl {
+    min-width: 50px;
+    font-size: 12px;
+  }
+  
+  .control-fila .stepper {
+    gap: 3px;
+  }
+  
+  .control-fila .btn-step {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    flex: 0 0 38px;
+  }
+  
+  .control-fila .inp-num {
+    height: 38px;
+    font-size: 15px;
+    padding: 0 4px;
+    min-width: 48px;
+    width: 100%;
+    max-width: 60px;
   }
   
   .control-fila .chkline input[type="checkbox"] {
@@ -1938,7 +2088,13 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   }
   
   .btn-lang-switch {
-    padding: 8px 12px;
+    padding: 6px 10px;
+    font-size: 16px;
+    min-width: 90px;
+  }
+  
+  .btn-lang-switch .lang-icon-left,
+  .btn-lang-switch .lang-icon-right {
     font-size: 18px;
   }
 }
