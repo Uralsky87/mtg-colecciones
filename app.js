@@ -2267,12 +2267,11 @@ function generarControlesModalCarta(oracleId) {
         <div class="controles-header">
           <button class="btn-lang-switch btn-modal-lang-switch" data-oracle="${oracleId}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
             <span class="lang-badge lang-active">
-              <span class="lang-flag">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
               <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
             </span>
             <span class="lang-switch-action">
               <span class="arrow">→</span>
-              <span class="lang-flag lang-target">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+              <span class="lang-label lang-target">${langActivo === "en" ? "ES" : "EN"}</span>
             </span>
           </button>
         </div>
@@ -2396,15 +2395,12 @@ function wireControlesModalCarta(container, oracleId) {
       // Actualizar atributo para animación CSS
       cartaControles.dataset.activeLang = newLang;
       
-      // Actualizar badge activo y bandera destino
-      const langBadge = btn.querySelector(".lang-badge.lang-active");
-      const langLabel = btn.querySelector(".lang-label");
-      const langFlag = langBadge?.querySelector(".lang-flag");
-      const targetFlag = btn.querySelector(".lang-target");
+      // Actualizar badge activo y label destino
+      const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
+      const targetLabel = btn.querySelector(".lang-target");
       
-      if (langFlag) langFlag.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
       if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
-      if (targetFlag) targetFlag.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
+      if (targetLabel) targetLabel.textContent = newLang === "en" ? "ES" : "EN";
       
       // Actualizar aria-label
       btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
@@ -3204,12 +3200,11 @@ function renderTablaSet(setKey) {
       <div class="controles-header">
         <button class="btn-lang-switch" data-oracle="${c.oracle_id || ''}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
           <span class="lang-badge lang-active">
-            <span class="lang-flag">${langActivo === "en" ? "🇬🇧" : "🇪🇸"}</span>
             <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
           </span>
           <span class="lang-switch-action">
             <span class="arrow">→</span>
-            <span class="lang-flag lang-target">${langActivo === "en" ? "🇪🇸" : "🇬🇧"}</span>
+            <span class="lang-label lang-target">${langActivo === "en" ? "ES" : "EN"}</span>
           </span>
         </button>
       </div>
@@ -3394,15 +3389,12 @@ cont.querySelectorAll(".btn-lang-switch").forEach(btn => {
     // Actualizar el atributo data-active-lang para que CSS anime
     cartaControles.dataset.activeLang = newLang;
     
-    // Actualizar badge activo y bandera destino
-    const langBadge = btn.querySelector(".lang-badge.lang-active");
-    const langLabel = btn.querySelector(".lang-label");
-    const langFlag = langBadge?.querySelector(".lang-flag");
-    const targetFlag = btn.querySelector(".lang-target");
+    // Actualizar badge activo y label destino
+    const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
+    const targetLabel = btn.querySelector(".lang-target");
     
-    if (langFlag) langFlag.textContent = newLang === "en" ? "🇬🇧" : "🇪🇸";
     if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
-    if (targetFlag) targetFlag.textContent = newLang === "en" ? "🇪🇸" : "🇬🇧";
+    if (targetLabel) targetLabel.textContent = newLang === "en" ? "ES" : "EN";
     
     // Actualizar aria-label para accesibilidad
     btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);

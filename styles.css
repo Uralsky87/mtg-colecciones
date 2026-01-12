@@ -1813,7 +1813,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 8px 16px;
   background: rgba(74, 158, 255, 0.25);
   border: 1px solid rgba(74, 158, 255, 0.4);
   border-radius: 999px;
@@ -1822,21 +1822,16 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   transition: all 150ms ease;
 }
 
-.lang-badge.lang-active .lang-flag {
-  font-size: 22px;
-  line-height: 1;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
-}
-
 .lang-badge.lang-active .lang-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.95);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  line-height: 1;
 }
 
-/* Contenedor de acción: flecha + bandera destino */
+/* Contenedor de acción: flecha + label destino */
 .lang-switch-action {
   display: flex;
   align-items: center;
@@ -1857,9 +1852,15 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 }
 
 .lang-switch-action .lang-target {
-  font-size: 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   line-height: 1;
-  opacity: 0.8;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
 }
 
 /* Slider viewport (recorta el contenido) */
@@ -2027,16 +2028,13 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   }
   
   .lang-badge.lang-active {
-    padding: 6px 10px;
-    gap: 5px;
-  }
-  
-  .lang-badge.lang-active .lang-flag {
-    font-size: 20px;
+    padding: 6px 12px;
+    gap: 4px;
   }
   
   .lang-badge.lang-active .lang-label {
-    font-size: 12px;
+    font-size: 13px;
+    letter-spacing: 0.5px;
   }
   
   .lang-switch-action .arrow {
@@ -2044,7 +2042,8 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   }
   
   .lang-switch-action .lang-target {
-    font-size: 16px;
+    font-size: 12px;
+    padding: 3px 6px;
   }
   
   .lang-panel {
