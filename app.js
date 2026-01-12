@@ -101,9 +101,11 @@ function sbUpdateAuthUI() {
 
 function sbBuildCloudPayload() {
   return {
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
-    estado: estado || {},
+    estado: estado || {},              // Legacy v1 (mantener para compatibilidad)
+    estado2: estado2 || {},            // Nuevo v2 por oracle_id
+    oracleIdCache: oracleIdCache || {}, // Cache de resolución
     progresoPorSet: progresoPorSet || {},
     hiddenEmptySetKeys: [...(hiddenEmptySetKeys || new Set())],
     hiddenCollections: [...(hiddenCollections || new Set())],
@@ -122,14 +124,31 @@ function sbBuildCloudPayload() {
 function sbApplyCloudPayload(payload) {
   if (!payload || typeof payload !== "object") return;
 
-  console.log("sbApplyCloudPayload: aplicando datos desde la nube...");
+  const version = payload.version || 1;
+  console.log(`sbApplyCloudPayload: aplicando datos desde la nube (version ${version})...`);
   
   // Activar bandera para prevenir marcar como dirty
   sbApplyingCloudData = true;
   
   try {
+    // Aplicar estado v2 si existe
+    if (version >= 2 && payload.estado2 && typeof payload.estado2 === "object") {
+      estado2 = payload.estado2;
+      guardarEstado2();
+      console.log(`Estado v2 aplicado: ${Object.keys(estado2).length} cartas`);
+    }
+    
+    // Aplicar cache de oracle_id si existe
+    if (version >= 2 && payload.oracleIdCache && typeof payload.oracleIdCache === "object") {
+      oracleIdCache = payload.oracleIdCache;
+      guardarOracleCache();
+      console.log(`Oracle cache aplicado: ${Object.keys(oracleIdCache).length} entradas`);
+    }
+    
+    // Aplicar estado legacy v1 (para migración o compatibilidad)
     if (payload.estado && typeof payload.estado === "object") {
-      estado = payload.estado;
+      estadoLegacyById = payload.estado; // Guardar como legacy para posible migración
+      estado = payload.estado; // Mantener también para compatibilidad
       migrarEstadoSiHaceFalta();
       guardarEstado();
     }
@@ -954,7 +973,12 @@ function actualizarProgresoGuardado(setKey) {
   if (!lista) return; // si no hay cartas cargadas, no podemos calcular total
 
   const total = lista.length;
-  const tengo = lista.filter(c => getEstadoCarta(c.id).qty > 0).length;
+  // Usar estado2: contar cartas con cantidad en cualquier idioma
+  const tengo = lista.filter(c => {
+    if (!c.oracle_id) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
+    const st2 = getEstadoCarta2(c.oracle_id);
+    return (st2.qty_en + st2.qty_es) > 0;
+  }).length;
 
   progresoPorSet[setKey] = { total, tengo, updatedAt: Date.now() };
   guardarProgresoPorSet();
@@ -1125,6 +1149,358 @@ function setWantMore(id, value) {
   sbMarkDirty(); 
 }
 
+
+// ===============================
+// 2.5) NUEVO ESTADO v2: Por oracle_id con idiomas separados
+// ===============================
+
+const LS_KEY_V2 = "mtg_coleccion_estado_v2";
+const LS_ORACLE_CACHE = "mtg_oracle_id_cache_v1";
+
+let estado2 = {}; // oracle_id -> { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es }
+let estadoLegacyById = {}; // Copia temporal del estado legacy (por id) para migración
+let oracleIdCache = {}; // id -> { oracle_id, lang } - cache de resolución
+
+// Índice para búsqueda rápida: oracle_id -> { en: "id-en", es: "id-es" }
+let oracleToIds = {};
+
+// Cola de IDs legacy pendientes de resolver
+let pendingLegacyIds = new Set();
+let resolvingLegacyIds = false;
+
+// ===== Validación y normalización =====
+
+function normalizarEstadoCarta2(st) {
+  const qty_en = clampInt(Number(st.qty_en ?? 0), 0, 999);
+  const qty_es = clampInt(Number(st.qty_es ?? 0), 0, 999);
+  
+  // foil no puede exceder qty
+  const foil_en = clampInt(Number(st.foil_en ?? 0), 0, qty_en);
+  const foil_es = clampInt(Number(st.foil_es ?? 0), 0, qty_es);
+  
+  const ri_en = !!st.ri_en;
+  const ri_es = !!st.ri_es;
+  
+  return { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es };
+}
+
+function ensureEstadoCarta2(oracle_id) {
+  const key = String(oracle_id);
+  if (!estado2[key]) {
+    estado2[key] = { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false };
+  }
+  return estado2[key];
+}
+
+// ===== API pública v2 =====
+
+function getEstadoCarta2(oracle_id) {
+  if (!oracle_id) return { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false };
+  
+  const key = String(oracle_id);
+  const st = estado2[key];
+  
+  if (!st) return { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false };
+  
+  const norm = normalizarEstadoCarta2(st);
+  estado2[key] = norm;
+  return norm;
+}
+
+function setQtyLang(oracle_id, lang, value) {
+  if (!oracle_id) return;
+  
+  const st = ensureEstadoCarta2(oracle_id);
+  const qty = clampInt(Number(value), 0, 999);
+  const langKey = lang === "es" ? "qty_es" : "qty_en";
+  const foilKey = lang === "es" ? "foil_es" : "foil_en";
+  
+  st[langKey] = qty;
+  
+  // Ajustar foil si qty baja
+  if (st[foilKey] > qty) st[foilKey] = qty;
+  
+  // Si qty llega a 0, limpiar foil
+  if (qty === 0) st[foilKey] = 0;
+  
+  guardarEstado2();
+  sbMarkDirty();
+}
+
+function setFoilLang(oracle_id, lang, value) {
+  if (!oracle_id) return;
+  
+  const st = ensureEstadoCarta2(oracle_id);
+  const qtyKey = lang === "es" ? "qty_es" : "qty_en";
+  const foilKey = lang === "es" ? "foil_es" : "foil_en";
+  
+  st[foilKey] = clampInt(Number(value), 0, st[qtyKey]);
+  
+  guardarEstado2();
+  sbMarkDirty();
+}
+
+function setRiLang(oracle_id, lang, value) {
+  if (!oracle_id) return;
+  
+  const st = ensureEstadoCarta2(oracle_id);
+  const riKey = lang === "es" ? "ri_es" : "ri_en";
+  
+  st[riKey] = !!value;
+  
+  guardarEstado2();
+  sbMarkDirty();
+}
+
+// ===== Guardado/Carga v2 =====
+
+function cargarEstado2() {
+  // Cargar estado v2
+  const raw2 = localStorage.getItem(LS_KEY_V2);
+  if (raw2) {
+    try {
+      estado2 = JSON.parse(raw2) || {};
+    } catch (e) {
+      console.warn("Estado v2 corrupto en localStorage, se reinicia:", e);
+      estado2 = {};
+    }
+  }
+  
+  // Cargar cache de oracle_id
+  const rawCache = localStorage.getItem(LS_ORACLE_CACHE);
+  if (rawCache) {
+    try {
+      oracleIdCache = JSON.parse(rawCache) || {};
+    } catch (e) {
+      console.warn("Oracle cache corrupto, se reinicia:", e);
+      oracleIdCache = {};
+    }
+  }
+  
+  // Cargar estado legacy para migración
+  const rawLegacy = localStorage.getItem(LS_KEY);
+  if (rawLegacy) {
+    try {
+      estadoLegacyById = JSON.parse(rawLegacy) || {};
+    } catch (e) {
+      console.warn("Estado legacy corrupto:", e);
+      estadoLegacyById = {};
+    }
+  }
+  
+  console.log(`Estado cargado: ${Object.keys(estado2).length} cartas v2, ${Object.keys(estadoLegacyById).length} legacy`);
+}
+
+function guardarEstado2() {
+  localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
+  if (typeof sbMarkDirty === "function") sbMarkDirty();
+  cargarStatsSnapshot();
+}
+
+function guardarOracleCache() {
+  localStorage.setItem(LS_ORACLE_CACHE, JSON.stringify(oracleIdCache));
+}
+
+// ===== Construcción de índice oracle_id -> ids =====
+
+function construirIndiceOracleToIds() {
+  oracleToIds = {};
+  
+  // Recorrer todas las cartas cargadas en cache
+  for (const [setKey, cartas] of Object.entries(cacheCartasPorSetLang)) {
+    if (!Array.isArray(cartas)) continue;
+    
+    cartas.forEach(carta => {
+      if (!carta.oracle_id || !carta.id) return;
+      
+      const oracle = String(carta.oracle_id);
+      const lang = String(carta.lang || "en").toLowerCase();
+      const id = String(carta.id);
+      
+      if (!oracleToIds[oracle]) {
+        oracleToIds[oracle] = {};
+      }
+      
+      if (lang === "en") {
+        oracleToIds[oracle].en = id;
+      } else if (lang === "es") {
+        oracleToIds[oracle].es = id;
+      }
+      
+      // Actualizar cache de resolución
+      if (!oracleIdCache[id]) {
+        oracleIdCache[id] = { oracle_id: oracle, lang };
+      }
+    });
+  }
+  
+  guardarOracleCache();
+  console.log(`Índice oracle_id construido: ${Object.keys(oracleToIds).length} cartas únicas`);
+}
+
+// ===== Migración progresiva desde estado legacy =====
+
+async function migrarEstadoLegacy() {
+  if (Object.keys(estadoLegacyById).length === 0) {
+    console.log("No hay estado legacy para migrar");
+    return;
+  }
+  
+  console.log("Iniciando migración de estado legacy...");
+  
+  // Construir índice desde cache actual
+  construirIndiceOracleToIds();
+  
+  let migradosDirectos = 0;
+  let pendientes = 0;
+  
+  // Primera pasada: migrar IDs que ya conocemos
+  for (const [id, legacyState] of Object.entries(estadoLegacyById)) {
+    // Buscar en cache
+    const cached = oracleIdCache[id];
+    
+    if (cached && cached.oracle_id) {
+      // Migrar directamente
+      migrarEntradaLegacy(id, cached.oracle_id, cached.lang, legacyState);
+      migradosDirectos++;
+    } else {
+      // Añadir a pendientes
+      pendingLegacyIds.add(id);
+      pendientes++;
+    }
+  }
+  
+  console.log(`Migración directa: ${migradosDirectos} cartas. Pendientes de resolver: ${pendientes}`);
+  
+  // Guardar progreso
+  guardarEstado2();
+  
+  // Resolver pendientes de forma progresiva
+  if (pendingLegacyIds.size > 0) {
+    console.log(`Iniciando resolución progresiva de ${pendingLegacyIds.size} IDs...`);
+    resolverPendientesProgresivamente();
+  }
+}
+
+function migrarEntradaLegacy(id, oracle_id, lang, legacyState) {
+  const st = ensureEstadoCarta2(oracle_id);
+  
+  const langSuffix = lang === "es" ? "_es" : "_en";
+  const qtyKey = `qty${langSuffix}`;
+  const foilKey = `foil${langSuffix}`;
+  const riKey = `ri${langSuffix}`;
+  
+  // Migrar qty
+  if (typeof legacyState.qty === "number") {
+    st[qtyKey] = Math.max(st[qtyKey], legacyState.qty);
+  }
+  
+  // Migrar foilQty
+  if (typeof legacyState.foilQty === "number") {
+    st[foilKey] = Math.max(st[foilKey], legacyState.foilQty);
+  }
+  
+  // Migrar wantMore
+  if (legacyState.wantMore) {
+    st[riKey] = true;
+  }
+  
+  // Normalizar
+  estado2[oracle_id] = normalizarEstadoCarta2(st);
+}
+
+// ===== Resolución progresiva con rate limiting =====
+
+async function resolverPendientesProgresivamente() {
+  if (resolvingLegacyIds) return; // Ya está en proceso
+  
+  resolvingLegacyIds = true;
+  const batchSize = 5;
+  const delayMs = 200; // 5 por segundo máximo
+  
+  const pendingArray = Array.from(pendingLegacyIds);
+  
+  for (let i = 0; i < pendingArray.length; i += batchSize) {
+    const batch = pendingArray.slice(i, i + batchSize);
+    
+    await Promise.all(batch.map(id => resolverIdLegacy(id)));
+    
+    // Guardar progreso cada batch
+    guardarEstado2();
+    guardarOracleCache();
+    
+    // Delay entre batches
+    if (i + batchSize < pendingArray.length) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  
+  resolvingLegacyIds = false;
+  console.log("Resolución de IDs legacy completada");
+}
+
+async function resolverIdLegacy(id) {
+  if (!id) return;
+  
+  try {
+    // Llamar a Scryfall para obtener oracle_id
+    const url = `${SCY_BASE}/cards/${id}`;
+    const card = await scryFetchJson(url);
+    
+    if (!card || !card.oracle_id) {
+      console.warn(`No se pudo resolver oracle_id para ${id}`);
+      pendingLegacyIds.delete(id);
+      return;
+    }
+    
+    const oracle_id = card.oracle_id;
+    const lang = (card.lang || "en").toLowerCase();
+    
+    // Guardar en cache
+    oracleIdCache[id] = { oracle_id, lang };
+    
+    // Migrar
+    const legacyState = estadoLegacyById[id];
+    if (legacyState) {
+      migrarEntradaLegacy(id, oracle_id, lang, legacyState);
+    }
+    
+    pendingLegacyIds.delete(id);
+    
+  } catch (err) {
+    console.warn(`Error resolviendo ID ${id}:`, err);
+    // No eliminar de pendientes por si queremos reintentar
+  }
+}
+
+// ===== Helpers de compatibilidad (mantener getEstadoCarta para código legacy) =====
+
+// Wrapper temporal para mantener compatibilidad con código existente
+// Intentará usar estado2 si encuentra oracle_id, sino fallback a estado legacy
+function getEstadoCarta_Compat(id) {
+  // Buscar oracle_id para este id
+  const cached = oracleIdCache[id];
+  
+  if (cached && cached.oracle_id) {
+    // Usar estado2
+    const st2 = getEstadoCarta2(cached.oracle_id);
+    const lang = cached.lang || "en";
+    
+    const qtyKey = lang === "es" ? "qty_es" : "qty_en";
+    const foilKey = lang === "es" ? "foil_es" : "foil_en";
+    const riKey = lang === "es" ? "ri_es" : "ri_en";
+    
+    return {
+      qty: st2[qtyKey],
+      foilQty: st2[foilKey],
+      playedQty: 0, // No usado
+      wantMore: st2[riKey]
+    };
+  }
+  
+  // Fallback a estado legacy
+  return getEstadoCarta(id);
+}
 
 // ===============================
 // Scryfall (API) - capa de datos
@@ -1340,10 +1716,11 @@ function agruparResultadosBusqueda(cards) {
       })
       .map(v => {
         const setKey = `${v.set}__${v.lang}`;
-        const st = getEstadoCarta(v.id);
+        // Usar estado2 con oracle_id
+        const st2 = getEstadoCarta2(v.oracle_id);
 
         return {
-          id: v.id, // UUID
+          id: v.id, // UUID (por si se necesita)
           oracle_id: v.oracle_id,
           _img: pickImage(v),
           _prices: v.prices || null,
@@ -1355,7 +1732,7 @@ function agruparResultadosBusqueda(cards) {
           collector_number: v.collector_number,
           rareza: mapRarity(v.rarity),
           setKey,
-          st
+          st2
         };
       });
 
@@ -1524,6 +1901,9 @@ async function ensureSetCardsLoaded(setKey) {
 
   // Guardar resumen (total/tengo) para que no vuelva a 0/? al reiniciar
   actualizarProgresoGuardado(setKey);
+  
+  // ✅ Actualizar índice oracle_id para facilitar migración
+  construirIndiceOracleToIds();
 }
 
 async function refrescarPreciosSetActual() {
@@ -1607,7 +1987,7 @@ function guardarHiddenCollections() {
 // Modal carta + precio
 // ===============================
 
-function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = null, navIndex = -1, cardData = null }) {
+function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = null, navIndex = -1, cardData = null, oracleId = null }) {
   const modal = document.getElementById("modalCarta");
   const tit = document.getElementById("modalCartaTitulo");
   const body = document.getElementById("modalCartaBody");
@@ -1669,6 +2049,7 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
       </div>
     ` : (imageUrl ? `<img src="${imageUrl}" alt="${titulo || "Carta"}" loading="lazy" />`
               : `<div class="card"><p>No hay imagen disponible.</p></div>`)}
+    ${oracleId ? generarControlesModalCarta(oracleId) : ''}
   `;
 
   const btnPrev = body.querySelector('.btn-nav-prev');
@@ -1698,7 +2079,208 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
     });
   }
 
+  // Event listeners para controles del modal (si existen)
+  if (oracleId) {
+    wireControlesModalCarta(body, oracleId);
+  }
+
   modal.classList.remove("hidden");
+}
+
+function generarControlesModalCarta(oracleId) {
+  const st2 = getEstadoCarta2(oracleId);
+  const qty_en = st2.qty_en;
+  const qty_es = st2.qty_es;
+  const foil_en = st2.foil_en;
+  const foil_es = st2.foil_es;
+  const ri_en = st2.ri_en;
+  const ri_es = st2.ri_es;
+
+  return `
+    <div class="card" style="margin-top: 16px;">
+      <div class="carta-controles" style="background: rgba(0,0,0,.06);">
+        <!-- Cantidad -->
+        <div class="control-fila-dual">
+          <div class="control-lang-block">
+            <span class="flag">🇬🇧</span>
+            <div class="stepper">
+              <button class="btn-step btn-modal-qty-minus-en" data-oracle="${oracleId}" ${qty_en <= 0 ? "disabled" : ""}>−</button>
+              <input type="number" class="inp-num inp-modal-qty-en" data-oracle="${oracleId}" min="0" max="999" value="${qty_en}" />
+              <button class="btn-step btn-modal-qty-plus-en" data-oracle="${oracleId}">+</button>
+            </div>
+          </div>
+          <div class="control-lang-block">
+            <span class="flag">🇪🇸</span>
+            <div class="stepper">
+              <button class="btn-step btn-modal-qty-minus-es" data-oracle="${oracleId}" ${qty_es <= 0 ? "disabled" : ""}>−</button>
+              <input type="number" class="inp-num inp-modal-qty-es" data-oracle="${oracleId}" min="0" max="999" value="${qty_es}" />
+              <button class="btn-step btn-modal-qty-plus-es" data-oracle="${oracleId}">+</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Foil -->
+        <div class="control-foil-section">
+          <div class="foil-title">Foil</div>
+          <div class="control-fila-dual">
+            <div class="control-lang-block">
+              <span class="flag">🇬🇧</span>
+              <div class="stepper">
+                <button class="btn-step btn-modal-foil-minus-en" data-oracle="${oracleId}" ${foil_en <= 0 || qty_en === 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-modal-foil-en" data-oracle="${oracleId}" min="0" max="${qty_en}" value="${foil_en}" ${qty_en === 0 ? "disabled" : ""} />
+                <button class="btn-step btn-modal-foil-plus-en" data-oracle="${oracleId}" ${qty_en === 0 || foil_en >= qty_en ? "disabled" : ""}>+</button>
+              </div>
+            </div>
+            <div class="control-lang-block">
+              <span class="flag">🇪🇸</span>
+              <div class="stepper">
+                <button class="btn-step btn-modal-foil-minus-es" data-oracle="${oracleId}" ${foil_es <= 0 || qty_es === 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-modal-foil-es" data-oracle="${oracleId}" min="0" max="${qty_es}" value="${foil_es}" ${qty_es === 0 ? "disabled" : ""} />
+                <button class="btn-step btn-modal-foil-plus-es" data-oracle="${oracleId}" ${qty_es === 0 || foil_es >= qty_es ? "disabled" : ""}>+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ri -->
+        <div class="control-ri-dual">
+          <span class="lbl">Ri</span>
+          <div class="ri-checkboxes">
+            <label class="chkline">
+              <span class="flag">🇬🇧</span>
+              <input type="checkbox" class="chk-modal-want-en" data-oracle="${oracleId}" ${ri_en ? "checked" : ""}>
+            </label>
+            <label class="chkline">
+              <span class="flag">🇪🇸</span>
+              <input type="checkbox" class="chk-modal-want-es" data-oracle="${oracleId}" ${ri_es ? "checked" : ""}>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireControlesModalCarta(container, oracleId) {
+  // Qty EN
+  container.querySelectorAll('.btn-modal-qty-minus-en').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setQtyLang(oracleId, 'en', st2.qty_en - 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId }); // Reabrir para actualizar
+    });
+  });
+  container.querySelectorAll('.btn-modal-qty-plus-en').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setQtyLang(oracleId, 'en', st2.qty_en + 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.inp-modal-qty-en').forEach(inp => {
+    inp.addEventListener('change', () => {
+      setQtyLang(oracleId, 'en', inp.value);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+
+  // Qty ES
+  container.querySelectorAll('.btn-modal-qty-minus-es').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setQtyLang(oracleId, 'es', st2.qty_es - 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.btn-modal-qty-plus-es').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setQtyLang(oracleId, 'es', st2.qty_es + 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.inp-modal-qty-es').forEach(inp => {
+    inp.addEventListener('change', () => {
+      setQtyLang(oracleId, 'es', inp.value);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+
+  // Foil EN
+  container.querySelectorAll('.btn-modal-foil-minus-en').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setFoilLang(oracleId, 'en', st2.foil_en - 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.btn-modal-foil-plus-en').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setFoilLang(oracleId, 'en', st2.foil_en + 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.inp-modal-foil-en').forEach(inp => {
+    inp.addEventListener('change', () => {
+      setFoilLang(oracleId, 'en', inp.value);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+
+  // Foil ES
+  container.querySelectorAll('.btn-modal-foil-minus-es').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setFoilLang(oracleId, 'es', st2.foil_es - 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.btn-modal-foil-plus-es').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const st2 = getEstadoCarta2(oracleId);
+      setFoilLang(oracleId, 'es', st2.foil_es + 1);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.inp-modal-foil-es').forEach(inp => {
+    inp.addEventListener('change', () => {
+      setFoilLang(oracleId, 'es', inp.value);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+
+  // Ri EN/ES
+  container.querySelectorAll('.chk-modal-want-en').forEach(chk => {
+    chk.addEventListener('change', () => {
+      setRiLang(oracleId, 'en', chk.checked);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+  container.querySelectorAll('.chk-modal-want-es').forEach(chk => {
+    chk.addEventListener('change', () => {
+      setRiLang(oracleId, 'es', chk.checked);
+      abrirModalCarta({ ...obtenerDatosCartaActual(), oracleId });
+    });
+  });
+}
+
+function obtenerDatosCartaActual() {
+  // Helper para reabrir el modal con los mismos datos
+  if (!modalNavState.lista || modalNavState.idx < 0) return {};
+  const c = modalNavState.lista[modalNavState.idx];
+  if (!c) return {};
+  
+  return {
+    titulo: c?.nombre || "Carta",
+    imageUrl: c?._img || null,
+    numero: c?.numero || "",
+    rareza: c?.rareza || "",
+    precio: formatPrecioEUR(c?._prices),
+    navLista: modalNavState.lista,
+    navIndex: modalNavState.idx,
+    cardData: c?._raw || null
+  };
 }
 
 function moverModalCarta(delta) {
@@ -1718,6 +2300,7 @@ function moverModalCarta(delta) {
     navLista: modalNavState.lista,
     navIndex: nuevo,
     cardData: c?._raw || null,
+    oracleId: c?.oracle_id || null
   });
 }
 
@@ -1867,9 +2450,6 @@ function navegarAtras() {
     
     // Mostrar la pantalla anterior sin agregar al historial
     mostrarPantalla(pantallaAnterior, false);
-    
-    // Inmediatamente agregar una nueva entrada para mantener el historial
-    window.history.pushState({ pantalla: pantallaAnterior }, "", "");
     return true;
   } else if (impedirSalidaApp) {
     // Si estamos en la pantalla inicial, mantener la app abierta
@@ -1903,7 +2483,12 @@ function progresoDeColeccion(setKey) {
   if (cacheCartasPorSetLang[setKey]) {
     const lista = cartasDeSetKey(setKey);
     const total = lista.length;
-    const tengo = lista.filter(c => getEstadoCarta(c.id).qty > 0).length;
+    // Usar estado2: contar cartas que tienen cantidad en cualquier idioma
+    const tengo = lista.filter(c => {
+      if (!c.oracle_id) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
+      const st2 = getEstadoCarta2(c.oracle_id);
+      return (st2.qty_en + st2.qty_es) > 0;
+    }).length;
     return { tengo, total };
   }
 
@@ -2230,7 +2815,12 @@ if (ft) {
 }
 
   if (filtroSoloFaltanSet) {
-    lista = lista.filter(c => getEstadoCarta(c.id).qty === 0);
+    // Filtrar usando estado2: solo mostrar si NO tiene cantidad en ningún idioma
+    lista = lista.filter(c => {
+      if (!c.oracle_id) return getEstadoCarta(c.id).qty === 0; // Fallback legacy
+      const st2 = getEstadoCarta2(c.oracle_id);
+      return (st2.qty_en + st2.qty_es) === 0;
+    });
   }
 
   return lista;
@@ -2240,9 +2830,8 @@ async function abrirSet(setKey) {
   setActualKey = setKey;
 
   const [code, lang] = setKey.split("__");
-setActualCode = code;
-setActualLang = lang || "en";
-aplicarUILangSet();
+  setActualCode = code;
+  // setActualLang ya no se usa - siempre cargamos EN
 
   // Actualizar checkbox de ocultar colección
   const chkOcultarColeccion = document.getElementById("chkOcultarColeccion");
@@ -2251,7 +2840,7 @@ aplicarUILangSet();
   }
 
   const info = setMetaByKey.get(setKey) || { nombre: "Set", lang: "en" };
-  document.getElementById("tituloSet").textContent = `${info.nombre} (${formatLang(setActualLang)})`;
+  document.getElementById("tituloSet").textContent = info.nombre; // Sin mostrar idioma
 
   // UI rápida de “cargando”
   document.getElementById("progresoSet").textContent = "Cargando cartas...";
@@ -2286,8 +2875,6 @@ renderColecciones(); // para que al volver ya no salga
 
   aplicarUIFiltrosSet();
   renderTablaSet(setKey);
-
-  mostrarPantalla("set");
 }
 
 
@@ -2297,18 +2884,42 @@ function renderTablaSet(setKey) {
   let html = `<div class="cartas-grid">`;
 
   lista.forEach((c, idx) => {
-    const st = getEstadoCarta(c.id);
+    // Usar estado2 para determinar si tiene cantidad (suma de ambos idiomas)
+    let totalQty = 0;
+    let st2 = null;
+    
+    if (c.oracle_id) {
+      st2 = getEstadoCarta2(c.oracle_id);
+      totalQty = st2.qty_en + st2.qty_es;
+    } else {
+      // Fallback para cartas sin oracle_id (no debería pasar)
+      const stLegacy = getEstadoCarta(c.id);
+      totalQty = stLegacy.qty;
+      // Crear objeto compatible con estructura v2 para el renderizado
+      st2 = { qty_en: stLegacy.qty, qty_es: 0, foil_en: stLegacy.foilQty, foil_es: 0, ri_en: stLegacy.wantMore, ri_es: false };
+    }
+    
+    // Layout dual EN/ES
+    const qty_en = st2.qty_en;
+    const qty_es = st2.qty_es;
+    const foil_en = st2.foil_en;
+    const foil_es = st2.foil_es;
+    const ri_en = st2.ri_en;
+    const ri_es = st2.ri_es;
+    
     const tieneImg = c._img && c._img.trim() !== "";
+    const hasQty = totalQty > 0;
 
     html += `
-  <div class="carta-item ${st.qty > 0 ? 'has-qty' : ''}">
+  <div class="carta-item ${hasQty ? 'has-qty' : ''}">
     <!-- Header de la carta -->
     <div class="carta-header">
-      <img src="icons/${st.qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="24" height="24">
+      <img src="icons/${hasQty ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="24" height="24">
       <button
         class="btn-link-carta"
         type="button"
         data-accion="ver-carta-set"
+        data-oracle="${c.oracle_id || ''}"
         data-id="${c.id}"
         data-idx="${idx}"
       >
@@ -2325,49 +2936,104 @@ function renderTablaSet(setKey) {
       }
     </div>
 
-    <!-- Controles de cantidad -->
+    <!-- Controles de cantidad (Dual EN/ES) -->
     <div class="carta-controles">
-      <!-- Cantidad -->
-      <div class="control-fila">
-        <span class="lbl">Cantidad</span>
-        <div class="stepper">
-          <button class="btn-step btn-qty-minus" data-id="${c.id}" ${st.qty <= 0 ? "disabled" : ""}>−</button>
-          <input
-            type="number"
-            class="inp-num inp-qty"
-            data-id="${c.id}"
-            min="0"
-            max="999"
-            value="${st.qty}"
-          />
-          <button class="btn-step btn-qty-plus" data-id="${c.id}">+</button>
+      <!-- Cantidad (sin título, solo dos bloques con banderas) -->
+      <div class="control-fila-dual">
+        <!-- Bloque EN -->
+        <div class="control-lang-block">
+          <span class="flag">🇬🇧</span>
+          <div class="stepper">
+            <button class="btn-step btn-qty-minus-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${qty_en <= 0 ? "disabled" : ""}>−</button>
+            <input
+              type="number"
+              class="inp-num inp-qty-en"
+              data-oracle="${c.oracle_id || ''}"
+              data-lang="en"
+              min="0"
+              max="999"
+              value="${qty_en}"
+            />
+            <button class="btn-step btn-qty-plus-en" data-oracle="${c.oracle_id || ''}" data-lang="en">+</button>
+          </div>
+        </div>
+        
+        <!-- Bloque ES -->
+        <div class="control-lang-block">
+          <span class="flag">🇪🇸</span>
+          <div class="stepper">
+            <button class="btn-step btn-qty-minus-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${qty_es <= 0 ? "disabled" : ""}>−</button>
+            <input
+              type="number"
+              class="inp-num inp-qty-es"
+              data-oracle="${c.oracle_id || ''}"
+              data-lang="es"
+              min="0"
+              max="999"
+              value="${qty_es}"
+            />
+            <button class="btn-step btn-qty-plus-es" data-oracle="${c.oracle_id || ''}" data-lang="es">+</button>
+          </div>
         </div>
       </div>
 
-      <!-- Foil -->
-      <div class="control-fila">
-        <span class="lbl">Foil</span>
-        <div class="stepper">
-          <button class="btn-step btn-foil-minus" data-id="${c.id}" ${st.foilQty <= 0 || st.qty === 0 ? "disabled" : ""}>−</button>
-          <input
-            type="number"
-            class="inp-num inp-foil"
-            data-id="${c.id}"
-            min="0"
-            max="${st.qty}"
-            value="${st.foilQty}"
-            ${st.qty === 0 ? "disabled" : ""}
-          />
-          <button class="btn-step btn-foil-plus" data-id="${c.id}" ${st.qty === 0 || st.foilQty >= st.qty ? "disabled" : ""}>+</button>
+      <!-- Foil (centrado con título) -->
+      <div class="control-foil-section">
+        <div class="foil-title">Foil</div>
+        <div class="control-fila-dual">
+          <!-- Foil EN -->
+          <div class="control-lang-block">
+            <span class="flag">🇬🇧</span>
+            <div class="stepper">
+              <button class="btn-step btn-foil-minus-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${foil_en <= 0 || qty_en === 0 ? "disabled" : ""}>−</button>
+              <input
+                type="number"
+                class="inp-num inp-foil-en"
+                data-oracle="${c.oracle_id || ''}"
+                data-lang="en"
+                min="0"
+                max="${qty_en}"
+                value="${foil_en}"
+                ${qty_en === 0 ? "disabled" : ""}
+              />
+              <button class="btn-step btn-foil-plus-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${qty_en === 0 || foil_en >= qty_en ? "disabled" : ""}>+</button>
+            </div>
+          </div>
+          
+          <!-- Foil ES -->
+          <div class="control-lang-block">
+            <span class="flag">🇪🇸</span>
+            <div class="stepper">
+              <button class="btn-step btn-foil-minus-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${foil_es <= 0 || qty_es === 0 ? "disabled" : ""}>−</button>
+              <input
+                type="number"
+                class="inp-num inp-foil-es"
+                data-oracle="${c.oracle_id || ''}"
+                data-lang="es"
+                min="0"
+                max="${qty_es}"
+                value="${foil_es}"
+                ${qty_es === 0 ? "disabled" : ""}
+              />
+              <button class="btn-step btn-foil-plus-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${qty_es === 0 || foil_es >= qty_es ? "disabled" : ""}>+</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Ri -->
-      <div class="control-fila control-ri">
+      <!-- Ri (dos checkboxes) -->
+      <div class="control-fila-dual control-ri-dual">
         <span class="lbl">Ri</span>
-        <label class="chkline">
-          <input type="checkbox" class="chk-want" data-id="${c.id}" ${st.wantMore ? "checked" : ""}>
-        </label>
+        <div class="ri-checkboxes">
+          <label class="chkline">
+            <span class="flag">🇬🇧</span>
+            <input type="checkbox" class="chk-want-en" data-oracle="${c.oracle_id || ''}" data-lang="en" ${ri_en ? "checked" : ""}>
+          </label>
+          <label class="chkline">
+            <span class="flag">🇪🇸</span>
+            <input type="checkbox" class="chk-want-es" data-oracle="${c.oracle_id || ''}" data-lang="es" ${ri_es ? "checked" : ""}>
+          </label>
+        </div>
       </div>
     </div>
   </div>
@@ -2401,75 +3067,163 @@ cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
       rareza: carta?.rareza || "",
       precio: formatPrecioEUR(carta?._prices),
       cardData: carta?._raw || null,
+      oracleId: carta?.oracle_id || null,
+      navLista: getListaSetFiltrada(setKey),
+      navIndex: getListaSetFiltrada(setKey).findIndex(c => c.id === id)
     });
   });
 });
 
-// cantidad
-cont.querySelectorAll(".btn-qty-minus").forEach(btn => {
+// ===== Event listeners usando oracle_id y estado2 (dual EN/ES) =====
+
+// Cantidad EN
+cont.querySelectorAll(".btn-qty-minus-en").forEach(btn => {
   btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    const st = getEstadoCarta(id);
-    setQty(id, st.qty - 1);
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setQtyLang(oracleId, "en", st2.qty_en - 1);
     renderTablaSet(setActualKey);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".btn-qty-plus").forEach(btn => {
+cont.querySelectorAll(".btn-qty-plus-en").forEach(btn => {
   btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    const st = getEstadoCarta(id);
-    setQty(id, st.qty + 1);
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setQtyLang(oracleId, "en", st2.qty_en + 1);
     renderTablaSet(setActualKey);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".inp-qty").forEach(inp => {
+cont.querySelectorAll(".inp-qty-en").forEach(inp => {
   inp.addEventListener("change", () => {
-    const id = inp.dataset.id;
-    setQty(id, inp.value);
+    const oracleId = inp.dataset.oracle;
+    if (!oracleId) return;
+    setQtyLang(oracleId, "en", inp.value);
     renderTablaSet(setActualKey);
     renderColecciones();
   });
 });
 
-// ✅ foil qty
-cont.querySelectorAll(".btn-foil-minus").forEach(btn => {
+// Cantidad ES
+cont.querySelectorAll(".btn-qty-minus-es").forEach(btn => {
   btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    const st = getEstadoCarta(id);
-    setFoilQty(id, (st.foilQty || 0) - 1);
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setQtyLang(oracleId, "es", st2.qty_es - 1);
     renderTablaSet(setActualKey);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".btn-foil-plus").forEach(btn => {
+cont.querySelectorAll(".btn-qty-plus-es").forEach(btn => {
   btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    const st = getEstadoCarta(id);
-    setFoilQty(id, (st.foilQty || 0) + 1);
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setQtyLang(oracleId, "es", st2.qty_es + 1);
     renderTablaSet(setActualKey);
     renderColecciones();
   });
 });
 
-cont.querySelectorAll(".inp-foil").forEach(inp => {
+cont.querySelectorAll(".inp-qty-es").forEach(inp => {
   inp.addEventListener("change", () => {
-    const id = inp.dataset.id;
-    setFoilQty(id, inp.value);
+    const oracleId = inp.dataset.oracle;
+    if (!oracleId) return;
+    setQtyLang(oracleId, "es", inp.value);
     renderTablaSet(setActualKey);
     renderColecciones();
   });
 });
 
-// Ri
-cont.querySelectorAll(".chk-want").forEach(chk => {
+// Foil EN
+cont.querySelectorAll(".btn-foil-minus-en").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setFoilLang(oracleId, "en", st2.foil_en - 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
+  });
+});
+
+cont.querySelectorAll(".btn-foil-plus-en").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setFoilLang(oracleId, "en", st2.foil_en + 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
+  });
+});
+
+cont.querySelectorAll(".inp-foil-en").forEach(inp => {
+  inp.addEventListener("change", () => {
+    const oracleId = inp.dataset.oracle;
+    if (!oracleId) return;
+    setFoilLang(oracleId, "en", inp.value);
+    renderTablaSet(setActualKey);
+    renderColecciones();
+  });
+});
+
+// Foil ES
+cont.querySelectorAll(".btn-foil-minus-es").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setFoilLang(oracleId, "es", st2.foil_es - 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
+  });
+});
+
+cont.querySelectorAll(".btn-foil-plus-es").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const oracleId = btn.dataset.oracle;
+    if (!oracleId) return;
+    const st2 = getEstadoCarta2(oracleId);
+    setFoilLang(oracleId, "es", st2.foil_es + 1);
+    renderTablaSet(setActualKey);
+    renderColecciones();
+  });
+});
+
+cont.querySelectorAll(".inp-foil-es").forEach(inp => {
+  inp.addEventListener("change", () => {
+    const oracleId = inp.dataset.oracle;
+    if (!oracleId) return;
+    setFoilLang(oracleId, "es", inp.value);
+    renderTablaSet(setActualKey);
+    renderColecciones();
+  });
+});
+
+// Ri EN
+cont.querySelectorAll(".chk-want-en").forEach(chk => {
   chk.addEventListener("change", () => {
-    const id = chk.dataset.id;
-    setWantMore(id, chk.checked);
+    const oracleId = chk.dataset.oracle;
+    if (!oracleId) return;
+    setRiLang(oracleId, "en", chk.checked);
+    renderTablaSet(setActualKey);
+  });
+});
+
+// Ri ES
+cont.querySelectorAll(".chk-want-es").forEach(chk => {
+  chk.addEventListener("change", () => {
+    const oracleId = chk.dataset.oracle;
+    if (!oracleId) return;
+    setRiLang(oracleId, "es", chk.checked);
     renderTablaSet(setActualKey);
   });
 });
@@ -2486,9 +3240,10 @@ function marcarTodasCartasSet() {
   
   const cartas = cartasDeSetKey(setActualKey);
   cartas.forEach(c => {
-    const st = getEstadoCarta(c.id);
-    if (st.qty === 0) {
-      setQty(c.id, 1);
+    if (!c.oracle_id) return; // Skip si no tiene oracle_id
+    const st2 = getEstadoCarta2(c.oracle_id);
+    if (st2.qty_en === 0) { // Por ahora solo trabajamos con EN
+      setQtyLang(c.oracle_id, "en", 1);
     }
   });
   
@@ -2501,10 +3256,12 @@ function desmarcarTodasCartasSet() {
   
   const cartas = cartasDeSetKey(setActualKey);
   cartas.forEach(c => {
-    setQty(c.id, 0);
+    if (!c.oracle_id) return; // Skip si no tiene oracle_id
+    setQtyLang(c.oracle_id, "en", 0); // Por ahora solo trabajamos con EN
   });
   
   renderTablaSet(setActualKey);
+
   renderColecciones();
 }
 
@@ -2546,8 +3303,10 @@ function aplicarRangosCartas(rangosTexto) {
     const cartaIdx = idx - 1;
     if (cartaIdx >= 0 && cartaIdx < lista.length) {
       const carta = lista[cartaIdx];
-      const st = getEstadoCarta(carta.id);
-      setQty(carta.id, st.qty + 1);
+      if (!carta.oracle_id) return;
+      const st2 = getEstadoCarta2(carta.oracle_id);
+      // Por ahora solo EN
+      setQtyLang(carta.oracle_id, "en", st2.qty_en + 1);
     }
   });
   
@@ -2654,8 +3413,10 @@ async function renderResultadosBuscar(texto) {
     `;
 
     for (const v of g.versiones) {
-      const qty = v.st.qty || 0;
-      const foilQty = v.st.foilQty || 0;
+      // Leer cantidades según el idioma de esta versión
+      const lang = v.lang === "es" ? "es" : "en";
+      const qty = lang === "en" ? (v.st2.qty_en || 0) : (v.st2.qty_es || 0);
+      const foilQty = lang === "en" ? (v.st2.foil_en || 0) : (v.st2.foil_es || 0);
 
       html += `
         <li class="item-version">
@@ -2674,16 +3435,17 @@ async function renderResultadosBuscar(texto) {
               <div class="control-fila-buscar">
                 <span class="lbl-buscar">Cantidad</span>
                 <div class="stepper stepper-buscar">
-                  <button class="btn-step btn-qty-minus-buscar" data-id="${v.id}" ${qty <= 0 ? "disabled" : ""}>−</button>
+                  <button class="btn-step btn-qty-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
                   <input
                     type="number"
                     class="inp-num inp-qty-buscar"
-                    data-id="${v.id}"
+                    data-oracle="${v.oracle_id}"
+                    data-lang="${lang}"
                     min="0"
                     max="999"
                     value="${qty}"
                   />
-                  <button class="btn-step btn-qty-plus-buscar" data-id="${v.id}">+</button>
+                  <button class="btn-step btn-qty-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}">+</button>
                 </div>
               </div>
 
@@ -2691,17 +3453,18 @@ async function renderResultadosBuscar(texto) {
               <div class="control-fila-buscar">
                 <span class="lbl-buscar">Foil</span>
                 <div class="stepper stepper-buscar">
-                  <button class="btn-step btn-foil-minus-buscar" data-id="${v.id}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
+                  <button class="btn-step btn-foil-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
                   <input
                     type="number"
                     class="inp-num inp-foil-buscar"
-                    data-id="${v.id}"
+                    data-oracle="${v.oracle_id}"
+                    data-lang="${lang}"
                     min="0"
                     max="${qty}"
                     value="${foilQty}"
                     ${qty === 0 ? "disabled" : ""}
                   />
-                  <button class="btn-step btn-foil-plus-buscar" data-id="${v.id}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
+                  <button class="btn-step btn-foil-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
                 </div>
               </div>
             </div>
@@ -2778,9 +3541,12 @@ async function renderResultadosBuscar(texto) {
   // Controles de cantidad en búsqueda
   cont.querySelectorAll(".btn-qty-minus-buscar").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setQty(id, st.qty - 1);
+      const oracleId = btn.dataset.oracle;
+      const lang = btn.dataset.lang || "en";
+      if (!oracleId) return;
+      const st2 = getEstadoCarta2(oracleId);
+      const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+      setQtyLang(oracleId, lang, currentQty - 1);
       renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
       renderColecciones();
     });
@@ -2788,9 +3554,12 @@ async function renderResultadosBuscar(texto) {
 
   cont.querySelectorAll(".btn-qty-plus-buscar").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setQty(id, st.qty + 1);
+      const oracleId = btn.dataset.oracle;
+      const lang = btn.dataset.lang || "en";
+      if (!oracleId) return;
+      const st2 = getEstadoCarta2(oracleId);
+      const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+      setQtyLang(oracleId, lang, currentQty + 1);
       renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
       renderColecciones();
     });
@@ -2798,8 +3567,10 @@ async function renderResultadosBuscar(texto) {
 
   cont.querySelectorAll(".inp-qty-buscar").forEach(inp => {
     inp.addEventListener("change", () => {
-      const id = inp.dataset.id;
-      setQty(id, inp.value);
+      const oracleId = inp.dataset.oracle;
+      const lang = inp.dataset.lang || "en";
+      if (!oracleId) return;
+      setQtyLang(oracleId, lang, inp.value);
       renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
       renderColecciones();
     });
@@ -2808,9 +3579,12 @@ async function renderResultadosBuscar(texto) {
   // Controles de foil en búsqueda
   cont.querySelectorAll(".btn-foil-minus-buscar").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setFoilQty(id, (st.foilQty || 0) - 1);
+      const oracleId = btn.dataset.oracle;
+      const lang = btn.dataset.lang || "en";
+      if (!oracleId) return;
+      const st2 = getEstadoCarta2(oracleId);
+      const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+      setFoilLang(oracleId, lang, currentFoil - 1);
       renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
       renderColecciones();
     });
@@ -2818,9 +3592,12 @@ async function renderResultadosBuscar(texto) {
 
   cont.querySelectorAll(".btn-foil-plus-buscar").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setFoilQty(id, (st.foilQty || 0) + 1);
+      const oracleId = btn.dataset.oracle;
+      const lang = btn.dataset.lang || "en";
+      if (!oracleId) return;
+      const st2 = getEstadoCarta2(oracleId);
+      const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+      setFoilLang(oracleId, lang, currentFoil + 1);
       renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
       renderColecciones();
     });
@@ -2828,8 +3605,10 @@ async function renderResultadosBuscar(texto) {
 
   cont.querySelectorAll(".inp-foil-buscar").forEach(inp => {
     inp.addEventListener("change", () => {
-      const id = inp.dataset.id;
-      setFoilQty(id, inp.value);
+      const oracleId = inp.dataset.oracle;
+      const lang = inp.dataset.lang || "en";
+      if (!oracleId) return;
+      setFoilLang(oracleId, lang, inp.value);
       renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
       renderColecciones();
     });
@@ -2860,9 +3639,11 @@ async function renderResultadosBuscar(texto) {
 function exportarEstado() {
   const payload = {
     app: "MTG Colecciones",
-    version: 1,
+    version: 2, // Actualizado a v2
     exportedAt: new Date().toISOString(),
-    estado
+    estado, // Legacy para compatibilidad
+    estado2, // Nuevo modelo
+    oracleIdCache // Para resolución
   };
 
   const json = JSON.stringify(payload, null, 2);
@@ -2897,8 +3678,20 @@ function importarEstadoDesdeTexto(jsonText) {
   const v = validarPayloadImport(payload);
   if (!v.ok) return v;
 
-  // Reemplazar
+  // Importar estado legacy (siempre presente)
   estado = payload.estado;
+
+  // Importar estado2 si está presente (versión 2)
+  if (payload.estado2) {
+    estado2 = payload.estado2;
+    guardarEstado2();
+  }
+
+  // Importar oracleIdCache si está presente
+  if (payload.oracleIdCache) {
+    oracleIdCache = payload.oracleIdCache;
+    guardarOracleIdCache();
+  }
 
   // Normalizar/migrar por si viene antiguo o incompleto
   migrarEstadoSiHaceFalta();
@@ -3114,14 +3907,18 @@ async function verificarCartasEnColeccion(cartas) {
     }
     
     // Si existe exacta y la tengo con la cantidad necesaria
-    if (existeExacta && getEstadoCarta(existeExacta.id).qty >= carta.cantidad) {
-      cartasVerificadas.push({
-        ...carta,
-        ...infoAdicional,
-        tengo: true,
-        ledType: 'azul'
-      });
-      continue;
+    if (existeExacta && existeExacta.oracle_id) {
+      const st2 = getEstadoCarta2(existeExacta.oracle_id);
+      const totalQty = st2.qty_en + st2.qty_es;
+      if (totalQty >= carta.cantidad) {
+        cartasVerificadas.push({
+          ...carta,
+          ...infoAdicional,
+          tengo: true,
+          ledType: 'azul'
+        });
+        continue;
+      }
     }
     
     // Buscar si tengo la carta en cualquier otra edición
@@ -3129,18 +3926,11 @@ async function verificarCartasEnColeccion(cartas) {
     const oracleId = existeExacta?.oracle_id;
     
     if (oracleId) {
-      // Buscar por oracle_id en todos los sets cargados (muy rápido)
-      for (const [setKeyCargado, cartasCargadas] of Object.entries(cacheCartasPorSetLang)) {
-        for (const c of cartasCargadas) {
-          if (c.oracle_id === oracleId) {
-            const st = getEstadoCarta(c.id);
-            if (st.qty > 0) {
-              tieneEnOtraEdicion = true;
-              break;
-            }
-          }
-        }
-        if (tieneEnOtraEdicion) break;
+      // Buscar por oracle_id usando estado2 (muy rápido)
+      const st2 = getEstadoCarta2(oracleId);
+      const totalQty = st2.qty_en + st2.qty_es;
+      if (totalQty > 0) {
+        tieneEnOtraEdicion = true;
       }
     } else {
       // Si no tenemos oracle_id, buscar por nombre (más lento)
@@ -3152,9 +3942,10 @@ async function verificarCartasEnColeccion(cartas) {
         let encontradaEnCache = false;
         for (const [setKeyCargado, cartasCargadas] of Object.entries(cacheCartasPorSetLang)) {
           for (const c of cartasCargadas) {
-            if (normalizarTexto(c.nombre) === nombreNorm) {
-              const st = getEstadoCarta(c.id);
-              if (st.qty > 0) {
+            if (normalizarTexto(c.nombre) === nombreNorm && c.oracle_id) {
+              const st2 = getEstadoCarta2(c.oracle_id);
+              const totalQty = st2.qty_en + st2.qty_es;
+              if (totalQty > 0) {
                 encontradaEnCache = true;
                 break;
               }
@@ -3168,10 +3959,13 @@ async function verificarCartasEnColeccion(cartas) {
           try {
             const todasLasVersiones = await scrySearchPrintsByName(carta.nombre);
             for (const version of todasLasVersiones) {
-              const st = getEstadoCarta(version.id);
-              if (st.qty > 0) {
-                encontradaEnCache = true;
-                break;
+              if (version.oracle_id) {
+                const st2 = getEstadoCarta2(version.oracle_id);
+                const totalQty = st2.qty_en + st2.qty_es;
+                if (totalQty > 0) {
+                  encontradaEnCache = true;
+                  break;
+                }
               }
             }
           } catch (error) {
@@ -3434,10 +4228,13 @@ async function renderCartaDeckImagen(carta, posicion, tipo) {
   const imagenUrl = cartaCatalogo?._img || '';
   
   // Obtener cantidad real de la colección
-  const st = cartaCatalogo ? getEstadoCarta(cartaCatalogo.id) : { qty: 0, foilQty: 0 };
-  const cantidadMostrar = st.qty;
+  const st2 = cartaCatalogo && cartaCatalogo.oracle_id 
+    ? getEstadoCarta2(cartaCatalogo.oracle_id) 
+    : { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0 };
+  // Por ahora solo mostramos EN
+  const cantidadMostrar = st2.qty_en;
   
-  const cartaId = cartaCatalogo?.id || `${carta.set}-${carta.numero}`;
+  const oracleId = cartaCatalogo?.oracle_id || '';
   
   return `
     <div class="carta-item ${cantidadMostrar > 0 ? 'has-qty' : ''}">
@@ -3469,16 +4266,16 @@ async function renderCartaDeckImagen(carta, posicion, tipo) {
         <div class="control-fila">
           <span class="lbl">Cantidad</span>
           <div class="stepper">
-            <button class="btn-step btn-qty-minus-deck" data-id="${cartaId}" ${cantidadMostrar <= 0 ? "disabled" : ""}>−</button>
+            <button class="btn-step btn-qty-minus-deck" data-oracle="${oracleId}" ${cantidadMostrar <= 0 ? "disabled" : ""}>−</button>
             <input
               type="number"
               class="inp-num inp-qty-deck"
-              data-id="${cartaId}"
+              data-oracle="${oracleId}"
               min="0"
               max="999"
               value="${cantidadMostrar}"
             />
-            <button class="btn-step btn-qty-plus-deck" data-id="${cartaId}">+</button>
+            <button class="btn-step btn-qty-plus-deck" data-oracle="${oracleId}">+</button>
           </div>
         </div>
       </div>
@@ -3518,9 +4315,11 @@ function wireControlesDeckImagenes() {
   // Controles de cantidad
   cont.querySelectorAll(".btn-qty-minus-deck").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setQty(id, st.qty - 1);
+      const oracleId = btn.dataset.oracle;
+      if (!oracleId) return;
+      const st2 = getEstadoCarta2(oracleId);
+      // Por ahora solo EN
+      setQtyLang(oracleId, "en", st2.qty_en - 1);
       renderDeckCartas();
       renderColecciones();
     });
@@ -3528,9 +4327,10 @@ function wireControlesDeckImagenes() {
 
   cont.querySelectorAll(".btn-qty-plus-deck").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.id;
-      const st = getEstadoCarta(id);
-      setQty(id, st.qty + 1);
+      const oracleId = btn.dataset.oracle;
+      if (!oracleId) return;
+      const st2 = getEstadoCarta2(oracleId);
+      setQtyLang(oracleId, "en", st2.qty_en + 1);
       renderDeckCartas();
       renderColecciones();
     });
@@ -3538,8 +4338,9 @@ function wireControlesDeckImagenes() {
 
   cont.querySelectorAll(".inp-qty-deck").forEach(inp => {
     inp.addEventListener("change", () => {
-      const id = inp.dataset.id;
-      setQty(id, inp.value);
+      const oracleId = inp.dataset.oracle;
+      if (!oracleId) return;
+      setQtyLang(oracleId, "en", inp.value);
       renderDeckCartas();
       renderColecciones();
     });
@@ -3652,10 +4453,11 @@ async function marcarCartaDeck(nombre, set, numero) {
   const listaSet = cartasDeSetKey(setKey);
   const carta = listaSet.find(c => c.numero === numero);
   
-  if (carta) {
-    const st = getEstadoCarta(carta.id);
-    if (st.qty === 0) {
-      setQty(carta.id, 1);
+  if (carta && carta.oracle_id) {
+    const st2 = getEstadoCarta2(carta.oracle_id);
+    if (st2.qty_en === 0) {
+      // Por ahora solo EN
+      setQtyLang(carta.oracle_id, "en", 1);
       renderColecciones();
     }
   }
@@ -3912,22 +4714,8 @@ if (btnStatsRecalcular) {
     });
   }
 
-  // Cambiar idioma dentro del set
-  const btnSetLangEn = document.getElementById("btnSetLangEn");
-  if (btnSetLangEn) {
-    btnSetLangEn.addEventListener("click", async () => {
-      if (!setActualCode) return;
-      await abrirSet(`${setActualCode}__en`);
-    });
-  }
-
-  const btnSetLangEs = document.getElementById("btnSetLangEs");
-  if (btnSetLangEs) {
-    btnSetLangEs.addEventListener("click", async () => {
-      if (!setActualCode) return;
-      await abrirSet(`${setActualCode}__es`);
-    });
-  }
+  // Toggle de idioma eliminado - ya no es necesario
+  // Ahora siempre cargamos EN pero mostramos cantidades de ambos idiomas usando estado2
 
   // Autocompletar colección - Toggle desplegable
   const btnToggleAutocompletar = document.getElementById("btnToggleAutocompletar");
@@ -4211,10 +4999,11 @@ if (btnStatsRecalcular) {
                 const listaSet = cartasDeSetKey(setKey);
                 const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
                 
-                if (cartaCatalogo) {
-                  const st = getEstadoCarta(cartaCatalogo.id);
-                  if (st.qty > 0) {
-                    setQty(cartaCatalogo.id, st.qty - 1);
+                if (cartaCatalogo && cartaCatalogo.oracle_id) {
+                  const st2 = getEstadoCarta2(cartaCatalogo.oracle_id);
+                  // Por ahora solo EN
+                  if (st2.qty_en > 0) {
+                    setQtyLang(cartaCatalogo.oracle_id, "en", st2.qty_en - 1);
                     cartasEliminadas++;
                   }
                 }
@@ -4252,9 +5041,10 @@ if (btnStatsRecalcular) {
                   const listaSet = cartasDeSetKey(setKey);
                   const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
                   
-                  if (cartaCatalogo) {
-                    const st = getEstadoCarta(cartaCatalogo.id);
-                    setQty(cartaCatalogo.id, st.qty + 1);
+                  if (cartaCatalogo && cartaCatalogo.oracle_id) {
+                    const st2 = getEstadoCarta2(cartaCatalogo.oracle_id);
+                    // Por ahora solo EN
+                    setQtyLang(cartaCatalogo.oracle_id, "en", st2.qty_en + 1);
                   }
                 }
               }
@@ -4398,7 +5188,13 @@ async function init() {
 
   // Enforce light theme
   applyTheme();
+  
+  // Cargar estado v2 primero (incluye cache de oracle_id)
+  cargarEstado2();
+  
+  // Cargar estado legacy para compatibilidad/migración
   cargarEstado();
+  
   cargarProgresoPorSet();
   cargarFiltrosColecciones();
   cargarHiddenEmptySets();
@@ -4471,6 +5267,17 @@ async function init() {
   } finally {
     catalogoListo = true;
     renderColecciones();
+    
+    // ✅ Iniciar migración progresiva de estado legacy a estado2
+    // Esto se hace después de cargar el catálogo porque necesitamos el índice de cartas
+    if (Object.keys(estadoLegacyById).length > 0) {
+      console.log("Iniciando migración progresiva de estado legacy...");
+      setTimeout(() => {
+        migrarEstadoLegacy().catch(err => {
+          console.error("Error en migración de estado:", err);
+        });
+      }, 2000); // Esperar 2 segundos para no bloquear la UI inicial
+    }
   }
 
   renderResultadosBuscar("");
@@ -4577,7 +5384,14 @@ window.addEventListener("popstate", (event) => {
   manejandoPopstate = true;
   
   // Navegar a la pantalla anterior en el historial interno
-  navegarAtras();
+  const resultado = navegarAtras();
+  
+  // Si navegarAtras devolvió false (no hay más historial), salir de la app
+  if (!resultado && !impedirSalidaApp) {
+    // Permitir que el navegador maneje el retroceso (salir de la app)
+    manejandoPopstate = false;
+    return;
+  }
   
   setTimeout(() => {
     manejandoPopstate = false;

@@ -1717,87 +1717,199 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   background: rgba(0,0,0,.10);
 }
 
-/* Controles */
+/* =========================================================
+   Layout dual EN/ES - Grid responsive
+========================================================= */
+
+/* Contenedor principal de controles */
 .carta-controles {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 12px;
   background: rgba(0,0,0,.12);
   border-radius: 10px;
   border: 1px solid rgba(255,255,255,.08);
 }
 
-.control-fila {
+/* Fila de cantidad (sin título) */
+.control-fila-dual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+/* Bloque de idioma individual (bandera + contador) */
+.control-lang-block {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  min-height: 36px;
 }
 
-.control-fila .lbl {
-  font-size: 12px;
-  color: rgba(0, 0, 0, 0.85);
-  min-width: 60px;
-  font-weight: 600;
+.control-lang-block .flag {
+  font-size: 20px;
+  line-height: 1;
+  min-width: 28px;
+  flex-shrink: 0;
+  text-align: center;
 }
 
-.control-ri {
-  justify-content: flex-start;
-}
-
-.control-ri .chkline {
-  margin-left: auto;
-}
-
-/* Stepper específico del grid de cartas */
-.carta-controles .stepper {
+.control-lang-block .stepper {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
-.carta-controles .btn-step {
-  width: 32px;
-  height: 32px;
+/* Botones +/- con tamaño táctil */
+.control-lang-block .btn-step {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  flex-shrink: 0;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 8px;
   font-weight: bold;
-  font-size: 16px;
+  font-size: 18px;
   background: rgba(255,255,255,0.10);
   border: 1px solid rgba(255,255,255,0.22);
   color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.carta-controles .btn-step:disabled {
+.control-lang-block .btn-step:active {
+  transform: scale(0.95);
+}
+
+.control-lang-block .btn-step:disabled {
   opacity: 0.35;
+  cursor: not-allowed;
 }
 
-.carta-controles .inp-num {
-  width: 50px !important;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 10px;
-  font-size: 14px;
+.control-lang-block .inp-num {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
   text-align: center;
   background: rgba(0,0,0,0.22);
   border: 1px solid rgba(255,255,255,0.18);
   color: var(--text);
+  appearance: textfield;
+  -moz-appearance: textfield;
+  -webkit-appearance: textfield;
 }
 
-.carta-controles .chkline {
-  display: inline-flex;
+.control-lang-block .inp-num::-webkit-outer-spin-button,
+.control-lang-block .inp-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+/* Sección de Foil */
+.control-foil-section {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.foil-title {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.85);
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* Ri dual con checkboxes */
+.control-ri-dual {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
   align-items: center;
-  gap: 6px;
 }
 
-.carta-controles input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
+.control-ri-dual .lbl {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.85);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.ri-checkboxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.ri-checkboxes .chkline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.ri-checkboxes .flag {
+  font-size: 18px;
+  line-height: 1;
+  min-width: 28px;
+  flex-shrink: 0;
+}
+
+.ri-checkboxes input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   RESPONSIVE: Móvil - Apilar EN/ES verticalmente
+========================================================= */
+@media (max-width: 767px) {
+  .control-fila-dual {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  
+  .ri-checkboxes {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  
+  /* Aumentar tamaño táctil en móvil */
+  .control-lang-block .btn-step {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+  }
+  
+  .control-lang-block .inp-num {
+    height: 40px;
+    font-size: 16px;
+  }
+  
+  .control-lang-block {
+    min-height: 40px;
+  }
+  
+  .ri-checkboxes input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
 }
 
 /* Progreso set */
