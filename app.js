@@ -2,6 +2,15 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
+// Debug de viewport para móvil (verificar versión cargada)
+console.log("🔧 ManaCodex v0.7 - Viewport Debug:", {
+  innerWidth: window.innerWidth,
+  innerHeight: window.innerHeight,
+  devicePixelRatio: window.devicePixelRatio,
+  userAgent: navigator.userAgent,
+  cacheVersion: "20260112b"
+});
+
 // Función para normalizar texto (remover acentos)
 function normalizarTexto(texto) {
   return (texto || "")

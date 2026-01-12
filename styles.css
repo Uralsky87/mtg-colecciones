@@ -2,6 +2,15 @@
    Base
 ========================= */
 
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont,
                "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
@@ -9,10 +18,6 @@ body {
   margin: 0 auto;
   padding: 18px;
   overflow-x: hidden;
-  box-sizing: border-box;
-}
-
-* {
   box-sizing: border-box;
 }
 
@@ -1611,6 +1616,8 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 12px;
+  width: 100%;
+  max-width: 100%;
 }
 
 @media (max-width: 1000px) {
@@ -1640,6 +1647,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   flex-direction: column;
   gap: 10px;
   box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
 }
@@ -1661,6 +1669,9 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   min-height: 32px;
   position: relative;
   padding-right: 40px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .carta-header .led-indicator {
@@ -1710,6 +1721,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 
 .carta-imagen {
   width: 100%;
+  max-width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
@@ -1740,6 +1752,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   border-radius: 10px;
   border: 1px solid rgba(255,255,255,.08);
   box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
 }
@@ -1814,10 +1827,11 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: rgba(74, 158, 255, 0.25);
-  border: 1px solid rgba(74, 158, 255, 0.4);
+  background: rgba(74, 158, 255, 0.35); /* Más opaco para móvil */
+  border: 2px solid rgba(74, 158, 255, 0.6); /* Borde más visible */
   border-radius: 999px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2),
+              0 0 0 1px rgba(74, 158, 255, 0.3); /* Glow sutil */
   transform: scale(1.05);
   transition: all 150ms ease;
 }
@@ -2014,25 +2028,31 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
    RESPONSIVE: Móvil
 ========================================================= */
 @media (max-width: 767px) {
+  body {
+    padding: 12px;
+  }
+  
   .carta-item {
-    padding: 10px;
+    padding: 8px;
   }
   
   .carta-controles {
-    padding: 10px;
+    padding: 8px;
     gap: 6px;
   }
   
   /* Botón de idioma más compacto en móvil pero táctil */
   .btn-lang-switch {
     gap: 6px;
-    padding: 8px 10px;
+    padding: 8px 12px;
     min-height: 48px; /* Mayor área táctil en móvil */
   }
   
   .lang-badge.lang-active {
     padding: 6px 12px;
     gap: 6px;
+    background: rgba(74, 158, 255, 0.4); /* Aún más visible en móvil */
+    border: 2px solid rgba(74, 158, 255, 0.7);
   }
   
   .flag-icon {
@@ -2042,6 +2062,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   
   .lang-badge.lang-active .lang-label {
     font-size: 13px;
+    font-weight: 700;
     letter-spacing: 0.5px;
   }
   
@@ -2051,7 +2072,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   
   .lang-panel {
     gap: 8px;
-    padding: 0 1px;
+    padding: 0;
   }
   
   .control-fila {
@@ -2079,7 +2100,7 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     height: 38px;
     font-size: 15px;
     padding: 0 4px;
-    min-width: 48px;
+    min-width: 0;
     width: 100%;
     max-width: 60px;
   }
@@ -2088,16 +2109,61 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
     width: 22px;
     height: 22px;
   }
+}
+
+/* Móviles pequeños: reducir aún más padding */
+@media (max-width: 480px) {
+  body {
+    padding: 8px;
+  }
+  
+  .cartas-grid {
+    gap: 12px;
+  }
+  
+  .carta-item {
+    padding: 6px;
+    gap: 8px;
+  }
+  
+  .carta-controles {
+    padding: 6px;
+    gap: 4px;
+  }
   
   .btn-lang-switch {
     padding: 6px 10px;
-    font-size: 16px;
-    min-width: 90px;
   }
   
-  .btn-lang-switch .lang-icon-left,
-  .btn-lang-switch .lang-icon-right {
-    font-size: 18px;
+  .lang-badge.lang-active {
+    padding: 5px 10px;
+    gap: 5px;
+  }
+  
+  .control-fila {
+    gap: 4px;
+  }
+  
+  .control-fila .lbl {
+    min-width: 45px;
+    font-size: 11px;
+  }
+  
+  .control-fila .stepper {
+    gap: 2px;
+  }
+  
+  .control-fila .btn-step {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+  }
+  
+  .control-fila .inp-num {
+    height: 36px;
+    font-size: 14px;
+    padding: 0 2px;
+    max-width: 55px;
   }
 }
 
