@@ -1468,19 +1468,19 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
 .coleccion-item::before {
   content: '';
   position: absolute;
-  bottom: 0;
   left: 0;
-  right: 0;
-  height: var(--progress-height, 0%);
-  background: linear-gradient(to top, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.08));
-  border-radius: 0 0 14px 14px;
+  top: 0;
+  bottom: 0;
+  width: var(--progress-height, 0%);
+  background: linear-gradient(to right, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.08));
+  border-radius: 14px 0 0 14px;
   pointer-events: none;
-  transition: height 0.6s ease-out, background 0.3s ease;
+  transition: width 0.6s ease-out, background 0.3s ease;
   z-index: 0;
 }
 
 .coleccion-item[data-progress="100"]::before {
-  background: linear-gradient(to top, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.08));
+  background: linear-gradient(to right, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.08));
 }
 
 .coleccion-item > * {
@@ -1515,11 +1515,11 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   }
 
   .coleccion-item:hover::before {
-    background: linear-gradient(to top, rgba(59, 130, 246, 0.3), rgba(59, 130, 246, 0.12));
+    background: linear-gradient(to right, rgba(59, 130, 246, 0.3), rgba(59, 130, 246, 0.12));
   }
 
   .coleccion-item[data-progress="100"]:hover::before {
-    background: linear-gradient(to top, rgba(34, 197, 94, 0.3), rgba(34, 197, 94, 0.12));
+    background: linear-gradient(to right, rgba(34, 197, 94, 0.3), rgba(34, 197, 94, 0.12));
   }
 
   .coleccion-item:hover::after {
@@ -3576,5 +3576,172 @@ body{
     background: rgba(255, 255, 255, 1) !important;
     border: 1px solid rgba(0, 0, 0, 0.12) !important;
     color: #000 !important;
+  }
+}
+
+/* ========================
+   Mostrar como: controles de vista
+======================== */
+
+.mostrar-como-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.mostrar-como-label {
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.mostrar-como-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mostrar-como-item input[type="radio"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+.mostrar-como-item span {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+/* ========================
+   Vista Símbolo (por defecto)
+======================== */
+
+#listaColecciones.vista-simbolo {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+/* ========================
+   Vista Lista
+======================== */
+
+#listaColecciones.vista-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.coleccion-item-lista {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  min-height: 60px;
+}
+
+.coleccion-item-lista::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--progress-width, 0%);
+  background: linear-gradient(to right, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.08));
+  border-radius: 8px 0 0 8px;
+  pointer-events: none;
+  transition: width 0.6s ease-out, background 0.3s ease;
+  z-index: 0;
+}
+
+.coleccion-item-lista[data-progress="100"]::before {
+  background: linear-gradient(to right, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.08));
+}
+
+.coleccion-item-lista > * {
+  position: relative;
+  z-index: 1;
+}
+
+.coleccion-lista-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.coleccion-lista-icon .set-icon-lista {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.coleccion-lista-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.coleccion-lista-nombre {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.coleccion-lista-fecha {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.coleccion-lista-progress {
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.coleccion-lista-pct {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Hover effects for lista view */
+@media (hover: hover) and (pointer: fine) {
+  .coleccion-item-lista:hover {
+    background: #fafafa;
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(47, 108, 255, 0.08);
+  }
+
+  .coleccion-item-lista:hover::before {
+    background: linear-gradient(to right, rgba(59, 130, 246, 0.3), rgba(59, 130, 246, 0.12));
+  }
+
+  .coleccion-item-lista[data-progress="100"]:hover::before {
+    background: linear-gradient(to right, rgba(34, 197, 94, 0.3), rgba(34, 197, 94, 0.12));
+  }
+
+  .coleccion-item-lista:hover .coleccion-lista-icon {
+    transform: scale(1.1);
   }
 }

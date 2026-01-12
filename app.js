@@ -3,12 +3,12 @@
 // ===============================
 
 // Debug de viewport para móvil (verificar versión cargada)
-console.log("🔧 ManaCodex v0.7 - Viewport Debug:", {
+console.log("🔧 ManaCodex v0.71 - Viewport Debug:", {
   innerWidth: window.innerWidth,
   innerHeight: window.innerHeight,
   devicePixelRatio: window.devicePixelRatio,
   userAgent: navigator.userAgent,
-  cacheVersion: "20260112b"
+  cacheVersion: "20260112c"
 });
 
 // Función para normalizar texto (remover acentos)
@@ -2742,6 +2742,8 @@ let filtroIdiomaColecciones = "all"; // "all" | "en" | "es"
 
 let filtroTextoColecciones = ""; // texto del buscador
 
+let vistaColecciones = "simbolo"; // "simbolo" | "lista"
+
 const LS_FILTERS_KEY = "mtg_colecciones_filtros_v1";
 
 
@@ -2793,6 +2795,10 @@ function aplicarUIFiltrosColecciones() {
 
   const inputBuscarCol = document.getElementById("inputBuscarColecciones");
   if (inputBuscarCol) inputBuscarCol.value = filtroTextoColecciones || "";
+
+  // Establecer el radio de vista correcto
+  const radioVista = document.querySelector(`input[name="vistaColecciones"][value="${vistaColecciones}"]`);
+  if (radioVista) radioVista.checked = true;
 }
 
 // ===============================
@@ -2897,6 +2903,10 @@ function renderColecciones() {
     return;
   }
 
+  // Aplicar clase según la vista
+  cont.classList.remove("vista-simbolo", "vista-lista");
+  cont.classList.add(vistaColecciones === "lista" ? "vista-lista" : "vista-simbolo");
+
   let html = "";
   for (const s of sets) {
     const pEn = progresoDeColeccion(`${s.code}__en`);
@@ -2936,7 +2946,30 @@ function renderColecciones() {
   ? `<img class="set-icon" src="${s.icon_svg_uri}" alt="${s.nombre}" loading="lazy" />`
   : `<div class="set-icon" style="background: rgba(0,0,0,.15); border-radius: 50%;"></div>`;
 
-    html += `
+    // Icono para vista lista (más pequeño)
+    const iconHtmlLista = s.icon_svg_uri
+  ? `<img class="set-icon-lista" src="${s.icon_svg_uri}" alt="${s.nombre}" loading="lazy" />`
+  : `<div class="set-icon-lista" style="background: rgba(0,0,0,.15); border-radius: 50%;"></div>`;
+
+    if (vistaColecciones === "lista") {
+      // Vista lista: un item por línea
+      html += `
+  <div class="coleccion-item-lista" data-code="${s.code}" data-progress="${progresoPromedio}">
+    <div class="coleccion-lista-icon">
+      ${iconHtmlLista}
+    </div>
+    <div class="coleccion-lista-info">
+      <div class="coleccion-lista-nombre">${s.nombre}</div>
+      ${fechaTxt ? `<div class="coleccion-lista-fecha">${fechaTxt}</div>` : ""}
+    </div>
+    <div class="coleccion-lista-progress">
+      <span class="coleccion-lista-pct">${pctEn}</span>
+    </div>
+  </div>
+`;
+    } else {
+      // Vista símbolo: la original
+      html += `
   <div class="coleccion-item" data-code="${s.code}" data-progress="${progresoPromedio}">
     ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
     <div class="coleccion-titulo">
@@ -2946,6 +2979,7 @@ function renderColecciones() {
     <div class="badge"><span class="pct-lang">${pctEn}</span> EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt} <span class="pct-lang">${pctEs}</span></div>
   </div>
 `;
+    }
   }
 
   cont.innerHTML = html;
@@ -2953,7 +2987,12 @@ function renderColecciones() {
   cont.querySelectorAll("[data-code]").forEach(item => {
     // Aplicar altura de progreso visual
     const progress = item.dataset.progress || 0;
-    item.style.setProperty('--progress-height', `${progress}%`);
+    
+    if (vistaColecciones === "lista") {
+      item.style.setProperty('--progress-width', `${progress}%`);
+    } else {
+      item.style.setProperty('--progress-height', `${progress}%`);
+    }
     
     item.addEventListener("click", () => {
       const code = item.dataset.code;
@@ -3009,7 +3048,8 @@ function guardarStatsSnapshot(snap, { markDirty = false } = {}) {
 function guardarFiltrosColecciones() {
   const data = {
     lang: filtroIdiomaColecciones,
-    texto: filtroTextoColecciones
+    texto: filtroTextoColecciones,
+    vista: vistaColecciones
   };
   localStorage.setItem(LS_FILTERS_KEY, JSON.stringify(data));
   sbMarkDirty(); // <-- AÑADIR
@@ -3027,6 +3067,9 @@ function cargarFiltrosColecciones() {
       }
       if (typeof data.texto === "string") {
         filtroTextoColecciones = data.texto.trim().toLowerCase();
+      }
+      if (data.vista === "lista" || data.vista === "simbolo") {
+        vistaColecciones = data.vista;
       }
     }
   } catch {
@@ -4983,6 +5026,15 @@ if (btnStatsRecalcular) {
       inputBuscarCol.focus();
     });
   }
+
+  // Cambio de vista en colecciones
+  document.querySelectorAll("input[name='vistaColecciones']").forEach(radio => {
+    radio.addEventListener("change", () => {
+      vistaColecciones = radio.value;
+      guardarFiltrosColecciones();
+      renderColecciones();
+    });
+  });
 
   // Buscador dentro del SET
   const inputBuscarEnSet = document.getElementById("inputBuscarEnSet");
