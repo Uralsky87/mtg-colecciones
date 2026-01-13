@@ -2,7 +2,7 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
-const VERSION = "0.71a";
+const VERSION = "0.71b";
 const JS_URL = (typeof document !== "undefined" && document.currentScript?.src) || "app.js loaded";
 console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
 
@@ -5680,13 +5680,13 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     const url = new URL(window.location.href);
     const noSw = url.searchParams.get("nosw") === "1";
-    const swUrl = "./service-worker.js?v=0.75";
+    const swUrl = "./service-worker.js?v=0.76";
 
     // Limpiar SWs antiguos (incluido sw.js viejo y service-worker.js sin query)
     navigator.serviceWorker.getRegistrations().then(registrations => {
       for (const reg of registrations) {
         const script = reg.active?.scriptURL || "";
-        if (!script.includes("service-worker.js?v=0.75")) {
+        if (!script.includes("service-worker.js?v=0.76")) {
           console.log('[SW] Unregistering old SW', script);
           reg.unregister();
         }
