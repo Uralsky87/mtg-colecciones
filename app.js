@@ -5746,115 +5746,95 @@ window.DEBUG_TOPBTN = new URL(window.location.href).searchParams.get('debugTop')
 
 let topBtnState = {
   btn: null,
-  activeScroller: null,
-  scrollHandler: null,
+  listeners: [],
   installed: false
 };
 
-function isDocScroller(el) {
-  return el === document.scrollingElement || el === document.documentElement || el === document.body;
+const TOPBTN_CANDIDATES = [
+  '#listaColecciones',
+  '#listaCartasSet',
+  '#listaCartasDeck',
+  '#resultadosBuscar',
+  '.pantalla.active',
+  '.pantalla',
+  'main',
+  '#app',
+  '.view',
+  '.screen',
+  '.content'
+];
+
+function dedupe(nodes) {
+  const seen = new Set();
+  const out = [];
+  for (const n of nodes) {
+    if (!n) continue;
+    const key = n === window ? 'window' : n === document ? 'document' : n.nodeType + ':' + n.tagName + ':' + (n.id || '') + ':' + (n.className || '');
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(n);
+    }
+  }
+  return out;
 }
 
-function getCurrentScrollTop(el) {
-  if (!el) return 0;
-  
-  if (isDocScroller(el)) {
-    // En móvil, el scroll puede estar en document.body, no en window
-    const fromWindow = window.scrollY || 0;
-    const fromBody = document.body.scrollTop || 0;
-    const fromDocEl = document.documentElement.scrollTop || 0;
-    const top = Math.max(fromWindow, fromBody, fromDocEl);
-    
-    if (window.DEBUG_TOPBTN) {
-      console.log('[TOPBTN] getScrollTop (doc)', { fromWindow, fromBody, fromDocEl, max: top });
-    }
-    
-    return top;
-  }
-  
-  return el.scrollTop || 0;
+function getScrollCandidates() {
+  let nodes = [window, document, document.documentElement, document.body];
+  TOPBTN_CANDIDATES.forEach(sel => {
+    nodes = nodes.concat(Array.from(document.querySelectorAll(sel)));
+  });
+  return dedupe(nodes);
 }
 
-function findScroller() {
-  // En móvil, el scroll suele estar en un elemento contenedor, no en window
-  const activeView = document.querySelector('.pantalla.active');
-  const candidates = [];
+function computeMaxScrollTop() {
+  const fromWindow = window.scrollY || 0;
+  const fromBody = document.body?.scrollTop || 0;
+  const fromDocEl = document.documentElement?.scrollTop || 0;
+  let maxTop = Math.max(fromWindow, fromBody, fromDocEl);
 
-  // Prioriza dentro de vista activa
-  if (activeView) {
-    candidates.push(activeView);
-    const inside = ['#listaColecciones', '#listaCartasSet', '#listaCartasDeck', '#resultadosBuscar'];
-    for (const sel of inside) {
-      const el = activeView.querySelector(sel);
-      if (el) candidates.push(el);
-    }
+  for (const node of TOPBTN_CANDIDATES.flatMap(sel => Array.from(document.querySelectorAll(sel)))) {
+    if (!node) continue;
+    const t = node.scrollTop || 0;
+    if (t > maxTop) maxTop = t;
   }
 
-  candidates.push(...document.querySelectorAll('main, #app, .view, .screen, .content, .pantalla.active'));
-  candidates.push(document.body);
-  candidates.push(document.documentElement);
-  candidates.push(document.scrollingElement);
-
-  // Busca el primer elemento scrolleable
-  for (const el of candidates) {
-    if (!el) continue;
-    const style = window.getComputedStyle(el);
-    const oy = style.overflowY;
-    if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 5) {
-      return el;
-    }
+  if (window.DEBUG_TOPBTN) {
+    console.log('[TOPBTN] computeMaxScrollTop', { fromWindow, fromBody, fromDocEl, maxTop });
   }
 
-  // Fallback: en móvil, intenta body primero, luego window
-  return document.body.scrollHeight > window.innerHeight ? document.body : (document.documentElement.scrollHeight > window.innerHeight ? document.documentElement : window);
+  return maxTop;
 }
 
 function updateTopBtnVisibility() {
   const btn = topBtnState.btn;
   if (!btn) return;
-  const top = getCurrentScrollTop(topBtnState.activeScroller);
+  const top = computeMaxScrollTop();
   const shouldShow = top > 50; // Umbral bajo para fácil debug
-  
+
   if (window.DEBUG_TOPBTN) {
     console.log('[TOPBTN] scroll event', { scrollTop: top, shouldShow });
   }
-  
+
   btn.classList.toggle('is-visible', shouldShow);
 }
 
-function bindTopBtnListener(scroller) {
-  if (topBtnState.scrollHandler && topBtnState.activeScroller) {
-    if (isDocScroller(topBtnState.activeScroller)) {
-      window.removeEventListener('scroll', topBtnState.scrollHandler);
-      document.removeEventListener('scroll', topBtnState.scrollHandler);
-      document.body.removeEventListener('scroll', topBtnState.scrollHandler);
-      document.documentElement.removeEventListener('scroll', topBtnState.scrollHandler);
-    } else {
-      topBtnState.activeScroller.removeEventListener('scroll', topBtnState.scrollHandler);
-    }
+function unbindTopBtnListeners() {
+  for (const { target, handler } of topBtnState.listeners) {
+    target.removeEventListener('scroll', handler);
   }
-
-  topBtnState.activeScroller = scroller;
-  topBtnState.scrollHandler = () => updateTopBtnVisibility();
-
-  if (isDocScroller(scroller)) {
-    // En móvil, attachea a múltiples elementos para capturar scroll en cualquier lugar
-    window.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
-    document.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
-    document.body.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
-    document.documentElement.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
-  } else {
-    scroller.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
-  }
-
-  updateTopBtnVisibility();
+  topBtnState.listeners = [];
 }
 
-function updateScrollerOnViewChange() {
-  const newScroller = findScroller();
-  if (newScroller !== topBtnState.activeScroller) {
-    bindTopBtnListener(newScroller);
+function bindTopBtnListeners() {
+  unbindTopBtnListeners();
+  const handler = () => updateTopBtnVisibility();
+  const targets = getScrollCandidates();
+  for (const t of targets) {
+    t.addEventListener('scroll', handler, { passive: true });
+    topBtnState.listeners.push({ target: t, handler });
   }
+  // Estado inicial
+  updateTopBtnVisibility();
 }
 
 function installScrollTopButton() {
@@ -5876,27 +5856,25 @@ function installScrollTopButton() {
     btn.title = '[DEBUG] Botón forzado visible';
   }
 
-  // Click handler
+  // Click handler: sube todos los candidatos
   btn.addEventListener('click', () => {
-    const scroller = topBtnState.activeScroller || findScroller();
-    console.log('[TOPBTN] click', { scrollerTag: scroller?.tagName, isDoc: isDocScroller(scroller) });
-    
-    if (isDocScroller(scroller)) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      document.documentElement.scrollTop = 0; // fallback instantáneo
-      document.body.scrollTop = 0; // fallback IE
-    } else {
-      scroller.scrollTo({ top: 0, behavior: 'smooth' });
-      scroller.scrollTop = 0; // fallback instantáneo
+    console.log('[TOPBTN] click');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+
+    for (const node of getScrollCandidates()) {
+      if (node && node.scrollTo) node.scrollTo({ top: 0, behavior: 'smooth' });
+      if (node) node.scrollTop = 0;
     }
   });
 
-  // Inicializa scroller
-  updateScrollerOnViewChange();
+  // Inicializa listeners
+  bindTopBtnListeners();
 
   // Observa cambios de DOM
   const mutObserver = new MutationObserver(() => {
-    setTimeout(updateScrollerOnViewChange, 60);
+    setTimeout(bindTopBtnListeners, 80);
   });
   mutObserver.observe(document.body, {
     attributes: true,
@@ -5906,18 +5884,15 @@ function installScrollTopButton() {
   });
 
   // Escucha resize/orientación
-  window.addEventListener('resize', () => updateScrollerOnViewChange());
-  window.addEventListener('orientationchange', () => updateScrollerOnViewChange());
+  window.addEventListener('resize', () => bindTopBtnListeners());
+  window.addEventListener('orientationchange', () => bindTopBtnListeners());
 
   // Safety interval
-  setInterval(() => updateScrollerOnViewChange(), 3000);
+  setInterval(() => bindTopBtnListeners(), 3000);
 
   // Log inicial
   console.log('[TOPBTN] mounted', {
     btnExists: !!btn,
-    scrollerTag: topBtnState.activeScroller?.tagName,
-    scrollerId: topBtnState.activeScroller?.id,
-    overflowY: window.getComputedStyle(topBtnState.activeScroller).overflowY,
     debugMode: window.DEBUG_TOPBTN
   });
 }
