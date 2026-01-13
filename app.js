@@ -5677,6 +5677,17 @@ if ("serviceWorker" in navigator) {
     const url = new URL(window.location.href);
     const noSw = url.searchParams.get("nosw") === "1";
 
+    // Limpiar SWs antiguos (si existen) para forzar actualización
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      for (const reg of registrations) {
+        // Si la scope no es la correcta (p.ej., apunta a sw.js antiguo), desregistra
+        if (reg.scope.includes('sw.js') || reg.active?.scriptURL.includes('sw.js')) {
+          console.log('[SW] Unregistering old sw.js registration');
+          reg.unregister();
+        }
+      }
+    });
+
     if (noSw) {
       navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
       return; // No registrar SW en modo bypass
