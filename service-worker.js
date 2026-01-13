@@ -1,4 +1,4 @@
-const CACHE = "mtg-colecciones-v0.69";
+const CACHE = "mtg-colecciones-v0.71";
 const ASSETS = [
   "/mtg-colecciones/",
   "/mtg-colecciones/index.html",
@@ -10,7 +10,6 @@ const ASSETS = [
   "/mtg-colecciones/icons/maskable-192.png",
   "/mtg-colecciones/icons/maskable-512.png",
   "/mtg-colecciones/icons/Botonmenu.png",
-  "/mtg-colecciones/icons/Fondosmenus.png",
   "/mtg-colecciones/icons/manacodex.png",
   "/mtg-colecciones/icons/flecharegresar.png"
 ];
@@ -22,16 +21,30 @@ self.addEventListener("message", (event) => {
   }
 });
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+self.addEventListener("install", (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    const results = await Promise.allSettled(
+      ASSETS.map(async (url) => {
+        try {
+          await cache.add(url);
+        } catch (err) {
+          console.warn("SW precache failed:", url, err && (err.message || err));
+        }
+      })
+    );
+    // Asegura activación inmediata del SW nuevo
+    self.skipWaiting();
+  })());
 });
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
-  );
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    // Toma control de clientes abiertos sin esperar recarga
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("fetch", (e) => {
@@ -40,9 +53,9 @@ self.addEventListener("fetch", (e) => {
 
   e.respondWith(
     caches.match(req).then((hit) => hit || fetch(req).then((res) => {
-      const copy = res.clone();
-      // Cachea solo tu app (no Scryfall)
-      if (new URL(req.url).origin === location.origin) {
+      // Cachea solo si respuesta OK y es del mismo origen
+      if (res && res.ok && new URL(req.url).origin === location.origin) {
+        const copy = res.clone();
         caches.open(CACHE).then(c => c.put(req, copy));
       }
       return res;
