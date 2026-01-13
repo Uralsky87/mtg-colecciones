@@ -5746,17 +5746,30 @@ function isDocScroller(el) {
 
 function getCurrentScrollTop(el) {
   if (!el) return 0;
+  
   if (isDocScroller(el)) {
-    return window.scrollY || document.scrollingElement?.scrollTop || 0;
+    // En móvil, el scroll puede estar en document.body, no en window
+    const fromWindow = window.scrollY || 0;
+    const fromBody = document.body.scrollTop || 0;
+    const fromDocEl = document.documentElement.scrollTop || 0;
+    const top = Math.max(fromWindow, fromBody, fromDocEl);
+    
+    if (window.DEBUG_TOPBTN) {
+      console.log('[TOPBTN] getScrollTop (doc)', { fromWindow, fromBody, fromDocEl, max: top });
+    }
+    
+    return top;
   }
+  
   return el.scrollTop || 0;
 }
 
 function findScroller() {
-  // Busca dentro de la vista activa primero
+  // En móvil, el scroll suele estar en un elemento contenedor, no en window
   const activeView = document.querySelector('.pantalla.active');
   const candidates = [];
 
+  // Prioriza dentro de vista activa
   if (activeView) {
     candidates.push(activeView);
     const inside = ['#listaColecciones', '#listaCartasSet', '#listaCartasDeck', '#resultadosBuscar'];
@@ -5768,8 +5781,10 @@ function findScroller() {
 
   candidates.push(...document.querySelectorAll('main, #app, .view, .screen, .content, .pantalla.active'));
   candidates.push(document.body);
+  candidates.push(document.documentElement);
   candidates.push(document.scrollingElement);
 
+  // Busca el primer elemento scrolleable
   for (const el of candidates) {
     if (!el) continue;
     const style = window.getComputedStyle(el);
@@ -5779,20 +5794,30 @@ function findScroller() {
     }
   }
 
-  return document.scrollingElement || document.documentElement || document.body;
+  // Fallback: en móvil, intenta body primero, luego window
+  return document.body.scrollHeight > window.innerHeight ? document.body : (document.documentElement.scrollHeight > window.innerHeight ? document.documentElement : window);
 }
 
 function updateTopBtnVisibility() {
   const btn = topBtnState.btn;
   if (!btn) return;
   const top = getCurrentScrollTop(topBtnState.activeScroller);
-  btn.classList.toggle('is-visible', top > 200);
+  const shouldShow = top > 50; // Umbral bajo para fácil debug
+  
+  if (window.DEBUG_TOPBTN) {
+    console.log('[TOPBTN] scroll event', { scrollTop: top, shouldShow });
+  }
+  
+  btn.classList.toggle('is-visible', shouldShow);
 }
 
 function bindTopBtnListener(scroller) {
   if (topBtnState.scrollHandler && topBtnState.activeScroller) {
     if (isDocScroller(topBtnState.activeScroller)) {
       window.removeEventListener('scroll', topBtnState.scrollHandler);
+      document.removeEventListener('scroll', topBtnState.scrollHandler);
+      document.body.removeEventListener('scroll', topBtnState.scrollHandler);
+      document.documentElement.removeEventListener('scroll', topBtnState.scrollHandler);
     } else {
       topBtnState.activeScroller.removeEventListener('scroll', topBtnState.scrollHandler);
     }
@@ -5802,7 +5827,11 @@ function bindTopBtnListener(scroller) {
   topBtnState.scrollHandler = () => updateTopBtnVisibility();
 
   if (isDocScroller(scroller)) {
+    // En móvil, attachea a múltiples elementos para capturar scroll en cualquier lugar
     window.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
+    document.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
+    document.body.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
+    document.documentElement.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
   } else {
     scroller.addEventListener('scroll', topBtnState.scrollHandler, { passive: true });
   }
@@ -5839,10 +5868,15 @@ function installScrollTopButton() {
   // Click handler
   btn.addEventListener('click', () => {
     const scroller = topBtnState.activeScroller || findScroller();
+    console.log('[TOPBTN] click', { scrollerTag: scroller?.tagName, isDoc: isDocScroller(scroller) });
+    
     if (isDocScroller(scroller)) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      document.documentElement.scrollTop = 0; // fallback instantáneo
+      document.body.scrollTop = 0; // fallback IE
     } else {
       scroller.scrollTo({ top: 0, behavior: 'smooth' });
+      scroller.scrollTop = 0; // fallback instantáneo
     }
   });
 
