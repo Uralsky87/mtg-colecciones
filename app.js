@@ -2,7 +2,7 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
-const VERSION = "0.71";
+const VERSION = "0.71a";
 console.log("ManaCodex VERSION", VERSION, "JS URL", (typeof import !== "undefined" && import.meta?.url) || "app.js loaded");
 
 // Debug de viewport para móvil (verificar versión cargada)
@@ -5679,13 +5679,14 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     const url = new URL(window.location.href);
     const noSw = url.searchParams.get("nosw") === "1";
+    const swUrl = "./service-worker.js?v=0.75";
 
-    // Limpiar SWs antiguos (si existen) para forzar actualización
+    // Limpiar SWs antiguos (incluido sw.js viejo y service-worker.js sin query)
     navigator.serviceWorker.getRegistrations().then(registrations => {
       for (const reg of registrations) {
-        // Si la scope no es la correcta (p.ej., apunta a sw.js antiguo), desregistra
-        if (reg.scope.includes('sw.js') || reg.active?.scriptURL.includes('sw.js')) {
-          console.log('[SW] Unregistering old sw.js registration');
+        const script = reg.active?.scriptURL || "";
+        if (!script.includes("service-worker.js?v=0.75")) {
+          console.log('[SW] Unregistering old SW', script);
           reg.unregister();
         }
       }
@@ -5696,7 +5697,7 @@ if ("serviceWorker" in navigator) {
       return; // No registrar SW en modo bypass
     }
 
-    navigator.serviceWorker.register("./service-worker.js").then(reg => {
+    navigator.serviceWorker.register(swUrl).then(reg => {
       // Detectar actualizaciones
       reg.addEventListener("updatefound", () => {
         const newWorker = reg.installing;

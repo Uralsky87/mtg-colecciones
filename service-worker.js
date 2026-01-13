@@ -1,4 +1,4 @@
-const CACHE = "mtg-colecciones-v0.74";
+const CACHE = "mtg-colecciones-v0.75";
 const ASSETS = [
   "./",
   "./index.html",
@@ -24,16 +24,18 @@ self.addEventListener("message", (event) => {
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    const results = await Promise.allSettled(
-      ASSETS.map(async (url) => {
-        try {
-          await cache.add(url);
-        } catch (err) {
-          console.warn("SW precache failed:", url, err && (err.message || err));
+    for (const url of ASSETS) {
+      try {
+        const res = await fetch(url, { cache: "no-cache" });
+        if (res && res.ok) {
+          await cache.put(url, res.clone());
+        } else {
+          console.warn("SW precache skip (not ok):", url, res && res.status);
         }
-      })
-    );
-    // Asegura activación inmediata del SW nuevo
+      } catch (err) {
+        console.warn("SW precache failed:", url, err && (err.message || err));
+      }
+    }
     self.skipWaiting();
   })());
 });
