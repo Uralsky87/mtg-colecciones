@@ -1,17 +1,17 @@
-const CACHE = "mtg-colecciones-v0.73";
+const CACHE = "mtg-colecciones-v0.74";
 const ASSETS = [
-  "/mtg-colecciones/",
-  "/mtg-colecciones/index.html",
-  "/mtg-colecciones/styles.css",
-  "/mtg-colecciones/app.js",
-  "/mtg-colecciones/manifest.webmanifest",
-  "/mtg-colecciones/icons/icon-192.png",
-  "/mtg-colecciones/icons/icon-512.png",
-  "/mtg-colecciones/icons/maskable-192.png",
-  "/mtg-colecciones/icons/maskable-512.png",
-  "/mtg-colecciones/icons/Botonmenu.png",
-  "/mtg-colecciones/icons/manacodex.png",
-  "/mtg-colecciones/icons/flecharegresar.png"
+  "./",
+  "./index.html",
+  "./styles.css",
+  "./app.js",
+  "./manifest.webmanifest",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/maskable-192.png",
+  "./icons/maskable-512.png",
+  "./icons/Botonmenu.png",
+  "./icons/manacodex.png",
+  "./icons/flecharegresar.png"
 ];
 
 // Escuchar mensaje de SKIP_WAITING

@@ -2,8 +2,11 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
+const VERSION = "0.71";
+console.log("ManaCodex VERSION", VERSION, "JS URL", (typeof import !== "undefined" && import.meta?.url) || "app.js loaded");
+
 // Debug de viewport para móvil (verificar versión cargada)
-console.log("🔧 ManaCodex v0.71 - Viewport Debug:", {
+console.log("🔧 ManaCodex v" + VERSION + " - Viewport Debug:", {
   innerWidth: window.innerWidth,
   innerHeight: window.innerHeight,
   devicePixelRatio: window.devicePixelRatio,
