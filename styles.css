@@ -3623,8 +3623,29 @@ body{
 
 #listaColecciones.vista-simbolo {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
+}
+
+/* Mantener disposición en tablet/móvil como antes */
+@media (max-width: 1000px) {
+  #listaColecciones.vista-simbolo {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  #listaColecciones.vista-simbolo {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* En escritorio, dejar que el contenido marque la altura del recuadro
+   para evitar solapamientos cuando hay textos largos */
+@media (min-width: 769px) {
+  .coleccion-item {
+    aspect-ratio: auto;
+    min-height: 220px; /* mantiene una base cómoda sin forzar cuadrado */
+  }
 }
 
 /* ========================

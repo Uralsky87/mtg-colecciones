@@ -1,4 +1,4 @@
-const CACHE = "mtg-colecciones-v0.61";
+const CACHE = "mtg-colecciones-v0.63";
 const ASSETS = [
   "/mtg-colecciones/",
   "/mtg-colecciones/index.html",

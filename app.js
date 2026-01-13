@@ -5716,29 +5716,32 @@ function mostrarBannerActualizacion(newWorker) {
 function setupScrollToTopButton(buttonId, containerId) {
   const button = document.getElementById(buttonId);
   const container = document.getElementById(containerId);
-  
+
   if (!button || !container) return;
-  
+
+  const getScrollTop = () => {
+    // Compatibilidad: usa el elemento que realmente está haciendo scroll
+    return (document.scrollingElement && document.scrollingElement.scrollTop) || window.scrollY || 0;
+  };
+
   // Mostrar/ocultar botón según el scroll
   const handleScroll = () => {
-    if (window.scrollY > 300) {
+    const scTop = getScrollTop();
+    if (scTop > 300) {
       button.classList.add("visible");
     } else {
       button.classList.remove("visible");
     }
   };
-  
+
   // Scroll suave al inicio
   button.addEventListener("click", () => {
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth"
-    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   });
-  
-  // Escuchar scroll
-  window.addEventListener("scroll", handleScroll);
-  
+
+  // Escuchar scroll global
+  window.addEventListener("scroll", handleScroll, { passive: true });
+
   // Verificar posición inicial
   handleScroll();
 }
