@@ -2684,6 +2684,11 @@ function mostrarPantalla(nombre, agregarAlHistorial = true) {
     // Agregar un estado al historial del navegador para que el botón de retroceso funcione
     window.history.pushState({ pantalla: nombre }, "", "");
   }
+  
+  // Recalcular el contenedor scrollable activo (para el botón global)
+  if (typeof recalculateActiveScrollerSoon === "function") {
+    recalculateActiveScrollerSoon(50);
+  }
 }
 
 function navegarAtras() {
@@ -5657,6 +5662,11 @@ async function init() {
   }
 
   renderResultadosBuscar("");
+  
+  // Inicializar botón scroll-to-top global
+  if (typeof startScrollTopSystem === "function") {
+    setTimeout(() => startScrollTopSystem(), 100);
+  }
 }
 
 init();
@@ -5664,7 +5674,7 @@ init();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").then(reg => {
+    navigator.serviceWorker.register("./service-worker.js").then(reg => {
       // Detectar actualizaciones
       reg.addEventListener("updatefound", () => {
         const newWorker = reg.installing;
@@ -5710,46 +5720,135 @@ function mostrarBannerActualizacion(newWorker) {
 }
 
 // ===============================
-// Botones flotantes scroll to top
+// Scroll-to-top: botón único y global (simple)
 // ===============================
 
-function setupScrollToTopButton(buttonId, containerId) {
-  const button = document.getElementById(buttonId);
-  const container = document.getElementById(containerId);
+let activeScroller = null;
+let boundTarget = null; // 'window' o un elemento
+let scrollHandlerRef = null;
+let recalcTimer = null;
 
-  if (!button || !container) return;
-
-  const getScrollTop = () => {
-    // Compatibilidad: usa el elemento que realmente está haciendo scroll
-    return (document.scrollingElement && document.scrollingElement.scrollTop) || window.scrollY || 0;
-  };
-
-  // Mostrar/ocultar botón según el scroll
-  const handleScroll = () => {
-    const scTop = getScrollTop();
-    if (scTop > 300) {
-      button.classList.add("visible");
-    } else {
-      button.classList.remove("visible");
-    }
-  };
-
-  // Scroll suave al inicio
-  button.addEventListener("click", () => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
-
-  // Escuchar scroll global
-  window.addEventListener("scroll", handleScroll, { passive: true });
-
-  // Verificar posición inicial
-  handleScroll();
+function isDocScroller(el) {
+  return el === document.scrollingElement || el === document.documentElement || el === document.body;
 }
 
-// Inicializar botones
-setupScrollToTopButton("btnScrollTopColecciones", "pantallaColecciones");
-setupScrollToTopButton("btnScrollTopSet", "pantallaSet");
-setupScrollToTopButton("btnScrollTopDeck", "pantallaVerDeck");
+function getCurrentScrollTop(el) {
+  if (!el) return 0;
+  if (isDocScroller(el)) {
+    return window.scrollY || document.scrollingElement?.scrollTop || 0;
+  }
+  return el.scrollTop || 0;
+}
+
+function findActiveScrollContainer() {
+  const activeView = document.querySelector('.pantalla.active');
+
+  const prioritized = [];
+  if (activeView) {
+    prioritized.push(activeView);
+    const inside = [
+      '#listaColecciones',
+      '#listaCartasSet',
+      '#listaCartasDeck',
+      '#resultadosBuscar'
+    ];
+    for (const sel of inside) {
+      const el = activeView.querySelector(sel);
+      if (el) prioritized.push(el);
+    }
+  }
+
+  const genericNodes = Array.from(document.querySelectorAll('main, #app, .view, .screen, .content, .pantalla.active, .pantalla, body'));
+  const candidates = [...prioritized, ...genericNodes, document.scrollingElement].filter(Boolean);
+
+  for (const el of candidates) {
+    const style = window.getComputedStyle(el);
+    const oy = style.overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && (el.scrollHeight > el.clientHeight + 5)) {
+      return el;
+    }
+  }
+
+  return document.scrollingElement || document.documentElement || document.body;
+}
+
+function updateScrollTopButton() {
+  const btn = document.getElementById('btnScrollTop');
+  if (!btn) return;
+  const top = getCurrentScrollTop(activeScroller);
+  btn.classList.toggle('is-visible', top > 200);
+}
+
+function bindScrollListener(newScroller) {
+  // Desuscribir anterior
+  if (scrollHandlerRef) {
+    if (boundTarget === 'window') {
+      window.removeEventListener('scroll', scrollHandlerRef);
+    } else if (boundTarget && boundTarget.addEventListener) {
+      boundTarget.removeEventListener('scroll', scrollHandlerRef);
+    }
+  }
+
+  activeScroller = newScroller;
+  scrollHandlerRef = () => updateScrollTopButton();
+
+  if (isDocScroller(newScroller)) {
+    window.addEventListener('scroll', scrollHandlerRef, { passive: true });
+    boundTarget = 'window';
+  } else {
+    newScroller.addEventListener('scroll', scrollHandlerRef, { passive: true });
+    boundTarget = newScroller;
+  }
+
+  // Estado inicial
+  updateScrollTopButton();
+}
+
+function updateActiveScroller() {
+  const scroller = findActiveScrollContainer();
+  if (scroller !== activeScroller) {
+    bindScrollListener(scroller);
+  } else {
+    // Aún así revisa visibilidad por si cambió el scroll
+    updateScrollTopButton();
+  }
+}
+
+function recalculateActiveScrollerSoon(delay = 50) {
+  if (recalcTimer) clearTimeout(recalcTimer);
+  recalcTimer = setTimeout(updateActiveScroller, delay);
+}
+
+function startScrollTopSystem() {
+  const btn = document.getElementById('btnScrollTop');
+  if (!btn) return;
+
+  // Click: volver arriba del contenedor activo
+  btn.addEventListener('click', () => {
+    if (!activeScroller) updateActiveScroller();
+    if (isDocScroller(activeScroller)) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      activeScroller.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  });
+
+  // Observa cambios de DOM que puedan cambiar la vista activa/scroll
+  const observer = new MutationObserver(() => recalculateActiveScrollerSoon(60));
+  observer.observe(document.body, { attributes: true, childList: true, subtree: true, attributeFilter: ['class', 'style'] });
+
+  // Resize/orientación
+  window.addEventListener('resize', () => recalculateActiveScrollerSoon(60));
+  window.addEventListener('orientationchange', () => recalculateActiveScrollerSoon(60));
+
+  // Intervalo de seguridad (muy espaciado)
+  setInterval(() => updateActiveScroller(), 2000);
+
+  // Primer cálculo
+  updateActiveScroller();
+}
+
+
 
 // ===============================
 // Manejo del botón de retroceso del móvil

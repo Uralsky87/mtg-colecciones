@@ -797,54 +797,44 @@ input[type="text"] {
 }
 
 /* =========================
-   Botón flotante scroll to top
+   Botón flotante scroll to top (único)
 ========================= */
 
-.btn-scroll-top {
+#btnScrollTop {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
-  width: 50px;
-  height: 50px;
-  background: rgba(47, 108, 255, 0.9);
-  color: white;
-  border: none;
-  border-radius: 12px;
-  font-size: 24px;
-  font-weight: bold;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  z-index: 1000;
-  transition: all 0.3s ease;
-  opacity: 0;
-  visibility: hidden;
-  display: flex;
+  right: 16px;
+  bottom: 16px;
+  z-index: 99999;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: none; /* oculto por defecto */
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  background: rgba(47, 108, 255, 0.95);
+  color: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  box-shadow: 0 6px 14px rgba(0,0,0,0.2);
+  font-size: 20px;
 }
 
-.btn-scroll-top.visible {
-  opacity: 1;
-  visibility: visible;
+#btnScrollTop.is-visible {
+  display: flex;
 }
 
-.btn-scroll-top:hover {
+#btnScrollTop:hover {
   background: rgba(47, 108, 255, 1);
-  transform: translateY(-3px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
 }
 
-.btn-scroll-top:active {
-  transform: translateY(-1px);
+#btnScrollTop:active {
+  transform: translateY(1px);
 }
 
 @media (max-width: 560px) {
-  .btn-scroll-top {
-    width: 45px;
-    height: 45px;
-    bottom: 15px;
-    right: 15px;
-    font-size: 20px;
+  #btnScrollTop {
+    bottom: 18px;
+    right: 16px;
   }
 }
 

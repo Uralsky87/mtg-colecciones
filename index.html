@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>ManaCodex</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <link rel="stylesheet" href="styles.css?v=20260113a" />
+  <link rel="stylesheet" href="styles.css?v=20260113i" />
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#f4f6fb">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -131,9 +131,6 @@
     </div>
 
     <div id="listaColecciones"></div>
-    
-    <!-- Botón flotante scroll to top -->
-    <button id="btnScrollTopColecciones" class="btn-scroll-top" aria-label="Volver arriba" title="Volver arriba">▲</button>
   </section>
 
   <!-- =======================
@@ -218,9 +215,6 @@
     </div>
 
     <div id="listaCartasSet"></div>
-    
-    <!-- Botón flotante scroll to top -->
-    <button id="btnScrollTopSet" class="btn-scroll-top" aria-label="Volver arriba" title="Volver arriba">▲</button>
   </section>
 
   <!-- =======================
@@ -367,9 +361,6 @@
       </div>
       <button id="btnEliminarDeck" class="btn-secundario" type="button" style="width: 100%; background: #dc3545;">Eliminar Deck</button>
     </div>
-
-    <!-- Botón scroll to top -->
-    <button id="btnScrollTopDeck" class="btn-scroll-top" type="button" aria-label="Volver arriba" title="Volver arriba">▲</button>
   </section>
 
     <!-- =======================
@@ -483,6 +474,10 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=20260113b"></script>
+  
+  <!-- Botón flotante scroll to top (único y global) -->
+  <button id="btnScrollTop" aria-label="Volver arriba">↑</button>
+
+  <script src="app.js?v=20260113i"></script>
 </body>
 </html>
