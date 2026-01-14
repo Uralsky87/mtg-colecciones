@@ -2248,7 +2248,8 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   position: relative;
   width: min(720px, 96vw);
   max-height: 90vh;
-  overflow:auto;
+  display: flex;
+  flex-direction: column;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06));
@@ -2260,13 +2261,27 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   justify-content:space-between;
   padding: 12px 12px;
   border-bottom: 1px solid rgba(255,255,255,.08);
+  flex-shrink: 0;
 }
 .modal-title{ font-weight: 700; }
-.modal-body{ padding: 12px; }
+.modal-body{ 
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
 .modal-body img{
   width:100%;
+  height: auto;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,.10);
+}
+
+/* Asegurar que el contenedor del modal-body pueda acomodarse bien */
+#modalCartaBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* Navegación de cartas en modal */
@@ -2289,11 +2304,69 @@ button:disabled{ opacity:.55; cursor:not-allowed; }
   padding:8px 10px;
 }
 
-@media (min-width: 720px){
-  #modalCarta .modal-body img{
-    width:80%;
+/* === Estilos específicos para banderas en el modal === */
+.modal-controles .btn-modal-lang-switch {
+  padding: 4px 8px;
+  min-height: auto;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.modal-controles .lang-badge.lang-active {
+  padding: 4px 8px;
+  gap: 4px;
+  transform: scale(1);
+  background: rgba(74, 158, 255, 0.25);
+  border: 1px solid rgba(74, 158, 255, 0.4);
+}
+
+.modal-controles .flag-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.modal-controles .lang-badge.lang-active .lang-label {
+  font-size: 12px;
+  letter-spacing: 0px;
+}
+
+.modal-controles .lang-switch-action {
+  gap: 3px;
+}
+
+.modal-controles .lang-switch-action .arrow {
+  font-size: 14px;
+}
+
+.modal-controles .flag-target-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Contenedor de imagen para doble cara */
+#modalCartaBody > div[style*="position: relative"] {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+@media (min-width: 768px){
+  .modal {
+    padding: 20px;
+  }
+  
+  .modal-content {
+    width: min(900px, 95vw);
+  }
+  
+  #modalCarta .modal-body img {
+    max-height: 70vh;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
+    display: block;
     margin: 0 auto;
-    display:block;
   }
 }
 
@@ -3605,6 +3678,25 @@ body{
 .mostrar-como-item span {
   font-size: 0.9rem;
   color: var(--muted);
+}
+
+/* Responsive labels para "Símbolo de expansión" */
+.label-desktop {
+  display: inline;
+}
+
+.label-mobile {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .label-desktop {
+    display: none;
+  }
+  
+  .label-mobile {
+    display: inline;
+  }
 }
 
 /* ========================

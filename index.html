@@ -25,20 +25,20 @@
   <!-- =======================
        PANTALLA: BIENVENIDA
   ======================= -->
-  <section id="pantallaInicio" class="pantalla active">
+  <section id="pantallaInicio" class="pantalla">
     <img src="icons/manacodex.png" alt="ManaCodex" class="logo-inicio" />
-    <button id="btnEntrar" class="btn-principal">Entrar</button>
+    <button id="btnEntrar" class="btn-principal hidden">Entrar</button>
   </section>
 
   <!-- =======================
        PANTALLA: MENÚ PRINCIPAL
   ======================= -->
-  <section id="pantallaMenu" class="pantalla">
+  <section id="pantallaMenu" class="pantalla active">
     <img src="icons/manacodex.png" alt="ManaCodex" class="logo-menu" />
     <div class="menu">
       <button class="btn-menu" data-pantalla="colecciones">Colecciones</button>
       <button class="btn-menu" data-pantalla="buscar">Buscar</button>
-      <button class="btn-menu" data-pantalla="decks">Decks</button>
+      <button class="btn-menu hidden" data-pantalla="decks">Decks</button>
       <button class="btn-menu" data-pantalla="estadisticas">Estadísticas</button>
       <button class="btn-menu" data-pantalla="cuenta">Cuenta</button>
     </div>
@@ -67,7 +67,8 @@
         <span class="mostrar-como-label">Mostrar como:</span>
         <label class="mostrar-como-item">
           <input type="radio" name="vistaColecciones" value="simbolo" id="vistaSimbolos" checked>
-          <span>Símbolo de expansión</span>
+          <span class="label-desktop">Símbolo de expansión</span>
+          <span class="label-mobile">Símbolo</span>
         </label>
         <label class="mostrar-como-item">
           <input type="radio" name="vistaColecciones" value="lista" id="vistaLista">
