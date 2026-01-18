@@ -6,6 +6,170 @@ const VERSION = "0.71b";
 const JS_URL = (typeof document !== "undefined" && document.currentScript?.src) || "app.js loaded";
 console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
 
+// ===============================
+// Utilidades de optimización
+// ===============================
+
+// Debounce para evitar llamadas excesivas a funciones costosas
+let renderColeccionesTimeout = null;
+function scheduleRenderColecciones() {
+  if (renderColeccionesTimeout) return; // Ya hay uno programado
+  renderColeccionesTimeout = setTimeout(() => {
+    renderColecciones();
+    renderColeccionesTimeout = null;
+  }, 50); // 50ms de debounce
+}
+
+// Guardar estado con debounce para reducir escrituras en localStorage
+let saveEstado2Timeout = null;
+function guardarEstado2Debounced() {
+  clearTimeout(saveEstado2Timeout);
+  saveEstado2Timeout = setTimeout(() => {
+    localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
+    if (typeof sbMarkDirty === "function") sbMarkDirty();
+  }, 300); // 300ms sin cambios antes de guardar
+}
+
+// ===============================
+// IndexedDB - Cache persistente de cartas
+// ===============================
+
+const DB_NAME = 'mtg_cards_cache';
+const DB_VERSION = 1;
+const STORE_SETS = 'sets';
+const CACHE_EXPIRY_DAYS = 7; // Revalidar después de 7 días
+
+let dbInstance = null;
+
+// Abrir/crear la base de datos
+async function openCardsDB() {
+  if (dbInstance) return dbInstance;
+  
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    
+    request.onerror = () => {
+      console.error('Error abriendo IndexedDB:', request.error);
+      reject(request.error);
+    };
+    
+    request.onsuccess = () => {
+      dbInstance = request.result;
+      resolve(dbInstance);
+    };
+    
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      
+      // Crear object store para sets si no existe
+      if (!db.objectStoreNames.contains(STORE_SETS)) {
+        const store = db.createObjectStore(STORE_SETS, { keyPath: 'setKey' });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+    };
+  });
+}
+
+// Guardar cartas de un set en IndexedDB
+async function saveSetToDB(setKey, cards) {
+  try {
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_SETS, 'readwrite');
+    const store = tx.objectStore(STORE_SETS);
+    
+    const data = {
+      setKey,
+      cards,
+      timestamp: Date.now(),
+      version: VERSION
+    };
+    
+    await store.put(data);
+    await tx.complete;
+    
+    console.log(`✅ Set ${setKey} guardado en IndexedDB (${cards.length} cartas)`);
+  } catch (err) {
+    console.warn('Error guardando en IndexedDB:', err);
+    // No es crítico, simplemente no se cachea
+  }
+}
+
+// Obtener cartas de un set desde IndexedDB
+async function getSetFromDB(setKey) {
+  try {
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_SETS, 'readonly');
+    const store = tx.objectStore(STORE_SETS);
+    
+    return new Promise((resolve, reject) => {
+      const request = store.get(setKey);
+      
+      request.onsuccess = () => {
+        const data = request.result;
+        
+        if (!data) {
+          resolve(null);
+          return;
+        }
+        
+        // Verificar si expiró (7 días)
+        const age = Date.now() - data.timestamp;
+        const maxAge = CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+        
+        if (age > maxAge) {
+          console.log(`⚠️ Cache de ${setKey} expirado (${Math.floor(age / (24*60*60*1000))} días)`);
+          resolve(null);
+          return;
+        }
+        
+        console.log(`✅ Set ${setKey} cargado desde IndexedDB (${data.cards.length} cartas)`);
+        resolve(data);
+      };
+      
+      request.onerror = () => {
+        console.warn('Error leyendo de IndexedDB:', request.error);
+        resolve(null);
+      };
+    });
+  } catch (err) {
+    console.warn('Error accediendo a IndexedDB:', err);
+    return null;
+  }
+}
+
+// Limpiar cache antiguo (opcional, para mantenimiento)
+async function cleanExpiredCache() {
+  try {
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_SETS, 'readwrite');
+    const store = tx.objectStore(STORE_SETS);
+    const index = store.index('timestamp');
+    
+    const maxAge = CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - maxAge;
+    
+    const request = index.openCursor();
+    let deleted = 0;
+    
+    request.onsuccess = (event) => {
+      const cursor = event.target.result;
+      if (cursor) {
+        if (cursor.value.timestamp < cutoff) {
+          cursor.delete();
+          deleted++;
+        }
+        cursor.continue();
+      } else {
+        if (deleted > 0) {
+          console.log(`🧹 Limpiados ${deleted} sets expirados de IndexedDB`);
+        }
+      }
+    };
+  } catch (err) {
+    console.warn('Error limpiando cache:', err);
+  }
+}
+
 // Debug de viewport para móvil (verificar versión cargada)
 console.log("🔧 ManaCodex v" + VERSION + " - Viewport Debug:", {
   innerWidth: window.innerWidth,
@@ -1221,7 +1385,10 @@ function getEstadoCarta2(oracle_id) {
 }
 
 function setQtyLang(oracle_id, lang, value) {
-  if (!oracle_id) return;
+  if (!oracle_id || oracle_id === 'undefined' || oracle_id === 'null') {
+    console.warn('setQtyLang: oracle_id inválido', oracle_id);
+    return;
+  }
   
   const st = ensureEstadoCarta2(oracle_id);
   const qty = clampInt(Number(value), 0, 999);
@@ -1241,7 +1408,10 @@ function setQtyLang(oracle_id, lang, value) {
 }
 
 function setFoilLang(oracle_id, lang, value) {
-  if (!oracle_id) return;
+  if (!oracle_id || oracle_id === 'undefined' || oracle_id === 'null') {
+    console.warn('setFoilLang: oracle_id inválido', oracle_id);
+    return;
+  }
   
   const st = ensureEstadoCarta2(oracle_id);
   const qtyKey = lang === "es" ? "qty_es" : "qty_en";
@@ -1254,7 +1424,10 @@ function setFoilLang(oracle_id, lang, value) {
 }
 
 function setRiLang(oracle_id, lang, value) {
-  if (!oracle_id) return;
+  if (!oracle_id || oracle_id === 'undefined' || oracle_id === 'null') {
+    console.warn('setRiLang: oracle_id inválido', oracle_id);
+    return;
+  }
   
   const st = ensureEstadoCarta2(oracle_id);
   const riKey = lang === "es" ? "ri_es" : "ri_en";
@@ -1444,10 +1617,16 @@ function cargarEstado2() {
   console.log(`Estado cargado: ${Object.keys(estado2).length} cartas v2, ${Object.keys(estadoLegacyById).length} legacy`);
 }
 
-function guardarEstado2() {
-  localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
-  if (typeof sbMarkDirty === "function") sbMarkDirty();
-  cargarStatsSnapshot();
+function guardarEstado2(immediate = false) {
+  if (immediate) {
+    // Guardar inmediatamente (usado en sync, logout, etc)
+    clearTimeout(saveEstado2Timeout);
+    localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
+    if (typeof sbMarkDirty === "function") sbMarkDirty();
+    return;
+  }
+  // Usar debounce por defecto
+  guardarEstado2Debounced();
 }
 
 function guardarOracleCache() {
@@ -2049,7 +2228,7 @@ function reconstruirCatalogoColecciones() {
 const cacheCartasPorSetLang = {}; // key: "khm__es" -> array de cartas internas
 
 async function ensureSetCardsLoaded(setKey) {
-  // Verificar si necesita recarga (si no tiene type_line es estructura antigua)
+  // Verificar si ya está en memoria RAM
   if (cacheCartasPorSetLang[setKey]) {
     const primeracarta = cacheCartasPorSetLang[setKey][0];
     if (primeracarta && primeracarta.type_line !== undefined) {
@@ -2063,9 +2242,35 @@ async function ensureSetCardsLoaded(setKey) {
   const code = String(codeRaw || "").toLowerCase();
   const lang = String(langRaw || "en").toLowerCase();
 
+  // 🚀 OPTIMIZACIÓN: Intentar cargar desde IndexedDB primero
+  const cachedData = await getSetFromDB(setKey);
+  
+  if (cachedData && cachedData.cards && Array.isArray(cachedData.cards)) {
+    // ✅ Encontrado en cache - carga instantánea
+    cacheCartasPorSetLang[setKey] = cachedData.cards;
+    actualizarProgresoGuardado(setKey);
+    construirIndiceOracleToIds();
+    
+    // Mostrar indicador visual temporal
+    const progresoEl = document.getElementById("progresoSet");
+    if (progresoEl) {
+      const oldText = progresoEl.textContent;
+      progresoEl.textContent += " ⚡ (cargado desde cache)";
+      setTimeout(() => {
+        if (progresoEl.textContent.includes("⚡")) {
+          progresoEl.textContent = oldText;
+        }
+      }, 2000);
+    }
+    
+    return;
+  }
+
+  // ⬇️ No está en cache o expiró - descargar desde Scryfall
+  console.log(`📡 Descargando ${setKey} desde Scryfall...`);
   const cards = await scryGetCardsBySetAndLang(code, lang);
 
-  cacheCartasPorSetLang[setKey] = cards.map(card => ({
+  const processedCards = cards.map(card => ({
     id: card.id, // UUID string
     oracle_id: card.oracle_id,
     nombre: pickCardName(card, lang),
@@ -2080,6 +2285,13 @@ async function ensureSetCardsLoaded(setKey) {
     _colors: card.colors || null,
     _raw: card // Guardar objeto completo para acceder a card_faces
   }));
+
+  cacheCartasPorSetLang[setKey] = processedCards;
+
+  // 💾 Guardar en IndexedDB para futuras cargas
+  saveSetToDB(setKey, processedCards).catch(err => {
+    console.warn('No se pudo guardar en IndexedDB:', err);
+  });
 
   // Guardar resumen (total/tengo) para que no vuelva a 0/? al reiniciar
   actualizarProgresoGuardado(setKey);
@@ -2104,9 +2316,20 @@ async function refrescarPreciosSetActual() {
       if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
     }
 
-    // 1) invalidar caché SOLO de este set/idioma (fuerza re-descarga desde Scryfall)
+    // 1) invalidar caché en memoria Y en IndexedDB (fuerza re-descarga desde Scryfall)
     if (cacheCartasPorSetLang && cacheCartasPorSetLang[setActualKey]) {
       delete cacheCartasPorSetLang[setActualKey];
+    }
+    
+    // Limpiar de IndexedDB también para forzar descarga fresca con precios actualizados
+    try {
+      const db = await openCardsDB();
+      const tx = db.transaction(STORE_SETS, 'readwrite');
+      const store = tx.objectStore(STORE_SETS);
+      await store.delete(setActualKey);
+      console.log(`🗑️ Cache de ${setActualKey} eliminado de IndexedDB`);
+    } catch (err) {
+      console.warn('Error eliminando cache de IndexedDB:', err);
     }
 
     // 2) volver a abrir el set (esto vuelve a llamar a ensureSetCardsLoaded y trae precios nuevos)
@@ -2493,7 +2716,6 @@ async function cargarSetNameEsDesdeMTGJSON() {
 // ===============================
 
 const pantallas = {
-  inicio: document.getElementById("pantallaInicio"),
   menu: document.getElementById("pantallaMenu"),
   colecciones: document.getElementById("pantallaColecciones"),
   set: document.getElementById("pantallaSet"),
@@ -2568,9 +2790,9 @@ function navegarAtras() {
     mostrarPantalla(pantallaAnterior, false);
     return true;
   } else if (impedirSalidaApp) {
-    // Si estamos en la pantalla inicial, mantener la app abierta
+    // Si estamos en el menú principal, mantener la app abierta
     // agregando de nuevo una entrada al historial
-    window.history.pushState({ pantalla: "inicio" }, "", "");
+    window.history.pushState({ pantalla: "menu" }, "", "");
     return true;
   }
   return false;
@@ -3243,196 +3465,9 @@ function actualizarPanelLang(oracleId, lang) {
   }
 }
 
-// Modal al clickar nombre
-cont.querySelectorAll("[data-accion='ver-carta-set']").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const id = btn.dataset.id;
-    const carta = (cacheCartasPorSetLang[setKey] || []).find(x => x.id === id);
-
-    abrirModalCarta({
-      titulo: carta?.nombre || "Carta",
-      imageUrl: carta?._img || null,
-      numero: carta?.numero || "",
-      rareza: carta?.rareza || "",
-      precio: formatPrecioEUR(carta?._prices),
-      cardData: carta?._raw || null,
-      oracleId: carta?.oracle_id || null,
-      navLista: getListaSetFiltrada(setKey),
-      navIndex: getListaSetFiltrada(setKey).findIndex(c => c.id === id)
-    });
-  });
-});
-
-// ===== Event listeners usando oracle_id y estado2 (clásico con toggle) =====
-
-// Toggle de idioma
-cont.querySelectorAll(".btn-lang-switch").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    const oracleId = btn.dataset.oracle;
-    if (!oracleId) return;
-    
-    // Buscar el contenedor de controles
-    const cartaControles = btn.closest(".carta-controles");
-    if (!cartaControles) return;
-    
-    // Prevenir clics múltiples durante animación
-    if (cartaControles.dataset.animating === "true") return;
-    cartaControles.dataset.animating = "true";
-    
-    // Obtener idioma actual y calcular nuevo
-    const currentLang = cartaControles.dataset.activeLang || "en";
-    const newLang = currentLang === "en" ? "es" : "en";
-    
-    // Actualizar UI language preference
-    setUILang(oracleId, newLang);
-    
-    // Actualizar el atributo data-active-lang para que CSS anime
-    cartaControles.dataset.activeLang = newLang;
-    
-    // Actualizar badge activo: imagen y label
-    const flagIcon = btn.querySelector(".lang-badge.lang-active .flag-icon");
-    const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
-    const targetIcon = btn.querySelector(".flag-target-icon");
-    
-    if (flagIcon) flagIcon.src = `icons/flag-${newLang}.svg`;
-    if (flagIcon) flagIcon.alt = newLang.toUpperCase();
-    if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
-    if (targetIcon) targetIcon.src = `icons/flag-${newLang === "en" ? "es" : "en"}.svg`;
-    if (targetIcon) targetIcon.alt = newLang === "en" ? "ES" : "EN";
-    
-    // Actualizar aria-label para accesibilidad
-    btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
-    
-    // Carga de imagen ES en paralelo (no bloquea animación)
-    const cartaItem = btn.closest(".carta-item");
-    if (cartaItem) {
-      const imgElement = cartaItem.querySelector(".carta-imagen");
-      
-      if (newLang === "es" && imgElement) {
-        const setCode = imgElement.dataset.set || "";
-        const numero = imgElement.dataset.numero || "";
-        
-        getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
-          if (printES) {
-            const imgUrl = printES.image_uris?.normal || 
-                          printES.card_faces?.[0]?.image_uris?.normal;
-            
-            if (imgUrl) {
-              console.log(`✅ Actualizando a imagen ES para ${oracleId}`);
-              imgElement.src = imgUrl;
-            } else {
-              console.log(`⚠️ Print ES encontrado pero sin imagen para ${oracleId}`);
-            }
-          } else {
-            console.log(`⚠️ No hay print ES disponible para ${oracleId}`);
-          }
-        }).catch(err => {
-          console.error(`✗ Error cargando imagen ES para ${oracleId}:`, err);
-        });
-        
-      } else if (newLang === "en" && imgElement) {
-        // Restaurar imagen EN desde data-attribute
-        const imgEnOriginal = imgElement.dataset.imgEn;
-        if (imgEnOriginal) {
-          console.log(`✅ Restaurando imagen EN para ${oracleId}`);
-          imgElement.src = imgEnOriginal;
-        }
-      }
-    }
-    
-    // Desbloquear después de la animación (220ms)
-    setTimeout(() => {
-      cartaControles.dataset.animating = "false";
-    }, 220);
-  });
-});
-
-// Cantidad
-cont.querySelectorAll(".btn-qty-minus").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    const lang = btn.dataset.lang;
-    if (!oracleId || !lang) return;
-    const st2 = getEstadoCarta2(oracleId);
-    const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-    setQtyLang(oracleId, lang, currentQty - 1);
-    actualizarPanelLang(oracleId, lang);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".btn-qty-plus").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    const lang = btn.dataset.lang;
-    if (!oracleId || !lang) return;
-    const st2 = getEstadoCarta2(oracleId);
-    const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-    setQtyLang(oracleId, lang, currentQty + 1);
-    actualizarPanelLang(oracleId, lang);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".inp-qty").forEach(inp => {
-  inp.addEventListener("change", () => {
-    const oracleId = inp.dataset.oracle;
-    const lang = inp.dataset.lang;
-    if (!oracleId || !lang) return;
-    setQtyLang(oracleId, lang, inp.value);
-    actualizarPanelLang(oracleId, lang);
-    renderColecciones();
-  });
-});
-
-// Foil
-cont.querySelectorAll(".btn-foil-minus").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    const lang = btn.dataset.lang;
-    if (!oracleId || !lang) return;
-    const st2 = getEstadoCarta2(oracleId);
-    const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-    setFoilLang(oracleId, lang, currentFoil - 1);
-    actualizarPanelLang(oracleId, lang);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".btn-foil-plus").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const oracleId = btn.dataset.oracle;
-    const lang = btn.dataset.lang;
-    if (!oracleId || !lang) return;
-    const st2 = getEstadoCarta2(oracleId);
-    const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-    setFoilLang(oracleId, lang, currentFoil + 1);
-    actualizarPanelLang(oracleId, lang);
-    renderColecciones();
-  });
-});
-
-cont.querySelectorAll(".inp-foil").forEach(inp => {
-  inp.addEventListener("change", () => {
-    const oracleId = inp.dataset.oracle;
-    const lang = inp.dataset.lang;
-    if (!oracleId || !lang) return;
-    setFoilLang(oracleId, lang, inp.value);
-    actualizarPanelLang(oracleId, lang);
-    renderColecciones();
-  });
-});
-
-// Ri
-cont.querySelectorAll(".chk-want").forEach(chk => {
-  chk.addEventListener("change", () => {
-    const oracleId = chk.dataset.oracle;
-    const lang = chk.dataset.lang;
-    if (!oracleId || !lang) return;
-    setRiLang(oracleId, lang, chk.checked);
-    // No need to re-render for Ri checkbox
-  });
-});
+// ===== Event listeners movidos a event delegation en wireGlobalButtons() =====
+// Ya no se añaden listeners individuales aquí para evitar fugas de memoria
+// Todo se maneja con UN SOLO listener delegado en el contenedor padre
 
 }
 
@@ -3448,7 +3483,8 @@ function marcarTodasCartasSet() {
   cartas.forEach(c => {
     if (!c.oracle_id) return; // Skip si no tiene oracle_id
     const st2 = getEstadoCarta2(c.oracle_id);
-    if (st2.qty_en === 0) { // Por ahora solo trabajamos con EN
+    // Marcar en ambos idiomas si no tiene cantidad
+    if (st2.qty_en === 0 && st2.qty_es === 0) {
       setQtyLang(c.oracle_id, "en", 1);
     }
   });
@@ -3463,7 +3499,9 @@ function desmarcarTodasCartasSet() {
   const cartas = cartasDeSetKey(setActualKey);
   cartas.forEach(c => {
     if (!c.oracle_id) return; // Skip si no tiene oracle_id
-    setQtyLang(c.oracle_id, "en", 0); // Por ahora solo trabajamos con EN
+    // Desmarcar ambos idiomas
+    setQtyLang(c.oracle_id, "en", 0);
+    setQtyLang(c.oracle_id, "es", 0);
   });
   
   renderTablaSet(setActualKey);
@@ -4763,9 +4801,7 @@ async function actualizarEstadoDeck() {
 function wireGlobalButtons() {
   // Theme buttons removed — app forces light theme.
 
-// Entrar
-  const btnEntrar = document.getElementById("btnEntrar");
-  if (btnEntrar) btnEntrar.addEventListener("click", () => mostrarPantalla("menu"));
+// Pantalla de inicio eliminada - la app abre directamente en el menú
 
   // Stats: recalcular
   const btnStatsRecalcular = document.getElementById("btnStatsRecalcular");
@@ -4823,6 +4859,14 @@ if (btnStatsRecalcular) {
       window.history.back(); // Usar el historial del navegador
     });
   });
+  
+  // Buscar actualizaciones manualmente
+  const btnBuscarActualizaciones = document.getElementById("btnBuscarActualizaciones");
+  if (btnBuscarActualizaciones) {
+    btnBuscarActualizaciones.addEventListener("click", async () => {
+      await buscarActualizacionesManualmente();
+    });
+  }
 
   // Volver a decks
   document.querySelectorAll("[data-action='volverDecks']").forEach(btn => {
@@ -5068,6 +5112,190 @@ if (btnStatsRecalcular) {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") cerrarModalCarta();
   });
+
+  // ===============================
+  // Event Delegation para listaCartasSet
+  // ===============================
+  // UN SOLO listener para manejar TODOS los eventos de las cartas
+  // Elimina fugas de memoria y mejora el rendimiento dramáticamente
+  
+  const listaCartasSet = document.getElementById("listaCartasSet");
+  if (listaCartasSet) {
+    // Click events
+    listaCartasSet.addEventListener("click", async (e) => {
+      const target = e.target;
+      
+      // Ver carta (modal)
+      if (target.classList.contains("btn-link-carta") || target.closest(".btn-link-carta")) {
+        const btn = target.classList.contains("btn-link-carta") ? target : target.closest(".btn-link-carta");
+        const id = btn.dataset.id;
+        const setKey = setActualKey;
+        const carta = (cacheCartasPorSetLang[setKey] || []).find(x => x.id === id);
+        
+        abrirModalCarta({
+          titulo: carta?.nombre || "Carta",
+          imageUrl: carta?._img || null,
+          numero: carta?.numero || "",
+          rareza: carta?.rareza || "",
+          precio: formatPrecioEUR(carta?._prices),
+          cardData: carta?._raw || null,
+          oracleId: carta?.oracle_id || null,
+          navLista: getListaSetFiltrada(setKey),
+          navIndex: getListaSetFiltrada(setKey).findIndex(c => c.id === id)
+        });
+        return;
+      }
+      
+      // Toggle idioma
+      if (target.classList.contains("btn-lang-switch") || target.closest(".btn-lang-switch")) {
+        const btn = target.classList.contains("btn-lang-switch") ? target : target.closest(".btn-lang-switch");
+        const oracleId = btn.dataset.oracle;
+        if (!oracleId) return;
+        
+        const cartaControles = btn.closest(".carta-controles");
+        if (!cartaControles) return;
+        
+        // Prevenir clics múltiples durante animación
+        if (cartaControles.dataset.animating === "true") return;
+        cartaControles.dataset.animating = "true";
+        
+        const currentLang = cartaControles.dataset.activeLang || "en";
+        const newLang = currentLang === "en" ? "es" : "en";
+        
+        setUILang(oracleId, newLang);
+        cartaControles.dataset.activeLang = newLang;
+        
+        // Actualizar UI del botón
+        const flagIcon = btn.querySelector(".lang-badge.lang-active .flag-icon");
+        const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
+        const targetIcon = btn.querySelector(".flag-target-icon");
+        
+        if (flagIcon) {
+          flagIcon.src = `icons/flag-${newLang}.svg`;
+          flagIcon.alt = newLang.toUpperCase();
+        }
+        if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
+        if (targetIcon) {
+          targetIcon.src = `icons/flag-${newLang === "en" ? "es" : "en"}.svg`;
+          targetIcon.alt = newLang === "en" ? "ES" : "EN";
+        }
+        
+        btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
+        
+        // Cargar imagen en paralelo
+        const cartaItem = btn.closest(".carta-item");
+        if (cartaItem) {
+          const imgElement = cartaItem.querySelector(".carta-imagen");
+          
+          if (newLang === "es" && imgElement) {
+            const setCode = imgElement.dataset.set || "";
+            const numero = imgElement.dataset.numero || "";
+            
+            getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
+              if (printES) {
+                const imgUrl = printES.image_uris?.normal || printES.card_faces?.[0]?.image_uris?.normal;
+                if (imgUrl) imgElement.src = imgUrl;
+              }
+            }).catch(err => console.error(`Error cargando imagen ES:`, err));
+          } else if (newLang === "en" && imgElement) {
+            const imgEnOriginal = imgElement.dataset.imgEn;
+            if (imgEnOriginal) imgElement.src = imgEnOriginal;
+          }
+        }
+        
+        setTimeout(() => {
+          cartaControles.dataset.animating = "false";
+        }, 220);
+        return;
+      }
+      
+      // Botones cantidad
+      if (target.classList.contains("btn-qty-minus")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        if (!oracleId || !lang) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        setQtyLang(oracleId, lang, currentQty - 1);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+      
+      if (target.classList.contains("btn-qty-plus")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        if (!oracleId || !lang) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        setQtyLang(oracleId, lang, currentQty + 1);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+      
+      // Botones foil
+      if (target.classList.contains("btn-foil-minus")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        if (!oracleId || !lang) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        setFoilLang(oracleId, lang, currentFoil - 1);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+      
+      if (target.classList.contains("btn-foil-plus")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        if (!oracleId || !lang) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        setFoilLang(oracleId, lang, currentFoil + 1);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+    });
+    
+    // Change events para inputs
+    listaCartasSet.addEventListener("change", (e) => {
+      const target = e.target;
+      
+      // Input cantidad
+      if (target.classList.contains("inp-qty")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        if (!oracleId || !lang) return;
+        setQtyLang(oracleId, lang, target.value);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+      
+      // Input foil
+      if (target.classList.contains("inp-foil")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        if (!oracleId || !lang) return;
+        setFoilLang(oracleId, lang, target.value);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+      
+      // Checkbox Ri
+      if (target.classList.contains("chk-want")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        if (!oracleId || !lang) return;
+        setRiLang(oracleId, lang, target.checked);
+        return;
+      }
+    });
+  }
 
   // Actualizar precios
   const btnActualizarPrecios = document.getElementById("btnActualizarPrecios");
@@ -5391,9 +5619,113 @@ function wireBackupButtons() {
 
 // Actualizar el texto de fecha de catálogo
 function actualizarFechaCatalogo() {
-  const fechaEl = document.getElementById("fechaCatalogo");
-  if (fechaEl) {
-    fechaEl.textContent = `Última actualización: ${getFechaUltimaActualizacion()}`;
+  const el = document.getElementById("fechaCatalogo");
+  if (!el) return;
+  
+  const raw = localStorage.getItem(LS_CATALOGO_TIMESTAMP);
+  if (!raw) {
+    el.textContent = "Catálogo: no descargado";
+    return;
+  }
+  
+  const timestamp = parseInt(raw, 10);
+  if (!Number.isFinite(timestamp)) {
+    el.textContent = "Catálogo: no descargado";
+    return;
+  }
+  
+  const date = new Date(timestamp);
+  const dateStr = date.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+  el.textContent = `Catálogo: ${dateStr}`;
+}
+
+// ===============================
+// Buscar actualizaciones manualmente
+// ===============================
+
+async function buscarActualizacionesManualmente() {
+  const btn = document.getElementById("btnBuscarActualizaciones");
+  
+  if (!btn) return;
+  
+  // Verificar soporte de Service Worker
+  if (!("serviceWorker" in navigator)) {
+    alert("Tu navegador no soporta actualizaciones automáticas.");
+    return;
+  }
+  
+  // Verificar que hay registration
+  if (!swRegistration) {
+    alert("El sistema de actualizaciones no está activo. Recarga la página.");
+    return;
+  }
+  
+  try {
+    // Cambiar texto del botón
+    const textoOriginal = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "🔍 Buscando...";
+    
+    console.log("🔄 Buscando actualizaciones manualmente...");
+    
+    // Forzar comprobación de actualizaciones
+    await swRegistration.update();
+    
+    // Esperar un momento para que se procese
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // Verificar si hay una actualización pendiente
+    const waiting = swRegistration.waiting;
+    const installing = swRegistration.installing;
+    
+    if (waiting || installing) {
+      // Hay una actualización disponible
+      btn.textContent = textoOriginal;
+      btn.disabled = false;
+      
+      const actualizar = confirm(
+        "✅ ¡Nueva versión disponible!\n\n" +
+        "Se recargará la aplicación para aplicar la actualización.\n\n" +
+        "¿Actualizar ahora?"
+      );
+      
+      if (actualizar) {
+        const worker = waiting || installing;
+        
+        // Enviar mensaje para activar inmediatamente
+        worker.postMessage({ type: "SKIP_WAITING" });
+        
+        // Recargar cuando el nuevo SW tome control
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          window.location.reload();
+        }, { once: true });
+        
+        // Si no hay controller change en 3 segundos, forzar recarga
+        setTimeout(() => {
+          window.location.reload();
+        }, 3000);
+      }
+    } else {
+      // No hay actualizaciones
+      btn.textContent = "✅ Actualizado";
+      
+      setTimeout(() => {
+        btn.textContent = textoOriginal;
+        btn.disabled = false;
+      }, 2000);
+      
+      console.log("✅ Ya estás usando la última versión");
+    }
+  } catch (err) {
+    console.error("Error buscando actualizaciones:", err);
+    
+    btn.textContent = "❌ Error";
+    setTimeout(() => {
+      btn.textContent = "🔄 Comprobar actualizaciones";
+      btn.disabled = false;
+    }, 2000);
+    
+    alert("Error al buscar actualizaciones. Intenta recargar la página.");
   }
 }
 
@@ -5422,6 +5754,13 @@ async function init() {
 
   wireGlobalButtons();
   wireBackupButtons();
+  
+  // 🧹 Limpiar cache antiguo de IndexedDB en background
+  setTimeout(() => {
+    cleanExpiredCache().catch(err => {
+      console.warn('Error limpiando cache expirado:', err);
+    });
+  }, 5000); // Después de 5 segundos para no bloquear el inicio
 
   try {
   const raw = localStorage.getItem(LS_STATS_SNAPSHOT);
@@ -5508,6 +5847,8 @@ async function init() {
 
 init();
 
+// Variable global para acceder al Service Worker registration
+let swRegistration = null;
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -5532,6 +5873,9 @@ if ("serviceWorker" in navigator) {
     }
 
     navigator.serviceWorker.register(swUrl).then(reg => {
+      // Guardar referencia global
+      swRegistration = reg;
+      
       // Detectar actualizaciones
       reg.addEventListener("updatefound", () => {
         const newWorker = reg.installing;

@@ -309,6 +309,32 @@ h1, h2 {
   opacity: 0.9;
 }
 
+/* Botón de buscar actualizaciones con estilo diferenciado */
+.btn-actualizar {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  color: #000 !important;
+  margin-top: 12px;
+  font-size: 0.95rem;
+  padding: 12px;
+  transition: transform 0.2s, opacity 0.2s;
+}
+
+.btn-actualizar:hover {
+  transform: translateY(-1px);
+  opacity: 1;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-actualizar:active {
+  transform: translateY(0);
+}
+
+.btn-actualizar:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-secundario {
   padding: 10px 12px;
   border-radius: 10px;
