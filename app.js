@@ -2,9 +2,66 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
-const VERSION = "0.71b";
+const VERSION = "0.8";
+const DEBUG = false; // Cambiar a true para habilitar métricas de rendimiento
 const JS_URL = (typeof document !== "undefined" && document.currentScript?.src) || "app.js loaded";
 console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
+
+// ===============================
+// Baseline: Métricas de rendimiento (DEBUG mode)
+// ===============================
+const metrics = {
+  renderTablaSet: [],
+  renderColecciones: [],
+  buscar: [],
+  navegacion: []
+};
+
+function recordMetric(name, duration) {
+  if (!DEBUG) return;
+  if (!metrics[name]) metrics[name] = [];
+  metrics[name].push(duration);
+  const avg = (metrics[name].reduce((a, b) => a + b, 0) / metrics[name].length).toFixed(2);
+  const p95 = metrics[name].sort((a, b) => a - b)[Math.floor(metrics[name].length * 0.95)]?.toFixed(2) || '0';
+  console.log(`[METRIC] ${name}: ${duration.toFixed(2)}ms (avg: ${avg}ms, p95: ${p95}ms)`);
+}
+
+function getMetricsReport() {
+  if (!DEBUG) return;
+  const report = {};
+  for (const [key, values] of Object.entries(metrics)) {
+    if (values.length === 0) continue;
+    report[key] = {
+      count: values.length,
+      avg: (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2),
+      p50: values.sort((a, b) => a - b)[Math.floor(values.length * 0.5)]?.toFixed(2),
+      p95: values.sort((a, b) => a - b)[Math.floor(values.length * 0.95)]?.toFixed(2),
+      max: Math.max(...values).toFixed(2)
+    };
+  }
+  console.table(report);
+}
+
+// ===============================
+// Batch 3: AbortController para búsquedas
+// ===============================
+// Cancela búsquedas y cargas obsoletas si el usuario navega o teclea
+let searchAbortController = null;
+let setLoadAbortController = null;
+
+function cancelSearchAbort() {
+  if (searchAbortController) {
+    searchAbortController.abort();
+    searchAbortController = null;
+  }
+}
+
+function cancelSetLoadAbort() {
+  if (setLoadAbortController) {
+    setLoadAbortController.abort();
+    setLoadAbortController = null;
+  }
+}
 
 // ===============================
 // Utilidades de optimización
@@ -12,12 +69,24 @@ console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
 
 // Debounce para evitar llamadas excesivas a funciones costosas
 let renderColeccionesTimeout = null;
+let renderColeccionesRAF = null;
 function scheduleRenderColecciones() {
-  if (renderColeccionesTimeout) return; // Ya hay uno programado
-  renderColeccionesTimeout = setTimeout(() => {
+  if (renderColeccionesTimeout || renderColeccionesRAF) return; // Ya hay uno programado
+  // Usar requestAnimationFrame para sincronía con frames (mejor que setTimeout)
+  renderColeccionesRAF = requestAnimationFrame(() => {
     renderColecciones();
     renderColeccionesTimeout = null;
-  }, 50); // 50ms de debounce
+    renderColeccionesRAF = null;
+  });
+  // Fallback para setTimeout si rAF está saturado
+  renderColeccionesTimeout = setTimeout(() => {
+    if (renderColeccionesRAF) {
+      cancelAnimationFrame(renderColeccionesRAF);
+    }
+    renderColecciones();
+    renderColeccionesTimeout = null;
+    renderColeccionesRAF = null;
+  }, 50); // 50ms max wait
 }
 
 // Guardar estado con debounce para reducir escrituras en localStorage
@@ -25,9 +94,40 @@ let saveEstado2Timeout = null;
 function guardarEstado2Debounced() {
   clearTimeout(saveEstado2Timeout);
   saveEstado2Timeout = setTimeout(() => {
-    localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
-    if (typeof sbMarkDirty === "function") sbMarkDirty();
+    guardarEstado2Seguro();
+    saveEstado2Timeout = null;
   }, 300); // 300ms sin cambios antes de guardar
+}
+
+// Batch 5: Escritura segura a localStorage con manejo de cuotas
+function guardarEstado2Seguro() {
+  try {
+    const json = JSON.stringify(estado2);
+    localStorage.setItem(LS_KEY_V2, json);
+    if (typeof sbMarkDirty === "function") sbMarkDirty();
+    if (DEBUG) console.log(`[STORAGE] Estado guardado (${(json.length / 1024).toFixed(2)} KB)`);
+  } catch (err) {
+    if (err.name === 'QuotaExceededError') {
+      console.warn("[STORAGE] Cuota de localStorage excedida. Limpiando caches viejos...");
+      // Intentar liberar espacio borrando caches viejos
+      try {
+        const keys = Object.keys(localStorage);
+        for (const key of keys) {
+          if (key.startsWith("mtg_catalogo_") && key !== LS_CATALOGO_SETS) {
+            localStorage.removeItem(key);
+          }
+        }
+        // Reintentar
+        localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
+      } catch (err2) {
+        console.error("[STORAGE] Imposible guardar estado. Limpieza falló:", err2);
+      }
+    } else if (err.name === 'SecurityError') {
+      console.warn("[STORAGE] localStorage en modo privado o bloqueado. Cambios no persistidos.");
+    } else {
+      console.error("[STORAGE] Error guardando estado:", err);
+    }
+  }
 }
 
 // ===============================
@@ -207,7 +307,11 @@ function sbLoadLocalUpdatedAt() {
 
 function sbTouchLocalUpdatedAt() {
   sbLocalUpdatedAt = Date.now();
-  localStorage.setItem(LS_LOCAL_UPDATED_AT, String(sbLocalUpdatedAt));
+  try {
+    localStorage.setItem(LS_LOCAL_UPDATED_AT, String(sbLocalUpdatedAt));
+  } catch (err) {
+    console.warn("[STORAGE] Error actualizando timestamp:", err);
+  }
 }
 
 function getEmailRedirectTo() {
@@ -3260,6 +3364,7 @@ renderColecciones(); // para que al volver ya no salga
 
 
 function renderTablaSet(setKey) {
+  const startTime = DEBUG ? performance.now() : 0;
   const lista = getListaSetFiltrada(setKey);
 
   let html = `<div class="cartas-grid">`;
@@ -3405,14 +3510,20 @@ function renderTablaSet(setKey) {
   html += `</div>`;
 
   const cont = document.getElementById("listaCartasSet");
-cont.innerHTML = html;
+  cont.innerHTML = html;
 
-// Preservar el estado del checkbox "Ver cartas"
-const chkVerCartasMovil = document.getElementById("chkVerCartasMovil");
-const gridCartas = cont.querySelector(".cartas-grid");
-if (chkVerCartasMovil && gridCartas) {
-  if (!chkVerCartasMovil.checked) {
-    gridCartas.classList.add("ocultar-imagenes");
+  // Preservar el estado del checkbox "Ver cartas"
+  const chkVerCartasMovil = document.getElementById("chkVerCartasMovil");
+  const gridCartas = cont.querySelector(".cartas-grid");
+  if (chkVerCartasMovil && gridCartas) {
+    if (!chkVerCartasMovil.checked) {
+      gridCartas.classList.add("ocultar-imagenes");
+    }
+  }
+  
+  if (DEBUG) {
+    const endTime = performance.now();
+    recordMetric('renderTablaSet', endTime - startTime);
   }
 }
 
@@ -3468,9 +3579,6 @@ function actualizarPanelLang(oracleId, lang) {
 // ===== Event listeners movidos a event delegation en wireGlobalButtons() =====
 // Ya no se añaden listeners individuales aquí para evitar fugas de memoria
 // Todo se maneja con UN SOLO listener delegado en el contenedor padre
-
-}
-
 
 // ===============================
 // 5b) Autocompletar colección
@@ -3586,10 +3694,15 @@ function buscarCartasPorNombre(texto) {
 }
 
 async function renderResultadosBuscar(texto) {
+  const startTime = DEBUG ? performance.now() : 0;
   const cont = document.getElementById("resultadosBuscar");
   const q = (texto || "").trim();
 
   if (!cont) return;
+
+  // Cancelar búsqueda anterior si existe
+  cancelSearchAbort();
+  searchAbortController = new AbortController();
 
   if (!q) {
     cont.innerHTML = `<div class="card"><p>Escribe un nombre y pulsa “Buscar”.</p></div>`;
@@ -3877,6 +3990,105 @@ async function renderResultadosBuscar(texto) {
       if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
     });
   });
+
+  // ===============================
+  // Event Delegation para listaResultados (búsqueda)
+  // ===============================
+  // Reemplaza 100+ listeners individuales con 1 delegado
+  const listaResultados = document.getElementById("listaResultados");
+  if (listaResultados && !listaResultados.dataset.wiredSearch) {
+    listaResultados.dataset.wiredSearch = "1";
+    
+    listaResultados.addEventListener("click", (e) => {
+      const target = e.target;
+      
+      if (target.classList.contains("btn-qty-minus-buscar")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        if (!oracleId) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        setQtyLang(oracleId, lang, currentQty - 1);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        renderColecciones();
+      }
+      
+      if (target.classList.contains("btn-qty-plus-buscar")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        if (!oracleId) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        setQtyLang(oracleId, lang, currentQty + 1);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        renderColecciones();
+      }
+      
+      if (target.classList.contains("btn-foil-minus-buscar")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        if (!oracleId) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        setFoilLang(oracleId, lang, currentFoil - 1);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        renderColecciones();
+      }
+      
+      if (target.classList.contains("btn-foil-plus-buscar")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        if (!oracleId) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        setFoilLang(oracleId, lang, currentFoil + 1);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        renderColecciones();
+      }
+      
+      if (target.classList.contains("btn-ir-set")) {
+        (async () => {
+          const setKey = target.dataset.setkey;
+          const cardName = target.dataset.cardname || "";
+          if (!setKey) return;
+          
+          filtroSoloFaltanSet = false;
+          setFiltroTextoSet(cardName);
+          
+          if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
+            hiddenEmptySetKeys.delete(setKey);
+            if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
+          }
+          
+          await abrirSet(setKey);
+          if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
+        })();
+      }
+    });
+    
+    // Change events para inputs de cantidad y foil
+    listaResultados.addEventListener("change", (e) => {
+      const target = e.target;
+      
+      if (target.classList.contains("inp-qty-buscar")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        if (!oracleId) return;
+        setQtyLang(oracleId, lang, target.value);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        renderColecciones();
+      }
+      
+      if (target.classList.contains("inp-foil-buscar")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        if (!oracleId) return;
+        setFoilLang(oracleId, lang, target.value);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        renderColecciones();
+      }
+    });
+  };
 }
 
 
@@ -5721,7 +5933,7 @@ async function buscarActualizacionesManualmente() {
     
     btn.textContent = "❌ Error";
     setTimeout(() => {
-      btn.textContent = "🔄 Comprobar actualizaciones";
+      btn.textContent = "Comprobar actualizaciones";
       btn.disabled = false;
     }, 2000);
     
