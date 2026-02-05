@@ -7,7 +7,7 @@
   --teal: #2FB7A3; --coral: #FF6B6B; --mustard: #E1B12C; --violet: #7A5CFA;
   --success: #2ECC71; --warning: #F39C12; --danger: #E74C3C;
   --radius: 10px; --px: 2px; --gap: 12px;
-  --font-ui: "Pixelify Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-ui: "Chakra Petch", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --focus: 0 0 0 3px rgba(122, 92, 250, 0.25);
 }
