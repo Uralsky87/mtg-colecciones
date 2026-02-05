@@ -7437,36 +7437,74 @@ async function buscarActualizacionesManualmente() {
     // Esperar un momento para que se procese
     await new Promise(resolve => setTimeout(resolve, 1500));
     
-    // Verificar si hay una actualización pendiente
-    const waiting = swRegistration.waiting;
-    const installing = swRegistration.installing;
-    
-    if (waiting || installing) {
+    const promptUpdate = (worker) => {
       // Hay una actualización disponible
       btn.textContent = textoOriginal;
       btn.disabled = false;
-      
+
       const actualizar = confirm(
         "✅ ¡Nueva versión disponible!\n\n" +
         "Se recargará la aplicación para aplicar la actualización.\n\n" +
         "¿Actualizar ahora?"
       );
-      
+
       if (actualizar) {
-        const worker = waiting || installing;
-        
         // Enviar mensaje para activar inmediatamente
         worker.postMessage({ type: "SKIP_WAITING" });
-        
+
         // Recargar cuando el nuevo SW tome control
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           window.location.reload();
         }, { once: true });
-        
+
         // Si no hay controller change en 3 segundos, forzar recarga
         setTimeout(() => {
           window.location.reload();
         }, 3000);
+      }
+    };
+
+    // Verificar si hay una actualización pendiente
+    const waiting = swRegistration.waiting;
+    const installing = swRegistration.installing;
+
+    if (waiting) {
+      promptUpdate(waiting);
+    } else if (installing) {
+      // Esperar a que termine la instalación para evitar falsos positivos
+      await new Promise(resolve => {
+        let done = false;
+        const timeout = setTimeout(() => {
+          if (done) return;
+          done = true;
+          resolve();
+        }, 2500);
+
+        const onStateChange = () => {
+          if (done) return;
+          if (installing.state === "installed" || installing.state === "activated" || installing.state === "redundant") {
+            done = true;
+            clearTimeout(timeout);
+            resolve();
+          }
+        };
+
+        installing.addEventListener("statechange", onStateChange);
+      });
+
+      const waitingAfter = swRegistration.waiting;
+      if (waitingAfter) {
+        promptUpdate(waitingAfter);
+      } else {
+        // No hay actualizaciones
+        btn.textContent = "✅ Actualizado";
+
+        setTimeout(() => {
+          btn.textContent = textoOriginal;
+          btn.disabled = false;
+        }, 2000);
+
+        console.log("✅ Ya estás usando la última versión");
       }
     } else {
       // No hay actualizaciones
