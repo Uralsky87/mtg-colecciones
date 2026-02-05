@@ -4,12 +4,15 @@
   <meta charset="UTF-8" />
   <title>ManaCodex</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css?v=0.8" />
-  <link rel="manifest" href="manifest.webmanifest">
-  <meta name="theme-color" content="#f4f6fb">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#f4f6fb" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body>
 
@@ -26,7 +29,9 @@
        PANTALLA: MENÚ PRINCIPAL
   ======================= -->
   <section id="pantallaMenu" class="pantalla active">
-    <img src="icons/manacodex.png" alt="ManaCodex" class="logo-menu" />
+    <div class="logo-menu logo-menu-text" role="img" aria-label="ManaCodex">
+      <span class="logo-mana">Mana</span><span class="logo-codex">Codex</span>
+    </div>
     <div class="menu">
       <button class="btn-menu" data-pantalla="colecciones">Colecciones</button>
       <button class="btn-menu" data-pantalla="buscar">Buscar</button>
@@ -43,6 +48,7 @@
     <div class="topbar">
       <img src="icons/flecharegresar.png" class="btn-back" data-action="volverMenu" aria-label="Volver al menú" alt="Volver" />
       <h2>Colecciones</h2>
+      <button id="btnOpcionesControles" class="btn-secundario btn-opciones" type="button">Opciones</button>
     </div>
 
     <div class="card">
@@ -126,6 +132,69 @@
     <div id="listaColecciones"></div>
   </section>
 
+  <!-- Modal: Opciones de controles de cartas -->
+  <div id="modalOpcionesControles" class="modal-overlay" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-topbar">
+        <div class="modal-title">Opciones de cartas</div>
+        <button id="btnCerrarOpcionesControles" class="btn-secundario" type="button">Cerrar</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint" style="margin-bottom: 12px;">Cambios globales para todos los sets.</div>
+
+        <div class="card opciones-section">
+          <div class="subtitulo">Idioma visible</div>
+          <div class="opciones-row">
+            <label class="chkline">
+              <input type="radio" name="modoIdiomaCartas" value="both" checked />
+              Ambos
+            </label>
+            <label class="chkline">
+              <input type="radio" name="modoIdiomaCartas" value="en" />
+              Solo EN
+            </label>
+            <label class="chkline">
+              <input type="radio" name="modoIdiomaCartas" value="es" />
+              Solo ES
+            </label>
+          </div>
+        </div>
+
+        <div class="card opciones-section">
+          <div class="subtitulo">Controles visibles</div>
+          <div class="opciones-row">
+            <label class="chkline">
+              <input id="chkMostrarCantidad" type="checkbox" checked />
+              Cantidad
+            </label>
+            <label class="chkline">
+              <input id="chkMostrarFoil" type="checkbox" checked />
+              Foil
+            </label>
+          </div>
+        </div>
+
+        <div class="card opciones-section">
+          <div class="subtitulo">Contadores extra</div>
+          <div id="listaContadoresOpciones" class="opciones-lista"></div>
+          <div class="opciones-row" style="margin-top: 8px;">
+            <input id="inputNuevoContador" type="text" placeholder="Nombre del contador" />
+            <button id="btnAgregarContador" class="btn-secundario" type="button">Añadir</button>
+          </div>
+        </div>
+
+        <div class="card opciones-section">
+          <div class="subtitulo">Tags</div>
+          <div id="listaTagsOpciones" class="opciones-lista"></div>
+          <div class="opciones-row" style="margin-top: 8px;">
+            <input id="inputNuevoTag" type="text" placeholder="Nombre del tag" />
+            <button id="btnAgregarTag" class="btn-secundario" type="button">Añadir</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- =======================
        PANTALLA: SET (CARTAS DE UNA COLECCIÓN)
   ======================= -->
@@ -156,17 +225,89 @@
 
       <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:10px;">
         <label class="chkline">
-          <input id="chkSoloFaltanSet" type="checkbox" />
-          Solo faltan
-        </label>
-        <label class="chkline">
-          <input id="chkVerCartasMovil" type="checkbox" checked />
-          Ver cartas
+          <input id="chkMostrarCartas" type="checkbox" checked />
+          Mostrar cartas
         </label>
         <label class="chkline">
           <input id="chkOcultarColeccion" type="checkbox" />
           Ocultar colección
         </label>
+      </div>
+    </div>
+
+    <!-- Desplegable de filtros (set) -->
+    <div class="filtro-desplegable-container">
+      <button id="btnToggleFiltrosSet" class="btn-filtro-header" type="button">
+        <span>Filtros del set</span>
+        <span class="arrow">▼</span>
+      </button>
+      
+      <div id="filtrosSetContent" class="filtro-content hidden">
+        <div class="filtro-checks">
+          <label class="filtro-check-item">
+            <input id="chkEnPosesionSet" type="checkbox" />
+            <span>En posesión</span>
+          </label>
+          <label class="filtro-check-item">
+            <input id="chkSoloFaltanSet" type="checkbox" />
+            <span>En falta</span>
+          </label>
+        </div>
+
+        <div style="margin-top: 12px;">
+          <label class="filtro-check-item">
+            <input id="chkFiltroColorSet" type="checkbox" />
+            <span>Filtrar por color</span>
+          </label>
+          <div id="filtroColoresSet" class="filtro-checks hidden" style="margin-top: 8px;">
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-color-set" value="W" />
+              <span>Blanco</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-color-set" value="U" />
+              <span>Azul</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-color-set" value="B" />
+              <span>Negro</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-color-set" value="R" />
+              <span>Rojo</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-color-set" value="G" />
+              <span>Verde</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-color-set" value="C" />
+              <span>Incoloro</span>
+            </label>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px;">
+          <div class="hint" style="margin-bottom: 6px;">Rareza</div>
+          <div class="filtro-checks">
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-rareza-set" value="Común" checked />
+              <span>Común</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-rareza-set" value="Infrecuente" checked />
+              <span>Infrecuente</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-rareza-set" value="Rara" checked />
+              <span>Rara</span>
+            </label>
+            <label class="filtro-check-item">
+              <input type="checkbox" class="chk-rareza-set" value="Mítica" checked />
+              <span>Mítica</span>
+            </label>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -225,7 +366,17 @@
         <input id="inputBuscar" type="text" placeholder="Ej: Lightning Bolt" />
         <button id="btnBuscar" class="btn-principal" type="button">Buscar</button>
       </div>
-      <small class="hint">Puedes escribir solo una parte del nombre.</small>
+      <div class="opciones-row" style="margin-top: 8px;">
+        <label class="chkline">
+          <input id="chkBuscarExacta" type="checkbox" />
+          <span>Palabra exacta</span>
+        </label>
+        <label class="chkline">
+          <input id="chkBuscarVerImagenes" type="checkbox" />
+          <span>Ver imagenes</span>
+        </label>
+      </div>
+      <small class="hint">Puedes escribir solo una parte del nombre o activar “Palabra exacta”.</small>
     </div>
 
     <div id="resultadosBuscar"></div>
@@ -444,7 +595,7 @@
     <!-- Versión de la app -->
     <div style="text-align:center; margin-top:20px; opacity:0.6;">
       <p class="hint" style="margin:0; font-size:0.75rem;">
-        ManaCodex v0.71b
+        ManaCodex v0.8
       </p>
     </div>
  
@@ -471,6 +622,6 @@
   <!-- Botón flotante scroll to top (único y global) -->
   <button id="btnScrollTop" aria-label="Volver arriba">↑</button>
 
-  <script src="./app.js?v=0.71b"></script>
+  <script src="./app.js?v=0.8"></script>
 </body>
 </html>

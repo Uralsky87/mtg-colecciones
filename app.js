@@ -7,6 +7,35 @@ const DEBUG = false; // Cambiar a true para habilitar métricas de rendimiento
 const JS_URL = (typeof document !== "undefined" && document.currentScript?.src) || "app.js loaded";
 console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
 
+function safeLocalStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (err) {
+    if (DEBUG) console.warn("[STORAGE] getItem falló:", key, err);
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err) {
+    if (DEBUG) console.warn("[STORAGE] setItem falló:", key, err);
+    return false;
+  }
+}
+
+function safeLocalStorageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch (err) {
+    if (DEBUG) console.warn("[STORAGE] removeItem falló:", key, err);
+    return false;
+  }
+}
+
 // ===============================
 // Baseline: Métricas de rendimiento (DEBUG mode)
 // ===============================
@@ -135,9 +164,13 @@ function guardarEstado2Seguro() {
 // ===============================
 
 const DB_NAME = 'mtg_cards_cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_SETS = 'sets';
+const STORE_IMAGES = 'images';
 const CACHE_EXPIRY_DAYS = 7; // Revalidar después de 7 días
+const IMAGE_CACHE_EXPIRY_DAYS = 14; // Cache de imágenes
+const IMAGE_CACHE_MAX_BYTES = 100 * 1024 * 1024; // 100 MB
+const LS_IMAGE_CACHE_SIZE = "mtg_image_cache_bytes_v1";
 
 let dbInstance = null;
 
@@ -166,8 +199,180 @@ async function openCardsDB() {
         const store = db.createObjectStore(STORE_SETS, { keyPath: 'setKey' });
         store.createIndex('timestamp', 'timestamp', { unique: false });
       }
+
+      // Crear object store para imágenes si no existe
+      if (!db.objectStoreNames.contains(STORE_IMAGES)) {
+        const store = db.createObjectStore(STORE_IMAGES, { keyPath: 'url' });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
     };
   });
+}
+
+function getImageCacheSize() {
+  const raw = safeLocalStorageGet(LS_IMAGE_CACHE_SIZE);
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function setImageCacheSize(bytes) {
+  const value = Math.max(0, Math.floor(bytes || 0));
+  safeLocalStorageSet(LS_IMAGE_CACHE_SIZE, String(value));
+}
+
+function bumpImageCacheSize(delta) {
+  const current = getImageCacheSize();
+  setImageCacheSize(current + (Number(delta) || 0));
+}
+
+function setImageSrc(imgEl, src) {
+  if (!imgEl) return;
+  const prevBlob = imgEl.dataset.blobUrl;
+  if (prevBlob && prevBlob.startsWith('blob:')) {
+    try { URL.revokeObjectURL(prevBlob); } catch {}
+  }
+  imgEl.src = src;
+  if (src && src.startsWith('blob:')) {
+    imgEl.dataset.blobUrl = src;
+  } else {
+    delete imgEl.dataset.blobUrl;
+  }
+}
+
+async function saveImageToDB(url, blob) {
+  try {
+    if (!url || !blob) return;
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_IMAGES, 'readwrite');
+    const store = tx.objectStore(STORE_IMAGES);
+    const size = blob.size || 0;
+
+    const existing = await new Promise((resolve) => {
+      const req = store.get(url);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+
+    const prevSize = existing?.size ?? existing?.blob?.size ?? 0;
+
+    const data = {
+      url,
+      blob,
+      size,
+      timestamp: Date.now()
+    };
+
+    store.put(data);
+
+    bumpImageCacheSize(size - prevSize);
+    enforceImageCacheLimit().catch(() => {});
+  } catch (err) {
+    if (DEBUG) console.warn('Error guardando imagen en IndexedDB:', err);
+  }
+}
+
+async function getImageFromDB(url) {
+  try {
+    if (!url) return null;
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_IMAGES, 'readonly');
+    const store = tx.objectStore(STORE_IMAGES);
+
+    return new Promise((resolve) => {
+      const request = store.get(url);
+      request.onsuccess = () => {
+        const data = request.result;
+        if (!data) return resolve(null);
+
+        const age = Date.now() - data.timestamp;
+        const maxAge = IMAGE_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+        if (age > maxAge) {
+          resolve(null);
+          return;
+        }
+
+        resolve(data);
+      };
+      request.onerror = () => resolve(null);
+    });
+  } catch (err) {
+    if (DEBUG) console.warn('Error leyendo imagen desde IndexedDB:', err);
+    return null;
+  }
+}
+
+async function enforceImageCacheLimit() {
+  try {
+    let total = getImageCacheSize();
+    if (total <= IMAGE_CACHE_MAX_BYTES) return;
+
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_IMAGES, 'readwrite');
+    const store = tx.objectStore(STORE_IMAGES);
+    const index = store.index('timestamp');
+
+    await new Promise((resolve) => {
+      const request = index.openCursor();
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (!cursor || total <= IMAGE_CACHE_MAX_BYTES) {
+          resolve();
+          return;
+        }
+
+        const value = cursor.value || {};
+        const size = value.size ?? value.blob?.size ?? 0;
+        total -= size;
+        cursor.delete();
+        cursor.continue();
+      };
+      request.onerror = () => resolve();
+    });
+
+    setImageCacheSize(total);
+  } catch (err) {
+    if (DEBUG) console.warn('Error limitando cache de imágenes:', err);
+  }
+}
+
+async function loadImageWithCache(imgEl, url) {
+  if (!imgEl || !url) return;
+  const key = String(url);
+
+  if (imgEl.dataset.imgCacheKey === key && imgEl.dataset.imgCacheState === 'loaded') return;
+  imgEl.dataset.imgCacheKey = key;
+  imgEl.dataset.imgCacheState = 'loading';
+
+  try {
+    const cached = await getImageFromDB(key);
+    if (cached && cached.blob) {
+      const blobUrl = URL.createObjectURL(cached.blob);
+      setImageSrc(imgEl, blobUrl);
+      imgEl.dataset.imgCacheState = 'loaded';
+      return;
+    }
+
+    setImageSrc(imgEl, key);
+    imgEl.dataset.imgCacheState = 'loaded';
+
+    // Guardar en background (solo mismo origen para evitar errores CORS)
+    const sameOrigin = (() => {
+      try { return new URL(key, window.location.href).origin === window.location.origin; }
+      catch { return false; }
+    })();
+
+    if (sameOrigin) {
+      const res = await fetch(key, { cache: 'force-cache' });
+      if (res && res.ok) {
+        const blob = await res.blob();
+        saveImageToDB(key, blob);
+      }
+    }
+  } catch (err) {
+    imgEl.dataset.imgCacheState = 'error';
+    if (DEBUG) console.warn('Error cargando imagen con cache:', err);
+    setImageSrc(imgEl, key);
+  }
 }
 
 // Guardar cartas de un set en IndexedDB
@@ -270,6 +475,42 @@ async function cleanExpiredCache() {
   }
 }
 
+async function cleanExpiredImageCache() {
+  try {
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_IMAGES, 'readwrite');
+    const store = tx.objectStore(STORE_IMAGES);
+    const index = store.index('timestamp');
+
+    const maxAge = IMAGE_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - maxAge;
+
+    const request = index.openCursor();
+    let deleted = 0;
+    let freed = 0;
+
+    request.onsuccess = (event) => {
+      const cursor = event.target.result;
+      if (cursor) {
+        if (cursor.value.timestamp < cutoff) {
+          const size = cursor.value.size ?? cursor.value.blob?.size ?? 0;
+          freed += size;
+          cursor.delete();
+          deleted++;
+        }
+        cursor.continue();
+      } else {
+        if (deleted > 0) {
+          bumpImageCacheSize(-freed);
+          console.log(`🧹 Limpiadas ${deleted} imágenes expiradas de IndexedDB`);
+        }
+      }
+    };
+  } catch (err) {
+    if (DEBUG) console.warn('Error limpiando cache de imágenes:', err);
+  }
+}
+
 // Debug de viewport para móvil (verificar versión cargada)
 console.log("🔧 ManaCodex v" + VERSION + " - Viewport Debug:", {
   innerWidth: window.innerWidth,
@@ -280,11 +521,22 @@ console.log("🔧 ManaCodex v" + VERSION + " - Viewport Debug:", {
 });
 
 // Función para normalizar texto (remover acentos)
+const _normalizarCache = new Map();
+const _NORMALIZAR_CACHE_MAX = 5000;
+
 function normalizarTexto(texto) {
-  return (texto || "")
+  const key = String(texto || "");
+  const cached = _normalizarCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const normalized = key
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+
+  _normalizarCache.set(key, normalized);
+  if (_normalizarCache.size > _NORMALIZAR_CACHE_MAX) _normalizarCache.clear();
+  return normalized;
 }
 
 const cartas = [];
@@ -300,18 +552,14 @@ const LS_CATALOGO_TIMESTAMP = "mtg_catalogo_timestamp_v1";
 let sbLocalUpdatedAt = 0;
 
 function sbLoadLocalUpdatedAt() {
-  const raw = localStorage.getItem(LS_LOCAL_UPDATED_AT);
+  const raw = safeLocalStorageGet(LS_LOCAL_UPDATED_AT);
   const n = Number(raw);
   sbLocalUpdatedAt = Number.isFinite(n) ? n : 0;
 }
 
 function sbTouchLocalUpdatedAt() {
   sbLocalUpdatedAt = Date.now();
-  try {
-    localStorage.setItem(LS_LOCAL_UPDATED_AT, String(sbLocalUpdatedAt));
-  } catch (err) {
-    console.warn("[STORAGE] Error actualizando timestamp:", err);
-  }
+  safeLocalStorageSet(LS_LOCAL_UPDATED_AT, String(sbLocalUpdatedAt));
 }
 
 function getEmailRedirectTo() {
@@ -338,6 +586,7 @@ let sbLoginInFlight = false;
 let sbPullInFlight = false;
 let sbExchangeInFlight = false;
 let sbJustExchanged = false;
+let sbPushInFlight = false;
 let sbApplyingCloudData = false; // Bandera para prevenir marcar como dirty durante sincronización
 
 function uiSetSyncStatus(msg) {
@@ -346,7 +595,7 @@ function uiSetSyncStatus(msg) {
 }
 
 function sbUpdateAuthUI() {
-  console.log("sbUpdateAuthUI: actualizando UI", { hasUser: !!sbUser, email: sbUser?.email, dirty: sbDirty });
+  if (DEBUG) console.log("sbUpdateAuthUI: actualizando UI", { hasUser: !!sbUser, email: sbUser?.email, dirty: sbDirty });
   
   const inputEmail = document.getElementById("inputEmail");
   const btnLogin = document.getElementById("btnLogin");
@@ -358,23 +607,23 @@ function sbUpdateAuthUI() {
     if (btnLogin) btnLogin.disabled = true;
     if (btnLogout) {
       btnLogout.style.display = "inline-block";
-      btnLogout.disabled = false; // Asegurar que está habilitado
-      console.log("sbUpdateAuthUI: btnLogout visible y habilitado");
+      btnLogout.disabled = false;
+      if (DEBUG) console.log("sbUpdateAuthUI: btnLogout visible y habilitado");
     }
     if (btnPushNow) {
       btnPushNow.disabled = false;
-      console.log("sbUpdateAuthUI: btnPushNow habilitado");
+      if (DEBUG) console.log("sbUpdateAuthUI: btnPushNow habilitado");
     }
     uiSetSyncStatus(`Conectado como ${sbUser.email || "usuario"} ✅`);
   } else {
     if (btnLogin) btnLogin.disabled = false;
     if (btnLogout) {
       btnLogout.style.display = "none";
-      console.log("sbUpdateAuthUI: btnLogout oculto");
+      if (DEBUG) console.log("sbUpdateAuthUI: btnLogout oculto");
     }
     if (btnPushNow) {
       btnPushNow.disabled = true;
-      console.log("sbUpdateAuthUI: btnPushNow deshabilitado (no hay sesión)");
+      if (DEBUG) console.log("sbUpdateAuthUI: btnPushNow deshabilitado (no hay sesión)");
     }
     uiSetSyncStatus("No has iniciado sesión.");
   }
@@ -392,6 +641,7 @@ function sbBuildCloudPayload() {
     hiddenCollections: [...(hiddenCollections || new Set())],
     statsSnapshot: statsSnapshot || null,
     decks: decks || [],
+    cardControlsConfig: cardControlsConfig || DEFAULT_CARD_CONTROLS,
     filtros: {
       filtroIdiomaColecciones: filtroIdiomaColecciones ?? "all",
       filtroTextoColecciones: filtroTextoColecciones ?? "",
@@ -452,15 +702,18 @@ function sbApplyCloudPayload(payload) {
     // ✅ NUEVO: aplicar snapshot de estadísticas desde nube
     if (payload.statsSnapshot && typeof payload.statsSnapshot === "object") {
       statsSnapshot = payload.statsSnapshot;
-      try {
-        localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
-      } catch {}
+      safeLocalStorageSet(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
     }
 
     // ✅ Aplicar decks desde la nube
     if (Array.isArray(payload.decks)) {
       decks = payload.decks;
       guardarDecks();
+    }
+
+    if (payload.cardControlsConfig && typeof payload.cardControlsConfig === "object") {
+      cardControlsConfig = normalizeCardControlsConfig(payload.cardControlsConfig);
+      guardarCardControlsConfig();
     }
 
     const f = payload.filtros || {};
@@ -492,11 +745,17 @@ async function sbLoginWithEmail(email) {
   sbLoginInFlight = true;
 
   const btnLogin = document.getElementById("btnLogin");
-  if (btnLogin) btnLogin.disabled = true;
+  const prevText = btnLogin?.textContent;
+  if (btnLogin) {
+    btnLogin.disabled = true;
+    btnLogin.textContent = "Enviando...";
+  }
 
   try {
-    const clean = String(email || "").trim();
+    const clean = String(email || "").trim().toLowerCase();
     if (!clean) { uiSetSyncStatus("Escribe un email."); return; }
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean);
+    if (!emailOk) { uiSetSyncStatus("Email inválido."); return; }
 
     uiSetSyncStatus("Enviando enlace al email…");
 
@@ -514,7 +773,10 @@ async function sbLoginWithEmail(email) {
     uiSetSyncStatus("Mira tu email y pulsa el enlace para entrar ✅");
   } finally {
     sbLoginInFlight = false;
-    if (btnLogin) btnLogin.disabled = false;
+    if (btnLogin) {
+      btnLogin.disabled = false;
+      if (prevText) btnLogin.textContent = prevText;
+    }
   }
 }
 
@@ -556,12 +818,12 @@ async function sbPullNow() {
       return;
     }
 
-        sbKnownCloudUpdatedAt = data.updated_at || null;
+    sbKnownCloudUpdatedAt = data.updated_at || null;
     sbApplyCloudPayload(data.data || {});
     
     // Asegurar que no quede marcado como dirty después de descargar
     sbDirty = false;
-    console.log("sbPullNow: datos descargados, sbDirty =", sbDirty);
+    if (DEBUG) console.log("sbPullNow: datos descargados, sbDirty =", sbDirty);
 
     // Actualizar UI con el estado correcto
     if (sbUser) {
@@ -575,33 +837,39 @@ async function sbPullNow() {
 }
 
 async function sbPushNow() {
-  console.log("sbPushNow: iniciando...", { userId: sbUser?.id, isDirty: sbDirty });
+  if (DEBUG) console.log("sbPushNow: iniciando...", { userId: sbUser?.id, isDirty: sbDirty });
+
+  if (sbPushInFlight) return;
+  sbPushInFlight = true;
   
   if (!sbUser?.id) { 
-    console.warn("sbPushNow: no hay usuario logueado");
+    if (DEBUG) console.warn("sbPushNow: no hay usuario logueado");
     uiSetSyncStatus("Inicia sesión primero."); 
+    sbPushInFlight = false;
     return; 
   }
   
   if (!sbDirty) { 
-    console.log("sbPushNow: no hay cambios pendientes");
+    if (DEBUG) console.log("sbPushNow: no hay cambios pendientes");
     uiSetSyncStatus("No hay cambios que guardar."); 
+    sbPushInFlight = false;
     return; 
   }
 
   // Anti-pisado
   let cloudUpdatedAt = null;
   try { cloudUpdatedAt = await sbGetCloudMeta(); } catch (err) {
-    console.warn("sbPushNow: error obteniendo meta de la nube", err);
+    if (DEBUG) console.warn("sbPushNow: error obteniendo meta de la nube", err);
   }
 
   if (sbKnownCloudUpdatedAt && cloudUpdatedAt && cloudUpdatedAt > sbKnownCloudUpdatedAt) {
     uiSetSyncStatus("⚠️ La nube tiene cambios de otro dispositivo. Pulsa “Actualizar” antes de guardar.");
+    sbPushInFlight = false;
     return;
   }
 
   uiSetSyncStatus("Subiendo a la nube…");
-  console.log("sbPushNow: subiendo datos...");
+  if (DEBUG) console.log("sbPushNow: subiendo datos...");
 
   const payload = sbBuildCloudPayload();
   const { error } = await supabaseClient
@@ -611,16 +879,18 @@ async function sbPushNow() {
   if (error) {
     console.error("sbPushNow: error al subir", error);
     uiSetSyncStatus("Error subiendo (mira consola).");
+    sbPushInFlight = false;
     return;
   }
 
   sbDirty = false;
-  console.log("sbPushNow: datos guardados exitosamente");
+  if (DEBUG) console.log("sbPushNow: datos guardados exitosamente");
 
   // refrescar meta
   try { sbKnownCloudUpdatedAt = await sbGetCloudMeta(); } catch {}
 
   uiSetSyncStatus("Guardado ✅");
+  sbPushInFlight = false;
 }
 
 function sbStartAutoSave() {
@@ -640,7 +910,7 @@ function sbStopAutoSave() {
 }
 
 async function sbLogout() {
-  console.log("sbLogout: cerrando sesión...");
+  if (DEBUG) console.log("sbLogout: cerrando sesión...");
   
   // Deshabilitar botones temporalmente
   const btnLogout = document.getElementById("btnLogout");
@@ -650,12 +920,12 @@ async function sbLogout() {
   try {
     if (btnLogout) {
       btnLogout.disabled = true;
-      console.log("sbLogout: botón deshabilitado");
+      if (DEBUG) console.log("sbLogout: botón deshabilitado");
     }
     if (btnPushNow) btnPushNow.disabled = true;
     
     uiSetSyncStatus("Cerrando sesión...");
-    console.log("sbLogout: llamando a signOut()...");
+    if (DEBUG) console.log("sbLogout: llamando a signOut()...");
     
     // Timeout de 15 segundos para signOut (aumentado para evitar falsos positivos)
     const signOutPromise = supabaseClient.auth.signOut();
@@ -665,7 +935,7 @@ async function sbLogout() {
     
     await Promise.race([signOutPromise, timeoutPromise]);
     
-    console.log("sbLogout: signOut() completado");
+    if (DEBUG) console.log("sbLogout: signOut() completado");
     
     // Limpiar estado local
     sbUser = null;
@@ -673,13 +943,13 @@ async function sbLogout() {
     sbKnownCloudUpdatedAt = null;
     sbStopAutoSave();
     
-    console.log("sbLogout: estado limpio");
+    if (DEBUG) console.log("sbLogout: estado limpio");
     
     // Actualizar UI inmediatamente
     sbUpdateAuthUI();
     uiSetSyncStatus("Sesión cerrada correctamente");
     
-    console.log("sbLogout: completado exitosamente");
+    if (DEBUG) console.log("sbLogout: completado exitosamente");
     
   } catch (err) {
     console.error("sbLogout: error al cerrar sesión", err);
@@ -693,17 +963,19 @@ async function sbLogout() {
 
 // Asegurar que los botones están conectados (puede ser llamado múltiples veces)
 function sbEnsureButtonsWired() {
-  console.log("sbEnsureButtonsWired: verificando botones...");
+  if (DEBUG) console.log("sbEnsureButtonsWired: verificando botones...");
   
   const btnLogin = document.getElementById("btnLogin");
   const btnLogout = document.getElementById("btnLogout");
   const btnPushNow = document.getElementById("btnPushNow");
   const inputEmail = document.getElementById("inputEmail");
 
-  if (!btnLogin) console.warn("sbEnsureButtonsWired: btnLogin no encontrado");
-  if (!btnLogout) console.warn("sbEnsureButtonsWired: btnLogout no encontrado");
-  if (!btnPushNow) console.warn("sbEnsureButtonsWired: btnPushNow no encontrado");
-  if (!inputEmail) console.warn("sbEnsureButtonsWired: inputEmail no encontrado");
+  if (DEBUG) {
+    if (!btnLogin) console.warn("sbEnsureButtonsWired: btnLogin no encontrado");
+    if (!btnLogout) console.warn("sbEnsureButtonsWired: btnLogout no encontrado");
+    if (!btnPushNow) console.warn("sbEnsureButtonsWired: btnPushNow no encontrado");
+    if (!inputEmail) console.warn("sbEnsureButtonsWired: inputEmail no encontrado");
+  }
 
   // onClickOnce ya previene duplicados con dataset.wired
   onClickOnce(btnLogin, async () => {
@@ -716,14 +988,14 @@ function sbEnsureButtonsWired() {
   });
 
   onClickOnce(btnLogout, async () => {
-    console.log("=== CLICK EN BOTÓN SALIR ===");
+    if (DEBUG) console.log("=== CLICK EN BOTÓN SALIR ===");
     try {
       await sbLogout();
     } catch (err) {
       console.error("Error en btnLogout:", err);
       uiSetSyncStatus("Error al cerrar sesión");
     }
-    console.log("=== FIN CLICK EN BOTÓN SALIR ===");
+    if (DEBUG) console.log("=== FIN CLICK EN BOTÓN SALIR ===");
   });
   
   onClickOnce(btnPushNow, async () => {
@@ -735,7 +1007,7 @@ function sbEnsureButtonsWired() {
     }
   });
   
-  console.log("sbEnsureButtonsWired: verificación completa");
+  if (DEBUG) console.log("sbEnsureButtonsWired: verificación completa");
 }
 
 let sbInitDone = false;
@@ -804,7 +1076,7 @@ async function sbCompleteMagicLinkIfPresent() {
     if (authChannel) {
       authChannel.postMessage({ type: 'AUTH_COMPLETE' });
     }
-    localStorage.setItem('mtg-auth-event', Date.now().toString());
+    safeLocalStorageSet('mtg-auth-event', Date.now().toString());
     
     // Detectar si esta ventana debe cerrarse (fue abierta por el magic link)
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
@@ -836,11 +1108,11 @@ async function sbCompleteMagicLinkIfPresent() {
 
 function onClickOnce(el, handler) {
   if (!el) {
-    console.warn("onClickOnce: elemento no encontrado");
+    if (DEBUG) console.warn("onClickOnce: elemento no encontrado");
     return;
   }
   if (el.dataset.wired === "1") {
-    console.log("onClickOnce: elemento ya conectado, OMITIENDO", el.id || el);
+    if (DEBUG) console.log("onClickOnce: elemento ya conectado, OMITIENDO", el.id || el);
     return;
   }
   el.dataset.wired = "1";
@@ -848,19 +1120,21 @@ function onClickOnce(el, handler) {
   // Wrapper que registra el click y previene doble-click
   let processing = false;
   const wrappedHandler = async (event) => {
-    console.log(`[CLICK] Botón ${el.id || 'sin-id'} clickeado`, { 
-      disabled: el.disabled, 
-      visible: el.style.display !== 'none',
-      processing: processing
-    });
+    if (DEBUG) {
+      console.log(`[CLICK] Botón ${el.id || 'sin-id'} clickeado`, { 
+        disabled: el.disabled, 
+        visible: el.style.display !== 'none',
+        processing: processing
+      });
+    }
     
     if (el.disabled) {
-      console.warn(`[CLICK] Botón ${el.id} está deshabilitado, ignorando`);
+      if (DEBUG) console.warn(`[CLICK] Botón ${el.id} está deshabilitado, ignorando`);
       return;
     }
     
     if (processing) {
-      console.warn(`[CLICK] Botón ${el.id} ya está procesando, ignorando click duplicado`);
+      if (DEBUG) console.warn(`[CLICK] Botón ${el.id} ya está procesando, ignorando click duplicado`);
       return;
     }
     
@@ -875,19 +1149,19 @@ function onClickOnce(el, handler) {
   };
   
   el.addEventListener("click", wrappedHandler);
-  console.log("onClickOnce: listener añadido a", el.id || el);
+  if (DEBUG) console.log("onClickOnce: listener añadido a", el.id || el);
 }
 
 function sbMarkDirty() {
   // No marcar como dirty si estamos aplicando datos desde la nube
   if (sbApplyingCloudData) {
-    console.log("sbMarkDirty: ignorado (aplicando datos de la nube)");
+    if (DEBUG) console.log("sbMarkDirty: ignorado (aplicando datos de la nube)");
     return;
   }
   
   sbDirty = true;
   sbTouchLocalUpdatedAt();
-  console.log("sbMarkDirty: marcado como dirty");
+  if (DEBUG) console.log("sbMarkDirty: marcado como dirty");
   uiSetSyncStatus("Cambios sin guardar…");
 }
 
@@ -1025,6 +1299,13 @@ function escapeAttr(s) {
     .replace(/'/g, "&#39;");
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function formatMesAnyo(released_at) {
   if (!released_at) return "";
   const months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -1092,7 +1373,7 @@ const LS_SET_PROGRESS = "mtg_set_progress_v1";
 let progresoPorSet = {}; // { "khm__en": { total: 286, tengo: 12 }, ... }
 
 function cargarProgresoPorSet() {
-  const raw = localStorage.getItem(LS_SET_PROGRESS);
+  const raw = safeLocalStorageGet(LS_SET_PROGRESS);
   if (!raw) return;
   try {
     const obj = JSON.parse(raw);
@@ -1101,8 +1382,8 @@ function cargarProgresoPorSet() {
 }
 
 function guardarProgresoPorSet() {
-  localStorage.setItem(LS_SET_PROGRESS, JSON.stringify(progresoPorSet));
-  sbMarkDirty(); 
+  safeLocalStorageSet(LS_SET_PROGRESS, JSON.stringify(progresoPorSet));
+  if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
 // ===============================
@@ -1112,11 +1393,20 @@ function guardarProgresoPorSet() {
 const LS_STATS_SNAPSHOT = "mtg_stats_snapshot_v1";
 let statsSnapshot = null;
 
+let statsSnapshotTimeout = null;
+function scheduleStatsSnapshotUpdate({ renderIfVisible = false } = {}) {
+  clearTimeout(statsSnapshotTimeout);
+  statsSnapshotTimeout = setTimeout(() => {
+    actualizarStatsSnapshot({ render: renderIfVisible && document.getElementById("pantallaEstadisticas")?.classList.contains("active") });
+    statsSnapshotTimeout = null;
+  }, 300);
+}
+
 // Si estás aplicando payload de la nube, evita marcar dirty por cosas derivadas
 let sbApplyingCloud = false;
 
 function cargarStatsSnapshot() {
-  const raw = localStorage.getItem(LS_STATS_SNAPSHOT);
+  const raw = safeLocalStorageGet(LS_STATS_SNAPSHOT);
   if (!raw) return;
   try {
     const obj = JSON.parse(raw);
@@ -1126,7 +1416,7 @@ function cargarStatsSnapshot() {
 
 function guardarStatsSnapshot(snap, { markDirty = true } = {}) {
   statsSnapshot = snap || null;
-  localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot || {}));
+  safeLocalStorageSet(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot || {}));
 
   // Queremos que se sincronice con Supabase, pero NO cuando viene de un pull
   if (markDirty && !sbApplyingCloud) sbMarkDirty();
@@ -1137,48 +1427,95 @@ function calcularStatsDesdeEstado() {
   let distinct = 0;     // cartas distintas con qty > 0
   let totalQty = 0;     // suma de qty
   let foilQty = 0;      // suma de foilQty
-  let playedQty = 0;    // suma de playedQty
   let riCount = 0;      // nº de cartas con wantMore
 
-  for (const id of Object.keys(estado || {})) {
-    const st = getEstadoCarta(id); // normaliza
-    const q = Number(st.qty || 0);
-    if (q > 0) distinct++;
-    totalQty += q;
+  const countersCfg = getEnabledCountersConfig();
+  const tagsCfg = getEnabledTagsConfig();
+  const counterTotals = {};
+  const tagTotals = {};
+  countersCfg.forEach(c => { counterTotals[c.key] = 0; });
+  tagsCfg.forEach(t => { tagTotals[t.key] = 0; });
 
-    foilQty += Number(st.foilQty || 0);
-    playedQty += Number(st.playedQty || 0);
-    if (st.wantMore) riCount++;
+  const estado2Keys = Object.keys(estado2 || {});
+  if (estado2Keys.length > 0) {
+    for (const oracleId of estado2Keys) {
+      const st2 = getEstadoCarta2(oracleId);
+      const q = Number(st2.qty_en || 0) + Number(st2.qty_es || 0);
+      if (q > 0) distinct++;
+      totalQty += q;
+      foilQty += Number(st2.foil_en || 0) + Number(st2.foil_es || 0);
+      if (st2.ri_en || st2.ri_es) riCount++;
+
+      for (const c of countersCfg) {
+        if (c.key === "qty") {
+          counterTotals[c.key] += q;
+        } else if (c.key === "foil") {
+          counterTotals[c.key] += Number(st2.foil_en || 0) + Number(st2.foil_es || 0);
+        } else {
+          counterTotals[c.key] += Number(st2.counters_en?.[c.key] || 0) + Number(st2.counters_es?.[c.key] || 0);
+        }
+      }
+
+      for (const t of tagsCfg) {
+        if (t.key === "ri") {
+          if (st2.ri_en || st2.ri_es) tagTotals[t.key] += 1;
+        } else {
+          if (st2.tags_en?.[t.key] || st2.tags_es?.[t.key]) tagTotals[t.key] += 1;
+        }
+      }
+    }
+  } else {
+    // Fallback legacy
+    for (const id of Object.keys(estado || {})) {
+      const st = getEstadoCarta(id); // normaliza
+      const q = Number(st.qty || 0);
+      if (q > 0) distinct++;
+      totalQty += q;
+      foilQty += Number(st.foilQty || 0);
+      if (st.wantMore) riCount++;
+
+      for (const c of countersCfg) {
+        if (c.key === "qty") counterTotals[c.key] += q;
+        if (c.key === "foil") counterTotals[c.key] += Number(st.foilQty || 0);
+      }
+
+      for (const t of tagsCfg) {
+        if (t.key === "ri" && st.wantMore) tagTotals[t.key] += 1;
+      }
+    }
   }
 
-  // Stats por sets (usando progreso guardado; no requiere cargar sets)
-  const entries = Object.entries(progresoPorSet || {});
-  const totalColecciones = entries.length;
+  // Stats por sets (coordinado con colecciones)
+  const setKeys = setMetaByKey.size > 0 ? Array.from(setMetaByKey.keys()) : Object.keys(progresoPorSet || {});
+  const totalColecciones = setKeys.length;
 
-  const conAlguna = entries.filter(([,v]) => (v?.tengo || 0) > 0).length;
-  const completas = entries.filter(([,v]) => {
-    const t = Number(v?.total);
-    const h = Number(v?.tengo || 0);
-    return Number.isFinite(t) && t > 0 && h === t;
-  }).length;
-
-  // % global aproximado (solo colecciones con total conocido)
+  let conAlguna = 0;
+  let completas = 0;
   let sumTengo = 0;
   let sumTotal = 0;
-  for (const [, v] of entries) {
-    const t = Number(v?.total);
-    const h = Number(v?.tengo || 0);
+
+  for (const setKey of setKeys) {
+    const p = progresoDeColeccion(setKey);
+    const t = Number(p.total);
+    const h = Number(p.tengo || 0);
+    if (h > 0) conAlguna++;
     if (Number.isFinite(t) && t > 0) {
       sumTotal += t;
       sumTengo += Math.min(h, t);
+      if (h === t) completas++;
     }
   }
+
   const pctGlobal = sumTotal > 0 ? Math.round((sumTengo / sumTotal) * 100) : null;
 
   return {
     version: 1,
     updatedAt: Date.now(),
-    resumen: { distinct, totalQty, foilQty, playedQty, riCount },
+    resumen: { distinct, totalQty, foilQty, riCount },
+    controlsStats: {
+      counters: countersCfg.map(c => ({ key: c.key, label: c.label, value: counterTotals[c.key] || 0 })),
+      tags: tagsCfg.map(t => ({ key: t.key, label: t.label, value: tagTotals[t.key] || 0 }))
+    },
     sets: { totalColecciones, conAlguna, completas, pctGlobal }
   };
 }
@@ -1204,13 +1541,23 @@ function renderStatsDesdeSnapshot(snap) {
 
   const r = snap.resumen;
   const s = snap.sets || {};
+  const controlsStats = snap.controlsStats || { counters: [], tags: [] };
+
+  const resumenItems = [
+    { label: "Total de cartas en colección", value: r.distinct }
+  ];
+
+  for (const c of controlsStats.counters || []) {
+    resumenItems.push({ label: c.label, value: c.value });
+  }
+
+  for (const t of controlsStats.tags || []) {
+    resumenItems.push({ label: t.label, value: t.value });
+  }
 
   elResumen.innerHTML = `
     <div class="stat-grid">
-      <div class="stat"><div class="k">Total de cartas en colección</div><div class="v">${r.distinct}</div></div>
-      <div class="stat"><div class="k">Total de cartas unitarias</div><div class="v">${r.totalQty}</div></div>
-      <div class="stat"><div class="k">Foil</div><div class="v">${r.foilQty}</div></div>
-      <div class="stat"><div class="k">Ri</div><div class="v">${r.riCount}</div></div>
+      ${resumenItems.map(item => `<div class="stat"><div class="k">${escapeHtml(String(item.label))}</div><div class="v">${item.value}</div></div>`).join("")}
     </div>
     <div class="hint" style="margin-top:10px;">
       Última actualización: ${snap.updatedAt ? new Date(snap.updatedAt).toLocaleString() : "—"}
@@ -1253,14 +1600,7 @@ function actualizarProgresoGuardado(setKey) {
   const lista = cacheCartasPorSetLang[setKey];
   if (!lista) return; // si no hay cartas cargadas, no podemos calcular total
 
-  const total = lista.length;
-  // Usar estado2: contar cartas con cantidad en cualquier idioma
-  const tengo = lista.filter(c => {
-    if (!c.oracle_id) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
-    const st2 = getEstadoCarta2(c.oracle_id);
-    return (st2.qty_en + st2.qty_es) > 0;
-  }).length;
-
+  const { total, tengo } = computeProgresoFromList(lista);
   progresoPorSet[setKey] = { total, tengo, updatedAt: Date.now() };
   guardarProgresoPorSet();
 }
@@ -1269,6 +1609,59 @@ function actualizarProgresoSetActualSiSePuede() {
   if (!setActualKey) return;
   if (!cacheCartasPorSetLang[setActualKey]) return; // si no está cargado, no podemos contar
   actualizarProgresoGuardado(setActualKey);          // esto ya guarda en localStorage
+}
+
+function computeProgresoFromList(lista) {
+  const total = Array.isArray(lista) ? lista.length : 0;
+  const tengo = Array.isArray(lista)
+    ? lista.filter(c => {
+        if (!c.oracle_id) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
+        const st2 = getEstadoCarta2(c.oracle_id);
+        return (st2.qty_en + st2.qty_es) > 0;
+      }).length
+    : 0;
+  return { total, tengo };
+}
+
+async function recomputeAllProgressFromCache() {
+  const updated = new Set();
+  const now = Date.now();
+
+  // 1) RAM cache
+  for (const [setKey, lista] of Object.entries(cacheCartasPorSetLang || {})) {
+    if (!Array.isArray(lista)) continue;
+    const { total, tengo } = computeProgresoFromList(lista);
+    progresoPorSet[setKey] = { total, tengo, updatedAt: now };
+    updated.add(setKey);
+  }
+
+  // 2) IndexedDB cache
+  try {
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_SETS, 'readonly');
+    const store = tx.objectStore(STORE_SETS);
+
+    await new Promise((resolve) => {
+      const request = store.openCursor();
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (!cursor) return resolve();
+
+        const data = cursor.value;
+        if (data && data.setKey && Array.isArray(data.cards) && !updated.has(data.setKey)) {
+          const { total, tengo } = computeProgresoFromList(data.cards);
+          progresoPorSet[data.setKey] = { total, tengo, updatedAt: now };
+        }
+
+        cursor.continue();
+      };
+      request.onerror = () => resolve();
+    });
+  } catch (err) {
+    if (DEBUG) console.warn('Error recalculando progreso desde IndexedDB:', err);
+  }
+
+  guardarProgresoPorSet();
 }
 
 // ===============================
@@ -1328,7 +1721,7 @@ if (st && typeof st === "object" && ("foil" in st) && !("foilQty" in st)) {
 }
 
 function cargarEstado() {
-  const raw = localStorage.getItem(LS_KEY);
+  const raw = safeLocalStorageGet(LS_KEY);
   if (!raw) {
     estado = {};
     return;
@@ -1345,7 +1738,7 @@ function cargarEstado() {
 }
 
 function guardarEstado() {
-  localStorage.setItem(LS_KEY, JSON.stringify(estado));
+  safeLocalStorageSet(LS_KEY, JSON.stringify(estado));
   if (typeof sbMarkDirty === "function") sbMarkDirty();
   cargarStatsSnapshot();
 }
@@ -1438,7 +1831,7 @@ function setWantMore(id, value) {
 const LS_KEY_V2 = "mtg_coleccion_estado_v2";
 const LS_ORACLE_CACHE = "mtg_oracle_id_cache_v1";
 
-let estado2 = {}; // oracle_id -> { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es }
+let estado2 = {}; // oracle_id -> { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es, counters_en, counters_es, tags_en, tags_es }
 let estadoLegacyById = {}; // Copia temporal del estado legacy (por id) para migración
 let oracleIdCache = {}; // id -> { oracle_id, lang } - cache de resolución
 
@@ -1451,6 +1844,28 @@ let resolvingLegacyIds = false;
 
 // ===== Validación y normalización =====
 
+function normalizeCounterMap(map) {
+  const out = {};
+  if (!map || typeof map !== "object") return out;
+  for (const [k, v] of Object.entries(map)) {
+    const key = String(k || "").trim();
+    if (!key) continue;
+    out[key] = clampInt(Number(v ?? 0), 0, 999);
+  }
+  return out;
+}
+
+function normalizeTagMap(map) {
+  const out = {};
+  if (!map || typeof map !== "object") return out;
+  for (const [k, v] of Object.entries(map)) {
+    const key = String(k || "").trim();
+    if (!key) continue;
+    out[key] = !!v;
+  }
+  return out;
+}
+
 function normalizarEstadoCarta2(st) {
   const qty_en = clampInt(Number(st.qty_en ?? 0), 0, 999);
   const qty_es = clampInt(Number(st.qty_es ?? 0), 0, 999);
@@ -1461,14 +1876,19 @@ function normalizarEstadoCarta2(st) {
   
   const ri_en = !!st.ri_en;
   const ri_es = !!st.ri_es;
+
+  const counters_en = normalizeCounterMap(st.counters_en);
+  const counters_es = normalizeCounterMap(st.counters_es);
+  const tags_en = normalizeTagMap(st.tags_en);
+  const tags_es = normalizeTagMap(st.tags_es);
   
-  return { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es };
+  return { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es, counters_en, counters_es, tags_en, tags_es };
 }
 
 function ensureEstadoCarta2(oracle_id) {
   const key = String(oracle_id);
   if (!estado2[key]) {
-    estado2[key] = { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false };
+    estado2[key] = { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false, counters_en: {}, counters_es: {}, tags_en: {}, tags_es: {} };
   }
   return estado2[key];
 }
@@ -1476,12 +1896,12 @@ function ensureEstadoCarta2(oracle_id) {
 // ===== API pública v2 =====
 
 function getEstadoCarta2(oracle_id) {
-  if (!oracle_id) return { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false };
+  if (!oracle_id) return { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false, counters_en: {}, counters_es: {}, tags_en: {}, tags_es: {} };
   
   const key = String(oracle_id);
   const st = estado2[key];
   
-  if (!st) return { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false };
+  if (!st) return { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false, counters_en: {}, counters_es: {}, tags_en: {}, tags_es: {} };
   
   const norm = normalizarEstadoCarta2(st);
   estado2[key] = norm;
@@ -1509,6 +1929,8 @@ function setQtyLang(oracle_id, lang, value) {
   
   guardarEstado2();
   sbMarkDirty();
+  actualizarProgresoSetActualSiSePuede();
+  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
 }
 
 function setFoilLang(oracle_id, lang, value) {
@@ -1525,6 +1947,7 @@ function setFoilLang(oracle_id, lang, value) {
   
   guardarEstado2();
   sbMarkDirty();
+  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
 }
 
 function setRiLang(oracle_id, lang, value) {
@@ -1540,6 +1963,64 @@ function setRiLang(oracle_id, lang, value) {
   
   guardarEstado2();
   sbMarkDirty();
+  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+}
+
+function getCounterValue(st2, lang, key) {
+  if (key === "qty") return lang === "es" ? st2.qty_es : st2.qty_en;
+  if (key === "foil") return lang === "es" ? st2.foil_es : st2.foil_en;
+  const map = lang === "es" ? (st2.counters_es || {}) : (st2.counters_en || {});
+  return Number(map[key] ?? 0);
+}
+
+function setCounterLang(oracle_id, lang, key, value) {
+  if (!oracle_id || oracle_id === 'undefined' || oracle_id === 'null') {
+    console.warn('setCounterLang: oracle_id inválido', oracle_id);
+    return;
+  }
+  if (key === "qty") {
+    setQtyLang(oracle_id, lang, value);
+    return;
+  }
+  if (key === "foil") {
+    setFoilLang(oracle_id, lang, value);
+    return;
+  }
+
+  const st = ensureEstadoCarta2(oracle_id);
+  const mapKey = lang === "es" ? "counters_es" : "counters_en";
+  if (!st[mapKey] || typeof st[mapKey] !== "object") st[mapKey] = {};
+  st[mapKey][key] = clampInt(Number(value ?? 0), 0, 999);
+
+  guardarEstado2();
+  sbMarkDirty();
+  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+}
+
+function getTagValue(st2, lang, key) {
+  if (key === "ri") return lang === "es" ? !!st2.ri_es : !!st2.ri_en;
+  const map = lang === "es" ? (st2.tags_es || {}) : (st2.tags_en || {});
+  return !!map[key];
+}
+
+function setTagLang(oracle_id, lang, key, value) {
+  if (!oracle_id || oracle_id === 'undefined' || oracle_id === 'null') {
+    console.warn('setTagLang: oracle_id inválido', oracle_id);
+    return;
+  }
+  if (key === "ri") {
+    setRiLang(oracle_id, lang, value);
+    return;
+  }
+
+  const st = ensureEstadoCarta2(oracle_id);
+  const mapKey = lang === "es" ? "tags_es" : "tags_en";
+  if (!st[mapKey] || typeof st[mapKey] !== "object") st[mapKey] = {};
+  st[mapKey][key] = !!value;
+
+  guardarEstado2();
+  sbMarkDirty();
+  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
 }
 
 // ===== UI: Alternancia de idioma por carta =====
@@ -1550,7 +2031,7 @@ let fetchingPrints = new Set(); // oracle_ids siendo buscados (evitar duplicados
 const LS_UI_LANG = "mtg_ui_lang_by_oracle_v1";
 
 function cargarUILangByOracle() {
-  const raw = localStorage.getItem(LS_UI_LANG);
+  const raw = safeLocalStorageGet(LS_UI_LANG);
   if (!raw) return;
   try {
     uiLangByOracle = JSON.parse(raw) || {};
@@ -1561,11 +2042,7 @@ function cargarUILangByOracle() {
 }
 
 function guardarUILangByOracle() {
-  try {
-    localStorage.setItem(LS_UI_LANG, JSON.stringify(uiLangByOracle));
-  } catch (e) {
-    console.warn("Error guardando UI lang:", e);
-  }
+  safeLocalStorageSet(LS_UI_LANG, JSON.stringify(uiLangByOracle));
 }
 
 function getUILang(oracle_id) {
@@ -1686,7 +2163,7 @@ async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, pr
 
 function cargarEstado2() {
   // Cargar estado v2
-  const raw2 = localStorage.getItem(LS_KEY_V2);
+  const raw2 = safeLocalStorageGet(LS_KEY_V2);
   if (raw2) {
     try {
       estado2 = JSON.parse(raw2) || {};
@@ -1697,7 +2174,7 @@ function cargarEstado2() {
   }
   
   // Cargar cache de oracle_id
-  const rawCache = localStorage.getItem(LS_ORACLE_CACHE);
+  const rawCache = safeLocalStorageGet(LS_ORACLE_CACHE);
   if (rawCache) {
     try {
       oracleIdCache = JSON.parse(rawCache) || {};
@@ -1708,7 +2185,7 @@ function cargarEstado2() {
   }
   
   // Cargar estado legacy para migración
-  const rawLegacy = localStorage.getItem(LS_KEY);
+  const rawLegacy = safeLocalStorageGet(LS_KEY);
   if (rawLegacy) {
     try {
       estadoLegacyById = JSON.parse(rawLegacy) || {};
@@ -1725,7 +2202,7 @@ function guardarEstado2(immediate = false) {
   if (immediate) {
     // Guardar inmediatamente (usado en sync, logout, etc)
     clearTimeout(saveEstado2Timeout);
-    localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
+    safeLocalStorageSet(LS_KEY_V2, JSON.stringify(estado2));
     if (typeof sbMarkDirty === "function") sbMarkDirty();
     return;
   }
@@ -1734,7 +2211,7 @@ function guardarEstado2(immediate = false) {
 }
 
 function guardarOracleCache() {
-  localStorage.setItem(LS_ORACLE_CACHE, JSON.stringify(oracleIdCache));
+  safeLocalStorageSet(LS_ORACLE_CACHE, JSON.stringify(oracleIdCache));
 }
 
 // ===== Construcción de índice oracle_id -> ids =====
@@ -1954,10 +2431,11 @@ async function scryDelay() {
   _scyLastCallAt = Date.now();
 }
 
-async function scryFetchJson(url) {
+async function scryFetchJson(url, opts = {}) {
   await scryDelay();
+  const { signal } = opts || {};
 
-  const res = await fetch(url, { headers: { "Accept": "application/json" } });
+  const res = await fetch(url, { headers: { "Accept": "application/json" }, signal });
 
   // Leemos UNA vez el body para evitar "body already used"
   const text = await res.text().catch(() => "");
@@ -1980,12 +2458,12 @@ async function scryFetchJson(url) {
 }
 
 // Scryfall devuelve listas paginadas con has_more y next_page
-async function scryFetchAllPages(firstUrl) {
+async function scryFetchAllPages(firstUrl, opts = {}) {
   const all = [];
   let url = firstUrl;
 
   while (url) {
-    const data = await scryFetchJson(url);
+    const data = await scryFetchJson(url, opts);
     if (Array.isArray(data.data)) all.push(...data.data);
     url = data.has_more ? data.next_page : null;
   }
@@ -2113,31 +2591,34 @@ async function scryGetCardsBySetAndLang(setCode, lang) {
 
 const SEARCH_LANGS = ["en", "es"];
 const SEARCH_LIMIT = 200; // evita bajar 1000+ prints en cartas hiper reimpresas
+let buscarExacta = false;
+let buscarVerImagenes = false;
 
-async function scryFetchAllPagesLimited(firstUrl, limit = 200) {
+async function scryFetchAllPagesLimited(firstUrl, limit = 200, opts = {}) {
   const all = [];
   let url = firstUrl;
 
   while (url && all.length < limit) {
-    const data = await scryFetchJson(url);
+    const data = await scryFetchJson(url, opts);
     if (Array.isArray(data.data)) all.push(...data.data);
     url = (data.has_more && all.length < limit) ? data.next_page : null;
   }
   return all;
 }
 
-function buildNameQuery(qUser) {
+function buildNameQuery(qUser, exact = false) {
   // Si hay espacios, comillas. También quitamos comillas del usuario.
   const safe = String(qUser || "").replace(/"/g, "").trim();
   if (!safe) return "";
+  if (exact) return `!"${safe}"`;
   return /\s/.test(safe) ? `name:"${safe}"` : `name:${safe}`;
 }
 
-async function scrySearchPrintsByName(texto) {
+async function scrySearchPrintsByName(texto, opts = {}) {
   const qUser = (texto || "").trim();
   if (!qUser) return [];
 
-  const nameClause = buildNameQuery(qUser);
+  const nameClause = buildNameQuery(qUser, !!opts.exact);
   if (!nameClause) return [];
 
   // Solo papel, solo EN/ES, y búsqueda flexible por nombre
@@ -2146,7 +2627,7 @@ async function scrySearchPrintsByName(texto) {
   const url = `${SCY_BASE}/cards/search?q=${q}&unique=prints&order=released&dir=desc`;
 
   try {
-    return await scryFetchAllPagesLimited(url, SEARCH_LIMIT);
+    return await scryFetchAllPagesLimited(url, SEARCH_LIMIT, opts);
   } catch (err) {
     // Si no encuentra nada, Scryfall suele devolver 404 not_found
     if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
@@ -2154,6 +2635,16 @@ async function scrySearchPrintsByName(texto) {
     }
     throw err;
   }
+}
+
+function getBuscarExacta() {
+  const chk = document.getElementById("chkBuscarExacta");
+  return chk ? !!chk.checked : !!buscarExacta;
+}
+
+function getBuscarVerImagenes() {
+  const chk = document.getElementById("chkBuscarVerImagenes");
+  return chk ? !!chk.checked : !!buscarVerImagenes;
 }
 
 function agruparResultadosBusqueda(cards) {
@@ -2241,9 +2732,9 @@ let catalogoLastUpdate = null;    // timestamp de última actualización
 // Guardar catálogo en localStorage
 function guardarCatalogo() {
   try {
-    localStorage.setItem(LS_CATALOGO_SETS, JSON.stringify(catalogoSets));
+    safeLocalStorageSet(LS_CATALOGO_SETS, JSON.stringify(catalogoSets));
     const timestamp = Date.now();
-    localStorage.setItem(LS_CATALOGO_TIMESTAMP, timestamp.toString());
+    safeLocalStorageSet(LS_CATALOGO_TIMESTAMP, timestamp.toString());
     catalogoLastUpdate = timestamp;
     console.log("Catálogo guardado en cache:", catalogoSets.length, "sets");
   } catch (err) {
@@ -2254,8 +2745,8 @@ function guardarCatalogo() {
 // Cargar catálogo desde localStorage
 function cargarCatalogo() {
   try {
-    const rawSets = localStorage.getItem(LS_CATALOGO_SETS);
-    const rawTimestamp = localStorage.getItem(LS_CATALOGO_TIMESTAMP);
+    const rawSets = safeLocalStorageGet(LS_CATALOGO_SETS);
+    const rawTimestamp = safeLocalStorageGet(LS_CATALOGO_TIMESTAMP);
     
     if (rawSets) {
       catalogoSets = JSON.parse(rawSets);
@@ -2458,7 +2949,7 @@ const LS_HIDDEN_EMPTY_SETS = "mtg_hidden_empty_sets_v1";
 let hiddenEmptySetKeys = new Set();
 
 function cargarHiddenEmptySets() {
-  const raw = localStorage.getItem(LS_HIDDEN_EMPTY_SETS);
+  const raw = safeLocalStorageGet(LS_HIDDEN_EMPTY_SETS);
   if (!raw) return;
   try {
     const arr = JSON.parse(raw);
@@ -2467,7 +2958,7 @@ function cargarHiddenEmptySets() {
 }
 
 function guardarHiddenEmptySets() {
-  localStorage.setItem(LS_HIDDEN_EMPTY_SETS, JSON.stringify([...hiddenEmptySetKeys]));
+  safeLocalStorageSet(LS_HIDDEN_EMPTY_SETS, JSON.stringify([...hiddenEmptySetKeys]));
   if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
@@ -2479,7 +2970,7 @@ const LS_HIDDEN_COLLECTIONS = "mtg_hidden_collections_v1";
 let hiddenCollections = new Set();
 
 function cargarHiddenCollections() {
-  const raw = localStorage.getItem(LS_HIDDEN_COLLECTIONS);
+  const raw = safeLocalStorageGet(LS_HIDDEN_COLLECTIONS);
   if (!raw) return;
   try {
     const arr = JSON.parse(raw);
@@ -2488,7 +2979,7 @@ function cargarHiddenCollections() {
 }
 
 function guardarHiddenCollections() {
-  localStorage.setItem(LS_HIDDEN_COLLECTIONS, JSON.stringify([...hiddenCollections]));
+  safeLocalStorageSet(LS_HIDDEN_COLLECTIONS, JSON.stringify([...hiddenCollections]));
   if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
@@ -2550,13 +3041,13 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
     </div>
     ${esDobleCaracardFaces && imagenCara1 && imagenCara2 ? `
       <div style="position: relative; display: inline-block;">
-        <img id="imgCartaModal" src="${imagenCara1}" alt="${titulo || "Carta"}" loading="lazy" 
+        <img id="imgCartaModal" alt="${titulo || "Carta"}" loading="lazy" 
              data-cara1="${imagenCara1}" data-cara2="${imagenCara2}" data-cara-actual="1" />
         <button id="btnVoltearCarta" class="btn-voltear-carta" type="button" title="Voltear carta">
           🔄
         </button>
       </div>
-    ` : (imageUrl ? `<img src="${imageUrl}" alt="${titulo || "Carta"}" loading="lazy" />`
+    ` : (imageUrl ? `<img alt="${titulo || "Carta"}" loading="lazy" data-img-url="${imageUrl}" />`
               : `<div class="card"><p>No hay imagen disponible.</p></div>`)}
     ${oracleId ? generarControlesModalCarta(oracleId) : ''}
   `;
@@ -2573,6 +3064,13 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
     btnNext.addEventListener('click', () => moverModalCarta(1));
   }
   
+  if (imgCarta && imagenCara1) {
+    loadImageWithCache(imgCarta, imagenCara1);
+  } else if (imageUrl) {
+    const imgSimple = body.querySelector('img[data-img-url]') || body.querySelector('img');
+    if (imgSimple) loadImageWithCache(imgSimple, imageUrl);
+  }
+
   if (btnVoltear && imgCarta) {
     btnVoltear.addEventListener('click', () => {
       const caraActual = parseInt(imgCarta.dataset.caraActual);
@@ -2581,7 +3079,7 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
       
       imgCarta.style.opacity = '0';
       setTimeout(() => {
-        imgCarta.src = nuevaImagen;
+        loadImageWithCache(imgCarta, nuevaImagen);
         imgCarta.dataset.caraActual = nuevaCara;
         imgCarta.style.opacity = '1';
       }, 150);
@@ -2597,7 +3095,23 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
 }
 
 function generarControlesModalCarta(oracleId) {
-  const langActivo = getUILang(oracleId);
+  const cfg = getCardControlsConfig();
+  const langActivo = cfg.langMode === "both" ? getUILang(oracleId) : cfg.langMode;
+
+  if (cfg.langMode !== "both") {
+    return `
+      <div class="card" style="margin-top: 16px;">
+        <div class="carta-controles modal-controles" data-active-lang="${langActivo}" style="background: rgba(0,0,0,.06);">
+          <div class="controles-header">
+            <span class="lang-badge lang-active">
+              <img class="flag-icon" src="icons/flag-${langActivo === "en" ? "en" : "es"}.svg" alt="${langActivo === "en" ? "EN" : "ES"}" />
+              <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   return `
     <div class="card" style="margin-top: 16px;">
@@ -2624,6 +3138,7 @@ function wireControlesModalCarta(container, oracleId) {
   // Toggle de idioma (único listener en el modal)
   container.querySelectorAll('.btn-modal-lang-switch').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (getCardControlsConfig().langMode !== "both") return;
       const cartaControles = btn.closest('.carta-controles');
       if (!cartaControles) return;
       
@@ -2677,10 +3192,10 @@ function wireControlesModalCarta(container, oracleId) {
                   
                   if (imgUrl) {
                     if (!firstImg.dataset.imgEnOriginal) {
-                      firstImg.dataset.imgEnOriginal = firstImg.src;
+                      firstImg.dataset.imgEnOriginal = firstImg.dataset.imgCacheKey || firstImg.src;
                     }
                     console.log(`✅ Actualizando imagen modal a ES para ${oracleId}`);
-                    firstImg.src = imgUrl;
+                    loadImageWithCache(firstImg, imgUrl);
                   }
                 }
               });
@@ -2689,7 +3204,7 @@ function wireControlesModalCarta(container, oracleId) {
             // Restaurar imagen EN
             if (firstImg.dataset.imgEnOriginal) {
               console.log(`✅ Restaurando imagen modal a EN para ${oracleId}`);
-              firstImg.src = firstImg.dataset.imgEnOriginal;
+              loadImageWithCache(firstImg, firstImg.dataset.imgEnOriginal);
             }
           }
         }
@@ -2776,7 +3291,7 @@ const LS_SETNAME_ES_BY_CODE = "mtg_setname_es_by_code_v1";
 let setNameEsByCode = {}; // { "ons": "Embestida", ... }
 
 function cargarSetNameEsDesdeLocalStorage() {
-  const raw = localStorage.getItem(LS_SETNAME_ES_BY_CODE);
+  const raw = safeLocalStorageGet(LS_SETNAME_ES_BY_CODE);
   if (!raw) return false;
   try {
     const obj = JSON.parse(raw);
@@ -2789,7 +3304,7 @@ function cargarSetNameEsDesdeLocalStorage() {
 }
 
 function guardarSetNameEsEnLocalStorage() {
-  localStorage.setItem(LS_SETNAME_ES_BY_CODE, JSON.stringify(setNameEsByCode));
+  safeLocalStorageSet(LS_SETNAME_ES_BY_CODE, JSON.stringify(setNameEsByCode));
 }
 
 async function cargarSetNameEsDesdeMTGJSON() {
@@ -2914,11 +3429,171 @@ let vistaColecciones = "simbolo"; // "simbolo" | "lista"
 
 const LS_FILTERS_KEY = "mtg_colecciones_filtros_v1";
 
+// ===============================
+// Configuración global de controles de cartas
+// ===============================
+const LS_CARD_CONTROLS = "mtg_card_controls_v1";
+
+const DEFAULT_CARD_CONTROLS = {
+  langMode: "both", // "both" | "en" | "es"
+  showQty: true,
+  showFoil: true,
+  extraCounters: [],
+  extraTags: [],
+  riTagEnabled: false
+};
+
+let cardControlsConfig = { ...DEFAULT_CARD_CONTROLS };
+
+function normalizeControlList(list, { allowBuiltIn = false } = {}) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const key = String(raw.key || "").trim();
+    if (!key || seen.has(key)) continue;
+    const label = String(raw.label || key).trim() || key;
+    const enabled = !!raw.enabled;
+    const builtIn = allowBuiltIn ? !!raw.builtIn : false;
+    out.push({ key, label, enabled, builtIn });
+    seen.add(key);
+  }
+  return out;
+}
+
+function normalizeCardControlsConfig(cfg) {
+  const langMode = (cfg && typeof cfg.langMode === "string") ? cfg.langMode : DEFAULT_CARD_CONTROLS.langMode;
+  const safeLangMode = (langMode === "en" || langMode === "es" || langMode === "both") ? langMode : "both";
+  const showQty = cfg && typeof cfg.showQty === "boolean" ? cfg.showQty : DEFAULT_CARD_CONTROLS.showQty;
+  const showFoil = cfg && typeof cfg.showFoil === "boolean" ? cfg.showFoil : DEFAULT_CARD_CONTROLS.showFoil;
+  const riTagEnabled = cfg && typeof cfg.riTagEnabled === "boolean" ? cfg.riTagEnabled : DEFAULT_CARD_CONTROLS.riTagEnabled;
+
+  const extraCounters = normalizeControlList(cfg?.extraCounters, { allowBuiltIn: false });
+  const extraTags = normalizeControlList(cfg?.extraTags, { allowBuiltIn: true })
+    .filter(t => t.key !== "ri" || riTagEnabled);
+
+  return { langMode: safeLangMode, showQty, showFoil, extraCounters, extraTags, riTagEnabled };
+}
+
+function cargarCardControlsConfig() {
+  const raw = safeLocalStorageGet(LS_CARD_CONTROLS);
+  if (!raw) {
+    cardControlsConfig = normalizeCardControlsConfig(DEFAULT_CARD_CONTROLS);
+    return;
+  }
+  try {
+    const cfg = JSON.parse(raw);
+    cardControlsConfig = normalizeCardControlsConfig(cfg || {});
+  } catch {
+    cardControlsConfig = normalizeCardControlsConfig(DEFAULT_CARD_CONTROLS);
+  }
+}
+
+function guardarCardControlsConfig() {
+  safeLocalStorageSet(LS_CARD_CONTROLS, JSON.stringify(cardControlsConfig));
+  if (!sbApplyingCloudData && typeof sbMarkDirty === "function") sbMarkDirty();
+}
+
+function getCardControlsConfig() {
+  return cardControlsConfig || DEFAULT_CARD_CONTROLS;
+}
+
+function getControlLangs() {
+  const cfg = getCardControlsConfig();
+  return cfg.langMode === "both" ? ["en", "es"] : [cfg.langMode];
+}
+
+function getEnabledCountersConfig() {
+  const cfg = getCardControlsConfig();
+  const counters = [];
+  if (cfg.showQty) counters.push({ key: "qty", label: "Cantidad" });
+  if (cfg.showFoil) counters.push({ key: "foil", label: "Foil" });
+  for (const c of cfg.extraCounters || []) {
+    if (c.enabled) counters.push({ key: c.key, label: c.label });
+  }
+  return counters;
+}
+
+function getEnabledTagsConfig() {
+  const cfg = getCardControlsConfig();
+  const tags = [];
+  for (const t of cfg.extraTags || []) {
+    if (t.enabled) tags.push({ key: t.key, label: t.label, builtIn: !!t.builtIn });
+  }
+  return tags;
+}
+
+function makeControlKey(label, existingKeys = new Set()) {
+  const base = String(label || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const safeBase = base || "control";
+  let key = safeBase;
+  let idx = 2;
+  while (existingKeys.has(key)) {
+    key = `${safeBase}-${idx}`;
+    idx += 1;
+  }
+  return key;
+}
+
+function applyCardControlsConfig(nextCfg) {
+  cardControlsConfig = normalizeCardControlsConfig(nextCfg || {});
+  guardarCardControlsConfig();
+  renderCardControlsOptionsUI();
+  if (setActualKey) renderTablaSet(setActualKey);
+  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+}
+
+function renderCardControlsOptionsUI() {
+  const cfg = getCardControlsConfig();
+
+  document.querySelectorAll('input[name="modoIdiomaCartas"]').forEach(r => {
+    r.checked = r.value === cfg.langMode;
+  });
+
+  const chkCantidad = document.getElementById("chkMostrarCantidad");
+  if (chkCantidad) chkCantidad.checked = !!cfg.showQty;
+
+  const chkFoil = document.getElementById("chkMostrarFoil");
+  if (chkFoil) chkFoil.checked = !!cfg.showFoil;
+
+  const contadoresList = document.getElementById("listaContadoresOpciones");
+  if (contadoresList) {
+    const counters = cfg.extraCounters || [];
+    contadoresList.innerHTML = counters.length
+      ? counters.map(c => `
+        <div class="opciones-item" data-control-type="counter" data-key="${escapeAttr(c.key)}">
+          <label class="chkline">
+            <input type="checkbox" data-action="toggle" ${c.enabled ? "checked" : ""} />
+            <span>${escapeHtml(c.label)}</span>
+          </label>
+          <button class="btn-secundario btn-mini" data-action="remove">Eliminar</button>
+        </div>
+      `).join("")
+      : `<div class="hint">No hay contadores extra.</div>`;
+  }
+
+  const tagsList = document.getElementById("listaTagsOpciones");
+  if (tagsList) {
+    const tags = cfg.extraTags || [];
+    tagsList.innerHTML = tags.length
+      ? tags.map(t => `
+        <div class="opciones-item" data-control-type="tag" data-key="${escapeAttr(t.key)}">
+          <label class="chkline">
+            <input type="checkbox" data-action="toggle" ${t.enabled ? "checked" : ""} />
+            <span>${escapeHtml(t.label)}</span>
+          </label>
+          ${t.builtIn ? "" : `<button class=\"btn-secundario btn-mini\" data-action=\"remove\">Eliminar</button>`}
+        </div>
+      `).join("")
+      : `<div class="hint">No hay tags.</div>`;
+  }
+}
+
 
 function setFiltroTextoColecciones(texto) {
   filtroTextoColecciones = normalizarTexto((texto || "").trim());
   guardarFiltrosColecciones();
-  renderColecciones();
+  scheduleRenderColecciones();
 }
 
 
@@ -2939,7 +3614,14 @@ function progresoDeColeccion(setKey) {
   // Si no está cargado, intenta usar el resumen guardado
   const saved = progresoPorSet[setKey];
   if (saved && typeof saved.total === "number") {
-    return { tengo: saved.tengo || 0, total: saved.total };
+    const total = Number(saved.total);
+    const tengo = Number(saved.tengo || 0);
+    const totalSafe = Number.isFinite(total) ? total : null;
+    const tengoSafe = Number.isFinite(tengo) ? tengo : 0;
+    if (totalSafe != null && totalSafe > 0) {
+      return { tengo: Math.max(0, Math.min(tengoSafe, totalSafe)), total: totalSafe };
+    }
+    return { tengo: Math.max(0, tengoSafe), total: totalSafe };
   }
 
   // Si no sabemos nada todavía
@@ -2953,7 +3635,7 @@ function setFiltroColecciones(lang) {
     b.classList.toggle("active", b.dataset.lang === lang);
   });
   guardarFiltrosColecciones();
-  renderColecciones();
+  scheduleRenderColecciones();
 }
 
 function aplicarUIFiltrosColecciones() {
@@ -3003,7 +3685,7 @@ function renderColecciones() {
   }
 
   if (catalogoError) {
-    cont.innerHTML = `<div class="card"><p>Error cargando colecciones: ${catalogoError}</p></div>`;
+    cont.innerHTML = `<div class="card"><p>Error cargando colecciones: ${escapeHtml(catalogoError)}</p></div>`;
     return;
   }
 
@@ -3106,28 +3788,32 @@ function renderColecciones() {
     } else if (pEs.total && pEs.total > 0) {
       progresoPromedio = pctEsNum;
     }
+    if (!Number.isFinite(progresoPromedio)) progresoPromedio = 0;
+    progresoPromedio = Math.max(0, Math.min(100, progresoPromedio));
 
     const fechaTxt = formatMesAnyo(s.released_at);
 
     // ✅ Icono (si existe)
     const iconHtml = s.icon_svg_uri
-  ? `<img class="set-icon" src="${s.icon_svg_uri}" alt="${s.nombre}" loading="lazy" />`
+  ? `<img class="set-icon" src="${s.icon_svg_uri}" alt="${escapeAttr(s.nombre)}" loading="lazy" />`
   : `<div class="set-icon" style="background: rgba(0,0,0,.15); border-radius: 50%;"></div>`;
 
     // Icono para vista lista (más pequeño)
     const iconHtmlLista = s.icon_svg_uri
-  ? `<img class="set-icon-lista" src="${s.icon_svg_uri}" alt="${s.nombre}" loading="lazy" />`
+  ? `<img class="set-icon-lista" src="${s.icon_svg_uri}" alt="${escapeAttr(s.nombre)}" loading="lazy" />`
   : `<div class="set-icon-lista" style="background: rgba(0,0,0,.15); border-radius: 50%;"></div>`;
+
+    const completeClass = progresoPromedio >= 100 ? " is-complete" : "";
 
     if (vistaColecciones === "lista") {
       // Vista lista: un item por línea
       html += `
-  <div class="coleccion-item-lista" data-code="${s.code}" data-progress="${progresoPromedio}">
+  <div class="coleccion-item-lista${completeClass}" data-code="${s.code}" data-progress="${progresoPromedio}">
     <div class="coleccion-lista-icon">
       ${iconHtmlLista}
     </div>
     <div class="coleccion-lista-info">
-      <div class="coleccion-lista-nombre">${s.nombre}</div>
+      <div class="coleccion-lista-nombre">${escapeHtml(s.nombre)}</div>
       ${fechaTxt ? `<div class="coleccion-lista-fecha">${fechaTxt}</div>` : ""}
     </div>
     <div class="coleccion-lista-progress">
@@ -3138,11 +3824,11 @@ function renderColecciones() {
     } else {
       // Vista símbolo: la original
       html += `
-  <div class="coleccion-item" data-code="${s.code}" data-progress="${progresoPromedio}">
+  <div class="coleccion-item${completeClass}" data-code="${s.code}" data-progress="${progresoPromedio}">
     ${fechaTxt ? `<span class="set-date">${fechaTxt}</span>` : ""}
     <div class="coleccion-titulo">
       ${iconHtml}
-      <div class="coleccion-nombre">${s.nombre}</div>
+      <div class="coleccion-nombre">${escapeHtml(s.nombre)}</div>
     </div>
     <div class="badge"><span class="pct-lang">${pctEn}</span> EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt} <span class="pct-lang">${pctEs}</span></div>
   </div>
@@ -3154,19 +3840,25 @@ function renderColecciones() {
 
   cont.querySelectorAll("[data-code]").forEach(item => {
     // Aplicar altura de progreso visual
-    const progress = item.dataset.progress || 0;
-    
+    const progress = Math.max(0, Math.min(100, Number(item.dataset.progress) || 0));
+
     if (vistaColecciones === "lista") {
       item.style.setProperty('--progress-width', `${progress}%`);
     } else {
       item.style.setProperty('--progress-height', `${progress}%`);
     }
-    
-    item.addEventListener("click", () => {
+  });
+
+  if (!cont.dataset.wiredColecciones) {
+    cont.dataset.wiredColecciones = "1";
+    cont.addEventListener("click", (e) => {
+      const item = e.target.closest("[data-code]");
+      if (!item || !cont.contains(item)) return;
       const code = item.dataset.code;
+      if (!code) return;
       abrirSet(`${code}__en`);
     });
-  });
+  }
 }
 
 function calcStatsFromEstado() {
@@ -3207,7 +3899,7 @@ function calcSetStatsFromProgreso() {
 
 function guardarStatsSnapshot(snap, { markDirty = false } = {}) {
   statsSnapshot = snap || null;
-  try { localStorage.setItem(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot)); } catch {}
+  safeLocalStorageSet(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
 
   // opcional: si quieres que esto suba a Supabase en el próximo autosave
   if (markDirty && typeof sbMarkDirty === "function") sbMarkDirty();
@@ -3219,12 +3911,12 @@ function guardarFiltrosColecciones() {
     texto: filtroTextoColecciones,
     vista: vistaColecciones
   };
-  localStorage.setItem(LS_FILTERS_KEY, JSON.stringify(data));
-  sbMarkDirty(); // <-- AÑADIR
+  safeLocalStorageSet(LS_FILTERS_KEY, JSON.stringify(data));
+  if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
 function cargarFiltrosColecciones() {
-  const raw = localStorage.getItem(LS_FILTERS_KEY);
+  const raw = safeLocalStorageGet(LS_FILTERS_KEY);
   if (!raw) return;
 
   try {
@@ -3265,7 +3957,32 @@ function aplicarUILangSet() {
 let setActualKey = null;
 let filtroTextoSet = "";
 let filtroSoloFaltanSet = false;
+let filtroEnPosesionSet = false;
+let filtroColorSetEnabled = false;
+let filtroColoresSet = new Set();
+let filtroRarezasSet = new Set(["Común", "Infrecuente", "Rara", "Mítica"]);
 let ultimaListaSetRender = [];
+
+const VIRTUAL_SCROLL_MIN_ITEMS = 120;
+const VIRTUAL_SCROLL_BUFFER_ROWS = 4;
+const VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT = 380;
+
+const virtualScrollState = {
+  active: false,
+  setKey: null,
+  list: [],
+  cont: null,
+  wrapper: null,
+  grid: null,
+  columns: 1,
+  rowHeight: VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT,
+  rowGap: 10,
+  lastStart: -1,
+  lastEnd: -1,
+  rafId: null,
+  onScroll: null,
+  onResize: null
+};
 
 const modalNavState = {
   lista: null,
@@ -3278,16 +3995,133 @@ function aplicarUIFiltrosSet() {
 
   const chk = document.getElementById("chkSoloFaltanSet");
   if (chk) chk.checked = !!filtroSoloFaltanSet;
+
+  const chkPos = document.getElementById("chkEnPosesionSet");
+  if (chkPos) chkPos.checked = !!filtroEnPosesionSet;
+
+  const chkColor = document.getElementById("chkFiltroColorSet");
+  if (chkColor) chkColor.checked = !!filtroColorSetEnabled;
+
+  const colorWrap = document.getElementById("filtroColoresSet");
+  if (colorWrap) colorWrap.classList.toggle("hidden", !filtroColorSetEnabled);
+
+  document.querySelectorAll(".chk-color-set").forEach(chkColorOpt => {
+    chkColorOpt.checked = filtroColoresSet.has(chkColorOpt.value);
+  });
+
+  document.querySelectorAll(".chk-rareza-set").forEach(chkR => {
+    chkR.checked = filtroRarezasSet.has(chkR.value);
+  });
 }
 
 function setFiltroTextoSet(texto) {
   filtroTextoSet = normalizarTexto((texto || "").trim());
+  resetScrollSetList();
   if (setActualKey) renderTablaSet(setActualKey);
 }
 
 function setFiltroSoloFaltanSet(val) {
   filtroSoloFaltanSet = !!val;
+  resetScrollSetList();
   if (setActualKey) renderTablaSet(setActualKey);
+}
+
+function setFiltroEnPosesionSet(val) {
+  filtroEnPosesionSet = !!val;
+  resetScrollSetList();
+  if (setActualKey) renderTablaSet(setActualKey);
+}
+
+function setFiltroColorSetEnabled(val) {
+  filtroColorSetEnabled = !!val;
+  resetScrollSetList();
+  if (setActualKey) renderTablaSet(setActualKey);
+}
+
+function toggleColorFiltroSet(color, enabled) {
+  const key = String(color || "").toUpperCase();
+  if (!key) return;
+  if (enabled) filtroColoresSet.add(key);
+  else filtroColoresSet.delete(key);
+  resetScrollSetList();
+  if (setActualKey) renderTablaSet(setActualKey);
+}
+
+function toggleRarezaFiltroSet(rareza, enabled) {
+  const key = String(rareza || "");
+  if (!key) return;
+  if (enabled) filtroRarezasSet.add(key);
+  else filtroRarezasSet.delete(key);
+  resetScrollSetList();
+  if (setActualKey) renderTablaSet(setActualKey);
+}
+
+function resetScrollSetList() {
+  const cont = document.getElementById("listaCartasSet");
+  if (!cont) return;
+  const rect = cont.getBoundingClientRect();
+  const top = rect.top + window.scrollY - 8;
+  if (Number.isFinite(top)) {
+    window.scrollTo({ top, behavior: "auto" });
+  }
+}
+
+function getCardTotalsForSetFilter(card) {
+  if (card?.oracle_id) {
+    const st2 = getEstadoCarta2(card.oracle_id);
+    return {
+      qty: (Number(st2.qty_en) || 0) + (Number(st2.qty_es) || 0),
+      foil: (Number(st2.foil_en) || 0) + (Number(st2.foil_es) || 0)
+    };
+  }
+  const st = getEstadoCarta(card?.id);
+  return {
+    qty: Number(st.qty) || 0,
+    foil: Number(st.foilQty) || 0
+  };
+}
+
+function cardMatchesColorFilter(card) {
+  if (!filtroColorSetEnabled || filtroColoresSet.size === 0) return true;
+  const identity = getCardColorIdentity(card);
+  const normalized = identity.map(c => String(c || "").toUpperCase().trim()).filter(Boolean);
+  const selected = filtroColoresSet;
+
+  if (normalized.length === 0) {
+    return selected.has("C");
+  }
+
+  if (selected.size === 1) {
+    const only = [...selected][0];
+    return normalized.includes(only);
+  }
+  return normalized.some(c => selected.has(c));
+}
+
+function getCardColorIdentity(card) {
+  const asArray = (v) => (Array.isArray(v) ? v : null);
+
+  let colors =
+    asArray(card?.color_identity) ||
+    asArray(card?._colors) ||
+    asArray(card?._raw?.color_identity) ||
+    asArray(card?._raw?.colors);
+
+  if (!colors && Array.isArray(card?._raw?.card_faces)) {
+    const faceColors = [];
+    for (const face of card._raw.card_faces) {
+      const faceIds = asArray(face?.color_identity) || asArray(face?.colors);
+      if (faceIds && faceIds.length) faceColors.push(...faceIds);
+    }
+    if (faceColors.length) colors = faceColors;
+  }
+
+  return colors || [];
+}
+
+function cardMatchesRarityFilter(card) {
+  if (filtroRarezasSet.size === 0 || filtroRarezasSet.size >= 4) return true;
+  return filtroRarezasSet.has(card?.rareza);
 }
 
 function getListaSetFiltrada(setKey) {
@@ -3299,13 +4133,24 @@ if (ft) {
   lista = lista.filter(c => normalizarTexto(c.nombre).includes(ft));
 }
 
-  if (filtroSoloFaltanSet) {
-    // Filtrar usando estado2: solo mostrar si NO tiene cantidad en ningún idioma
+  if (filtroEnPosesionSet || filtroSoloFaltanSet) {
     lista = lista.filter(c => {
-      if (!c.oracle_id) return getEstadoCarta(c.id).qty === 0; // Fallback legacy
-      const st2 = getEstadoCarta2(c.oracle_id);
-      return (st2.qty_en + st2.qty_es) === 0;
+      const { qty, foil } = getCardTotalsForSetFilter(c);
+      const enPosesion = qty > 0;
+      const enFalta = qty === 0 && foil === 0;
+      if (filtroEnPosesionSet && filtroSoloFaltanSet) return enPosesion || enFalta;
+      if (filtroEnPosesionSet) return enPosesion;
+      if (filtroSoloFaltanSet) return enFalta;
+      return true;
     });
+  }
+
+  if (filtroColorSetEnabled && filtroColoresSet.size > 0) {
+    lista = lista.filter(c => cardMatchesColorFilter(c));
+  }
+
+  if (filtroRarezasSet.size > 0 && filtroRarezasSet.size < 4) {
+    lista = lista.filter(c => cardMatchesRarityFilter(c));
   }
 
   return lista;
@@ -3366,14 +4211,167 @@ renderColecciones(); // para que al volver ya no salga
 function renderTablaSet(setKey) {
   const startTime = DEBUG ? performance.now() : 0;
   const lista = getListaSetFiltrada(setKey);
+  const cont = document.getElementById("listaCartasSet");
+  if (!cont) return;
 
-  let html = `<div class="cartas-grid">`;
+  ultimaListaSetRender = lista;
 
-  lista.forEach((c, idx) => {
+  const frag = document.createDocumentFragment();
+  const grid = document.createElement("div");
+  grid.className = "cartas-grid";
+
+  const createStepperRow = ({ label, classMinus, classPlus, classInput, oracleId, lang, min, max, value, disabledMinus, disabledPlus, disabledInput, controlKey, controlKind }) => {
+    const row = document.createElement("div");
+    row.className = "control-fila";
+
+    const lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.textContent = label;
+
+    const stepper = document.createElement("div");
+    stepper.className = "stepper";
+
+    const btnMinus = document.createElement("button");
+    btnMinus.className = `btn-step ${classMinus}`;
+    btnMinus.dataset.oracle = oracleId || "";
+    btnMinus.dataset.lang = lang;
+    if (controlKey) btnMinus.dataset.control = controlKey;
+    if (controlKind) btnMinus.dataset.kind = controlKind;
+    btnMinus.type = "button";
+    btnMinus.textContent = "−";
+    if (disabledMinus) btnMinus.disabled = true;
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = `inp-num ${classInput}`;
+    input.dataset.oracle = oracleId || "";
+    input.dataset.lang = lang;
+    if (controlKey) input.dataset.control = controlKey;
+    if (controlKind) input.dataset.kind = controlKind;
+    input.min = String(min);
+    input.max = String(max);
+    input.value = String(value);
+    if (disabledInput) input.disabled = true;
+
+    const btnPlus = document.createElement("button");
+    btnPlus.className = `btn-step ${classPlus}`;
+    btnPlus.dataset.oracle = oracleId || "";
+    btnPlus.dataset.lang = lang;
+    if (controlKey) btnPlus.dataset.control = controlKey;
+    if (controlKind) btnPlus.dataset.kind = controlKind;
+    btnPlus.type = "button";
+    btnPlus.textContent = "+";
+    if (disabledPlus) btnPlus.disabled = true;
+
+    stepper.appendChild(btnMinus);
+    stepper.appendChild(input);
+    stepper.appendChild(btnPlus);
+
+    row.appendChild(lbl);
+    row.appendChild(stepper);
+
+    return row;
+  };
+
+  const createTagRow = ({ label, oracleId, lang, checked, controlKey }) => {
+    const row = document.createElement("div");
+    row.className = "control-fila";
+
+    const lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.textContent = label;
+
+    const labelEl = document.createElement("label");
+    labelEl.className = "chkline";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "chk-tag";
+    input.dataset.oracle = oracleId || "";
+    input.dataset.lang = lang;
+    if (controlKey) input.dataset.control = controlKey;
+    input.checked = !!checked;
+
+    labelEl.appendChild(input);
+    row.appendChild(lbl);
+    row.appendChild(labelEl);
+    return row;
+  };
+
+  const createLangPanel = ({ lang, oracleId, qty, foil, ri, extraCounters = [], extraTags = [] }) => {
+    const panel = document.createElement("div");
+    panel.className = "lang-panel";
+    panel.dataset.lang = lang;
+
+    if (getCardControlsConfig().showQty) {
+      panel.appendChild(createStepperRow({
+        label: "Cantidad",
+        classMinus: "btn-qty-minus",
+        classPlus: "btn-qty-plus",
+        classInput: "inp-qty",
+        oracleId,
+        lang,
+        min: 0,
+        max: 999,
+        value: qty,
+        disabledMinus: qty <= 0,
+        disabledPlus: false,
+        disabledInput: false,
+        controlKey: "qty",
+        controlKind: "counter"
+      }));
+    }
+
+    if (getCardControlsConfig().showFoil) {
+      panel.appendChild(createStepperRow({
+        label: "Foil",
+        classMinus: "btn-foil-minus",
+        classPlus: "btn-foil-plus",
+        classInput: "inp-foil",
+        oracleId,
+        lang,
+        min: 0,
+        max: qty,
+        value: foil,
+        disabledMinus: foil <= 0 || qty === 0,
+        disabledPlus: qty === 0 || foil >= qty,
+        disabledInput: qty === 0,
+        controlKey: "foil",
+        controlKind: "counter"
+      }));
+    }
+
+    for (const counter of extraCounters) {
+      panel.appendChild(createStepperRow({
+        label: counter.label,
+        classMinus: "btn-counter-minus",
+        classPlus: "btn-counter-plus",
+        classInput: "inp-counter",
+        oracleId,
+        lang,
+        min: 0,
+        max: 999,
+        value: counter.value,
+        disabledMinus: counter.value <= 0,
+        disabledPlus: false,
+        disabledInput: false,
+        controlKey: counter.key,
+        controlKind: "counter"
+      }));
+    }
+
+    for (const tag of extraTags) {
+      panel.appendChild(createTagRow({ label: tag.label, oracleId, lang, checked: tag.checked, controlKey: tag.key }));
+    }
+    return panel;
+  };
+
+  const createCartaItem = (c, idx) => {
     // Usar estado2 para determinar si tiene cantidad (suma de ambos idiomas)
     let totalQty = 0;
     let st2 = null;
-    
+    const oracleId = c.oracle_id || "";
+
     if (c.oracle_id) {
       st2 = getEstadoCarta2(c.oracle_id);
       totalQty = st2.qty_en + st2.qty_es;
@@ -3382,143 +4380,320 @@ function renderTablaSet(setKey) {
       const stLegacy = getEstadoCarta(c.id);
       totalQty = stLegacy.qty;
       // Crear objeto compatible con estructura v2 para el renderizado
-      st2 = { qty_en: stLegacy.qty, qty_es: 0, foil_en: stLegacy.foilQty, foil_es: 0, ri_en: stLegacy.wantMore, ri_es: false };
+      st2 = { qty_en: stLegacy.qty, qty_es: 0, foil_en: stLegacy.foilQty, foil_es: 0, ri_en: stLegacy.wantMore, ri_es: false, counters_en: {}, counters_es: {}, tags_en: {}, tags_es: {} };
     }
-    
+
+    const controlsCfg = getCardControlsConfig();
+    const langMode = controlsCfg.langMode || "both";
+    const langsToShow = langMode === "both" ? ["en", "es"] : [langMode];
+
     // Layout clásico con toggle EN <-> ES
-    const langActivo = getUILang(c.oracle_id);
-    const qty = langActivo === "en" ? st2.qty_en : st2.qty_es;
-    const foil = langActivo === "en" ? st2.foil_en : st2.foil_es;
-    const ri = langActivo === "en" ? st2.ri_en : st2.ri_es;
-    
+    const langActivo = langMode === "both" ? getUILang(c.oracle_id) : langMode;
     const tieneImg = c._img && c._img.trim() !== "";
     const hasQty = totalQty > 0;
 
-    html += `
-  <div class="carta-item ${hasQty ? 'has-qty' : ''}" data-oracle="${c.oracle_id || ''}" data-card-id="${c.id}">
-    <!-- Header de la carta -->
-    <div class="carta-header">
-      <img src="icons/${hasQty ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="24" height="24">
-      <button
-        class="btn-link-carta"
-        type="button"
-        data-accion="ver-carta-set"
-        data-oracle="${c.oracle_id || ''}"
-        data-id="${c.id}"
-        data-idx="${idx}"
-      >
-        ${c.nombre}
-      </button>
-      <span class="carta-numero">#${c.numero}</span>
-    </div>
+    const item = document.createElement("div");
+    item.className = `carta-item${hasQty ? " has-qty" : ""}`;
+    item.dataset.oracle = oracleId;
+    item.dataset.cardId = String(c.id);
 
-    <!-- Imagen de la carta -->
-    <div class="carta-imagen-container">
-      ${tieneImg 
-        ? `<img src="${c._img}" alt="${c.nombre}" class="carta-imagen" loading="lazy" data-img-en="${c._img}" data-oracle="${c.oracle_id || ''}" data-set="${c.set || ''}" data-numero="${c.numero || ''}" />`
-        : `<div class="carta-imagen-placeholder">Sin imagen</div>`
-      }
-    </div>
+    const header = document.createElement("div");
+    header.className = "carta-header";
 
-    <!-- Controles de cantidad (Slider con animación EN/ES) -->
-    <div class="carta-controles" data-active-lang="${langActivo}">
-      <!-- Header con botón de cambio -->
-      <div class="controles-header">
-        <button class="btn-lang-switch" data-oracle="${c.oracle_id || ''}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
-          <span class="lang-badge lang-active">
-            <img class="flag-icon" src="icons/flag-${langActivo === "en" ? "en" : "es"}.svg" alt="${langActivo === "en" ? "EN" : "ES"}" />
-            <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
-          </span>
-          <span class="lang-switch-action">
-            <span class="arrow">→</span>
-            <img class="flag-icon flag-target-icon" src="icons/flag-${langActivo === "en" ? "es" : "en"}.svg" alt="${langActivo === "en" ? "ES" : "EN"}" />
-          </span>
-        </button>
-      </div>
+    const led = document.createElement("img");
+    led.className = "led-indicator";
+    led.alt = "";
+    led.width = 24;
+    led.height = 24;
+    led.src = `icons/${hasQty ? "Ledazul" : "Ledrojo"}.png`;
 
-      <!-- Slider viewport -->
-      <div class="lang-slider">
-        <div class="lang-track">
-          <!-- Panel EN -->
-          <div class="lang-panel" data-lang="en">
-            <!-- Cantidad EN -->
-            <div class="control-fila">
-              <span class="lbl">Cantidad</span>
-              <div class="stepper">
-                <button class="btn-step btn-qty-minus" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.qty_en <= 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-qty" data-oracle="${c.oracle_id || ''}" data-lang="en" min="0" max="999" value="${st2.qty_en}" />
-                <button class="btn-step btn-qty-plus" data-oracle="${c.oracle_id || ''}" data-lang="en">+</button>
-              </div>
-            </div>
+    const btnCarta = document.createElement("button");
+    btnCarta.className = "btn-link-carta";
+    btnCarta.type = "button";
+    btnCarta.dataset.accion = "ver-carta-set";
+    btnCarta.dataset.oracle = oracleId;
+    btnCarta.dataset.id = String(c.id);
+    btnCarta.dataset.idx = String(idx);
+    btnCarta.textContent = c.nombre || "";
 
-            <!-- Foil EN -->
-            <div class="control-fila">
-              <span class="lbl">Foil</span>
-              <div class="stepper">
-                <button class="btn-step btn-foil-minus" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.foil_en <= 0 || st2.qty_en === 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-foil" data-oracle="${c.oracle_id || ''}" data-lang="en" min="0" max="${st2.qty_en}" value="${st2.foil_en}" ${st2.qty_en === 0 ? "disabled" : ""} />
-                <button class="btn-step btn-foil-plus" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.qty_en === 0 || st2.foil_en >= st2.qty_en ? "disabled" : ""}>+</button>
-              </div>
-            </div>
+    const numero = document.createElement("span");
+    numero.className = "carta-numero";
+    numero.textContent = `#${c.numero}`;
 
-            <!-- Ri EN -->
-            <div class="control-fila">
-              <span class="lbl">Ri</span>
-              <label class="chkline">
-                <input type="checkbox" class="chk-want" data-oracle="${c.oracle_id || ''}" data-lang="en" ${st2.ri_en ? "checked" : ""}>
-              </label>
-            </div>
-          </div>
+    header.appendChild(led);
+    header.appendChild(btnCarta);
+    header.appendChild(numero);
 
-          <!-- Panel ES -->
-          <div class="lang-panel" data-lang="es">
-            <!-- Cantidad ES -->
-            <div class="control-fila">
-              <span class="lbl">Cantidad</span>
-              <div class="stepper">
-                <button class="btn-step btn-qty-minus" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.qty_es <= 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-qty" data-oracle="${c.oracle_id || ''}" data-lang="es" min="0" max="999" value="${st2.qty_es}" />
-                <button class="btn-step btn-qty-plus" data-oracle="${c.oracle_id || ''}" data-lang="es">+</button>
-              </div>
-            </div>
+    const imgContainer = document.createElement("div");
+    imgContainer.className = "carta-imagen-container";
 
-            <!-- Foil ES -->
-            <div class="control-fila">
-              <span class="lbl">Foil</span>
-              <div class="stepper">
-                <button class="btn-step btn-foil-minus" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.foil_es <= 0 || st2.qty_es === 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-foil" data-oracle="${c.oracle_id || ''}" data-lang="es" min="0" max="${st2.qty_es}" value="${st2.foil_es}" ${st2.qty_es === 0 ? "disabled" : ""} />
-                <button class="btn-step btn-foil-plus" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.qty_es === 0 || st2.foil_es >= st2.qty_es ? "disabled" : ""}>+</button>
-              </div>
-            </div>
-
-            <!-- Ri ES -->
-            <div class="control-fila">
-              <span class="lbl">Ri</span>
-              <label class="chkline">
-                <input type="checkbox" class="chk-want" data-oracle="${c.oracle_id || ''}" data-lang="es" ${st2.ri_es ? "checked" : ""}>
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-`;
-  });
-
-  html += `</div>`;
-
-  const cont = document.getElementById("listaCartasSet");
-  cont.innerHTML = html;
-
-  // Preservar el estado del checkbox "Ver cartas"
-  const chkVerCartasMovil = document.getElementById("chkVerCartasMovil");
-  const gridCartas = cont.querySelector(".cartas-grid");
-  if (chkVerCartasMovil && gridCartas) {
-    if (!chkVerCartasMovil.checked) {
-      gridCartas.classList.add("ocultar-imagenes");
+    if (tieneImg) {
+      const img = document.createElement("img");
+      img.className = "carta-imagen";
+      img.loading = "lazy";
+      img.alt = c.nombre || "";
+      img.dataset.imgEn = c._img;
+      img.dataset.oracle = oracleId;
+      img.dataset.set = c.set || "";
+      img.dataset.numero = c.numero || "";
+      loadImageWithCache(img, c._img);
+      imgContainer.appendChild(img);
+    } else {
+      const ph = document.createElement("div");
+      ph.className = "carta-imagen-placeholder";
+      ph.textContent = "Sin imagen";
+      imgContainer.appendChild(ph);
     }
+
+    const controles = document.createElement("div");
+    controles.className = "carta-controles";
+    controles.dataset.activeLang = langActivo;
+
+    const controlesHeader = document.createElement("div");
+    controlesHeader.className = "controles-header";
+
+    const badge = document.createElement("span");
+    badge.className = "lang-badge lang-active";
+    const badgeImg = document.createElement("img");
+    badgeImg.className = "flag-icon";
+    badgeImg.src = `icons/flag-${langActivo === "en" ? "en" : "es"}.svg`;
+    badgeImg.alt = langActivo === "en" ? "EN" : "ES";
+    const badgeLbl = document.createElement("span");
+    badgeLbl.className = "lang-label";
+    badgeLbl.textContent = langActivo === "en" ? "EN" : "ES";
+    badge.appendChild(badgeImg);
+    badge.appendChild(badgeLbl);
+
+    if (langMode === "both") {
+      const btnSwitch = document.createElement("button");
+      btnSwitch.className = "btn-lang-switch";
+      btnSwitch.type = "button";
+      btnSwitch.dataset.oracle = oracleId;
+      btnSwitch.title = "Cambiar idioma";
+      btnSwitch.setAttribute("aria-label", `Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}`);
+
+      const switchAction = document.createElement("span");
+      switchAction.className = "lang-switch-action";
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.textContent = "→";
+      const targetImg = document.createElement("img");
+      targetImg.className = "flag-icon flag-target-icon";
+      targetImg.src = `icons/flag-${langActivo === "en" ? "es" : "en"}.svg`;
+      targetImg.alt = langActivo === "en" ? "ES" : "EN";
+      switchAction.appendChild(arrow);
+      switchAction.appendChild(targetImg);
+
+      btnSwitch.appendChild(badge);
+      btnSwitch.appendChild(switchAction);
+      controlesHeader.appendChild(btnSwitch);
+    } else {
+      controlesHeader.appendChild(badge);
+    }
+
+    const slider = document.createElement("div");
+    slider.className = "lang-slider";
+    const track = document.createElement("div");
+    track.className = "lang-track";
+
+    const extraCountersCfg = getEnabledCountersConfig().filter(c => c.key !== "qty" && c.key !== "foil");
+    const extraTagsCfg = getEnabledTagsConfig();
+
+    const buildExtraCounters = (lang) => extraCountersCfg.map(c => ({
+      key: c.key,
+      label: c.label,
+      value: getCounterValue(st2, lang, c.key)
+    }));
+
+    const buildExtraTags = (lang) => extraTagsCfg.map(t => ({
+      key: t.key,
+      label: t.label,
+      checked: getTagValue(st2, lang, t.key)
+    }));
+
+    for (const lang of langsToShow) {
+      track.appendChild(createLangPanel({
+        lang,
+        oracleId,
+        qty: lang === "es" ? st2.qty_es : st2.qty_en,
+        foil: lang === "es" ? st2.foil_es : st2.foil_en,
+        ri: lang === "es" ? st2.ri_es : st2.ri_en,
+        extraCounters: buildExtraCounters(lang),
+        extraTags: buildExtraTags(lang)
+      }));
+    }
+
+    slider.appendChild(track);
+
+    controles.appendChild(controlesHeader);
+    controles.appendChild(slider);
+
+    item.appendChild(header);
+    item.appendChild(imgContainer);
+    item.appendChild(controles);
+
+    if (langMode === "es" && tieneImg && oracleId) {
+      const imgElement = imgContainer.querySelector(".carta-imagen");
+      if (imgElement) {
+        const setCode = imgElement.dataset.set || "";
+        const numero = imgElement.dataset.numero || "";
+        getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
+          if (printES) {
+            const imgUrl = printES.image_uris?.normal || printES.card_faces?.[0]?.image_uris?.normal;
+            if (imgUrl) imgElement.src = imgUrl;
+          }
+        }).catch(() => {});
+      }
+    }
+
+    return item;
+  };
+
+  const applyVerCartasState = (targetGrid) => {
+    const chkMostrarCartas = document.getElementById("chkMostrarCartas");
+    if (chkMostrarCartas && targetGrid) {
+      if (!chkMostrarCartas.checked) {
+        targetGrid.classList.add("ocultar-imagenes");
+      } else {
+        targetGrid.classList.remove("ocultar-imagenes");
+      }
+    }
+  };
+
+  const disableVirtualScroll = () => {
+    if (!virtualScrollState.active) return;
+    if (virtualScrollState.rafId) {
+      cancelAnimationFrame(virtualScrollState.rafId);
+      virtualScrollState.rafId = null;
+    }
+    if (virtualScrollState.onScroll) window.removeEventListener("scroll", virtualScrollState.onScroll);
+    if (virtualScrollState.onResize) window.removeEventListener("resize", virtualScrollState.onResize);
+    virtualScrollState.active = false;
+  };
+
+  const useVirtualScroll = lista.length >= VIRTUAL_SCROLL_MIN_ITEMS;
+
+  if (!useVirtualScroll) {
+    disableVirtualScroll();
+    lista.forEach((c, idx) => grid.appendChild(createCartaItem(c, idx)));
+    frag.appendChild(grid);
+    cont.innerHTML = "";
+    cont.appendChild(frag);
+    applyVerCartasState(grid);
+  } else {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cartas-virtual-wrapper";
+    wrapper.style.position = "relative";
+    wrapper.style.paddingTop = "0px";
+    wrapper.style.paddingBottom = "0px";
+    wrapper.appendChild(grid);
+
+    cont.innerHTML = "";
+    cont.appendChild(wrapper);
+
+    const getColumns = () => {
+      const computed = window.getComputedStyle(grid);
+      const cols = computed.gridTemplateColumns.split(" ").filter(Boolean).length;
+      return Math.max(1, cols || 1);
+    };
+
+    const updateMetrics = () => {
+      const firstItem = grid.firstElementChild;
+      const computed = window.getComputedStyle(grid);
+      const rowGap = parseFloat(computed.rowGap || computed.gap || "0") || 0;
+
+      if (firstItem) {
+        const rect = firstItem.getBoundingClientRect();
+        if (rect.height > 0) {
+          virtualScrollState.rowHeight = rect.height + rowGap;
+        }
+      } else {
+        virtualScrollState.rowHeight = VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT + rowGap;
+      }
+
+      virtualScrollState.rowGap = rowGap;
+      virtualScrollState.columns = getColumns();
+    };
+
+    const calcRange = () => {
+      const rect = cont.getBoundingClientRect();
+      const containerTop = rect.top + window.scrollY;
+      const rawScrollTop = Math.max(0, window.scrollY - containerTop);
+      const viewHeight = window.innerHeight || 0;
+
+      const columns = virtualScrollState.columns || 1;
+      const rowHeight = virtualScrollState.rowHeight || VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT;
+      const totalRows = Math.max(1, Math.ceil(lista.length / columns));
+
+      const maxScroll = Math.max(0, (totalRows * rowHeight) - viewHeight);
+      const scrollTop = Math.min(rawScrollTop, maxScroll);
+
+      const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - VIRTUAL_SCROLL_BUFFER_ROWS);
+      const endRow = Math.min(totalRows, Math.ceil((scrollTop + viewHeight) / rowHeight) + VIRTUAL_SCROLL_BUFFER_ROWS);
+
+      return { startRow, endRow, totalRows, columns, rowHeight };
+    };
+
+    const renderRange = () => {
+      if (!virtualScrollState.active) return;
+
+      const { startRow, endRow, totalRows, columns, rowHeight } = calcRange();
+      const startIdx = Math.max(0, startRow * columns);
+      const endIdx = Math.min(lista.length, endRow * columns);
+
+      if (startIdx === virtualScrollState.lastStart && endIdx === virtualScrollState.lastEnd) return;
+
+      virtualScrollState.lastStart = startIdx;
+      virtualScrollState.lastEnd = endIdx;
+
+      const topPad = startRow * rowHeight;
+      const bottomPad = Math.max(0, (totalRows - endRow) * rowHeight);
+      wrapper.style.paddingTop = `${topPad}px`;
+      wrapper.style.paddingBottom = `${bottomPad}px`;
+
+      grid.innerHTML = "";
+      for (let i = startIdx; i < endIdx; i++) {
+        grid.appendChild(createCartaItem(lista[i], i));
+      }
+
+      applyVerCartasState(grid);
+
+      requestAnimationFrame(() => {
+        updateMetrics();
+      });
+    };
+
+    const scheduleRenderRange = () => {
+      if (virtualScrollState.rafId) return;
+      virtualScrollState.rafId = requestAnimationFrame(() => {
+        virtualScrollState.rafId = null;
+        renderRange();
+      });
+    };
+
+    virtualScrollState.active = true;
+    virtualScrollState.setKey = setKey;
+    virtualScrollState.list = lista;
+    virtualScrollState.cont = cont;
+    virtualScrollState.wrapper = wrapper;
+    virtualScrollState.grid = grid;
+    virtualScrollState.lastStart = -1;
+    virtualScrollState.lastEnd = -1;
+
+    if (virtualScrollState.onScroll) window.removeEventListener("scroll", virtualScrollState.onScroll);
+    if (virtualScrollState.onResize) window.removeEventListener("resize", virtualScrollState.onResize);
+
+    virtualScrollState.onScroll = () => scheduleRenderRange();
+    virtualScrollState.onResize = () => {
+      updateMetrics();
+      scheduleRenderRange();
+    };
+
+    window.addEventListener("scroll", virtualScrollState.onScroll, { passive: true });
+    window.addEventListener("resize", virtualScrollState.onResize);
+
+    updateMetrics();
+    renderRange();
   }
   
   if (DEBUG) {
@@ -3532,6 +4707,7 @@ function actualizarPanelLang(oracleId, lang) {
   const st2 = getEstadoCarta2(oracleId);
   const qty = lang === "en" ? st2.qty_en : st2.qty_es;
   const foil = lang === "en" ? st2.foil_en : st2.foil_es;
+  const cfg = getCardControlsConfig();
   
   // Buscar el panel específico de este oracle_id y lang
   const cartaItem = document.querySelector(`.carta-item[data-oracle="${oracleId}"]`);
@@ -3543,8 +4719,8 @@ function actualizarPanelLang(oracleId, lang) {
   // Actualizar valores de inputs
   const qtyInput = panel.querySelector('.inp-qty');
   const foilInput = panel.querySelector('.inp-foil');
-  if (qtyInput) qtyInput.value = qty;
-  if (foilInput) {
+  if (cfg.showQty && qtyInput) qtyInput.value = qty;
+  if (cfg.showFoil && foilInput) {
     foilInput.value = foil;
     foilInput.max = qty;
     foilInput.disabled = qty === 0;
@@ -3552,14 +4728,31 @@ function actualizarPanelLang(oracleId, lang) {
   
   // Actualizar botones qty
   const btnQtyMinus = panel.querySelector('.btn-qty-minus');
-  const btnQtyPlus = panel.querySelector('.btn-qty-plus');
-  if (btnQtyMinus) btnQtyMinus.disabled = qty <= 0;
+  if (cfg.showQty && btnQtyMinus) btnQtyMinus.disabled = qty <= 0;
   
   // Actualizar botones foil
   const btnFoilMinus = panel.querySelector('.btn-foil-minus');
   const btnFoilPlus = panel.querySelector('.btn-foil-plus');
-  if (btnFoilMinus) btnFoilMinus.disabled = foil <= 0 || qty === 0;
-  if (btnFoilPlus) btnFoilPlus.disabled = qty === 0 || foil >= qty;
+  if (cfg.showFoil && btnFoilMinus) btnFoilMinus.disabled = foil <= 0 || qty === 0;
+  if (cfg.showFoil && btnFoilPlus) btnFoilPlus.disabled = qty === 0 || foil >= qty;
+
+  // Actualizar contadores personalizados
+  const extraCounters = getEnabledCountersConfig().filter(c => c.key !== "qty" && c.key !== "foil");
+  for (const c of extraCounters) {
+    const value = getCounterValue(st2, lang, c.key);
+    const input = panel.querySelector(`.inp-counter[data-control="${c.key}"]`);
+    const btnMinus = panel.querySelector(`.btn-counter-minus[data-control="${c.key}"]`);
+    if (input) input.value = value;
+    if (btnMinus) btnMinus.disabled = value <= 0;
+  }
+
+  // Actualizar tags
+  const extraTags = getEnabledTagsConfig();
+  for (const t of extraTags) {
+    const checked = getTagValue(st2, lang, t.key);
+    const chk = panel.querySelector(`.chk-tag[data-control="${t.key}"]`);
+    if (chk) chk.checked = !!checked;
+  }
   
   // Actualizar LED (suma de ambos idiomas)
   const totalQty = st2.qty_en + st2.qty_es;
@@ -3598,7 +4791,7 @@ function marcarTodasCartasSet() {
   });
   
   renderTablaSet(setActualKey);
-  renderColecciones();
+  scheduleRenderColecciones();
 }
 
 function desmarcarTodasCartasSet() {
@@ -3613,8 +4806,7 @@ function desmarcarTodasCartasSet() {
   });
   
   renderTablaSet(setActualKey);
-
-  renderColecciones();
+  scheduleRenderColecciones();
 }
 
 function parseRangosCartas(texto) {
@@ -3663,7 +4855,7 @@ function aplicarRangosCartas(rangosTexto) {
   });
   
   renderTablaSet(setActualKey);
-  renderColecciones();
+  scheduleRenderColecciones();
 }
 
 
@@ -3693,10 +4885,12 @@ function buscarCartasPorNombre(texto) {
   }));
 }
 
-async function renderResultadosBuscar(texto) {
+async function renderResultadosBuscar(texto, opts = {}) {
   const startTime = DEBUG ? performance.now() : 0;
   const cont = document.getElementById("resultadosBuscar");
   const q = (texto || "").trim();
+  const exact = (typeof opts.exact === "boolean") ? opts.exact : getBuscarExacta();
+  const verImagenes = (typeof opts.verImagenes === "boolean") ? opts.verImagenes : getBuscarVerImagenes();
 
   if (!cont) return;
 
@@ -3721,8 +4915,9 @@ async function renderResultadosBuscar(texto) {
 
   let cards = [];
   try {
-    cards = await scrySearchPrintsByName(q);
+    cards = await scrySearchPrintsByName(q, { signal: searchAbortController.signal, exact });
   } catch (err) {
+    if (err && err.name === "AbortError") return;
     console.error(err);
     cont.innerHTML = `<div class="card"><p>Error buscando. Mira la consola.</p></div>`;
     return;
@@ -3731,7 +4926,7 @@ async function renderResultadosBuscar(texto) {
   const grupos = agruparResultadosBusqueda(cards);
 
   if (grupos.length === 0) {
-    cont.innerHTML = `<div class="card"><p>No se encontraron cartas para: <strong>${q}</strong></p></div>`;
+    cont.innerHTML = `<div class="card"><p>No se encontraron cartas para: <strong>${escapeHtml(q)}</strong></p></div>`;
     return;
   }
 
@@ -3741,354 +4936,405 @@ async function renderResultadosBuscar(texto) {
 
   let html = avisoLimit;
 
-  for (const g of grupos) {
-    const grupoId = `grupo-${g.oracleId}`;
-    const numVersiones = g.versiones.length;
-    const isExpanded = expandedGroups.has(grupoId);
-    
-    html += `
-      <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
-          <h3 style="margin: 0; flex: 1;">
-            <button class="btn-link-carta" type="button" data-accion="ver-carta" data-oracle="${g.oracleId}">
-              ${g.titulo}
-            </button>
-          </h3>
-          <button 
-            class="btn-secundario btn-toggle-versiones" 
-            type="button" 
-            data-target="${grupoId}"
-            style="padding: 6px 12px; font-size: 0.9rem;"
-          >
-            ${isExpanded ? '▲ Ocultar' : '▼ Mostrar'} ${numVersiones} versión${numVersiones !== 1 ? 'es' : ''}
-          </button>
-        </div>
+  if (verImagenes) {
+    const controlsCfg = getCardControlsConfig();
+    const extraCountersCfg = getEnabledCountersConfig().filter(c => c.key !== "qty" && c.key !== "foil");
+    const extraTagsCfg = getEnabledTagsConfig();
 
-        <div id="${grupoId}" class="versiones-container" style="display: ${isExpanded ? 'block' : 'none'}; margin-top: 15px;">
-          <div class="hint">Aparece en:</div>
-          <ul class="lista-versiones">
-    `;
+    html += `<div class="cartas-grid cartas-grid-buscar">`;
 
-    for (const v of g.versiones) {
-      // Leer cantidades según el idioma de esta versión
-      const lang = v.lang === "es" ? "es" : "en";
-      const qty = lang === "en" ? (v.st2.qty_en || 0) : (v.st2.qty_es || 0);
-      const foilQty = lang === "en" ? (v.st2.foil_en || 0) : (v.st2.foil_es || 0);
+    for (const g of grupos) {
+      for (const v of g.versiones) {
+        const lang = v.lang === "es" ? "es" : "en";
+        const st2 = v.st2 || getEstadoCarta2(v.oracle_id);
+        const qty = lang === "en" ? (st2.qty_en || 0) : (st2.qty_es || 0);
+        const foilQty = lang === "en" ? (st2.foil_en || 0) : (st2.foil_es || 0);
+        const totalQty = (st2.qty_en || 0) + (st2.qty_es || 0);
+        const hasQty = totalQty > 0;
+        const imgUrl = v._img || "";
 
-      html += `
-        <li class="item-version">
-          <div class="item-version-main">
-            <div class="version-info">
-              <img src="icons/${qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
+        let controlsHtml = "";
+
+        if (controlsCfg.showQty) {
+          controlsHtml += `
+            <div class="control-fila">
+              <span class="lbl">Cantidad</span>
+              <div class="stepper">
+                <button class="btn-step btn-qty-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-qty-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" min="0" max="999" value="${qty}" />
+                <button class="btn-step btn-qty-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}">+</button>
+              </div>
+            </div>
+          `;
+        }
+
+        if (controlsCfg.showFoil) {
+          controlsHtml += `
+            <div class="control-fila">
+              <span class="lbl">Foil</span>
+              <div class="stepper">
+                <button class="btn-step btn-foil-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-foil-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" min="0" max="${qty}" value="${foilQty}" ${qty === 0 ? "disabled" : ""} />
+                <button class="btn-step btn-foil-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
+              </div>
+            </div>
+          `;
+        }
+
+        for (const c of extraCountersCfg) {
+          const value = getCounterValue(st2, lang, c.key);
+          controlsHtml += `
+            <div class="control-fila">
+              <span class="lbl">${escapeHtml(c.label)}</span>
+              <div class="stepper">
+                <button class="btn-step btn-counter-minus" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}" ${value <= 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-counter" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}" min="0" max="999" value="${value}" />
+                <button class="btn-step btn-counter-plus" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}">+</button>
+              </div>
+            </div>
+          `;
+        }
+
+        for (const t of extraTagsCfg) {
+          const checked = getTagValue(st2, lang, t.key);
+          controlsHtml += `
+            <div class="control-fila">
+              <span class="lbl">${escapeHtml(t.label)}</span>
+              <label class="chkline">
+                <input type="checkbox" class="chk-tag" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(t.key)}" ${checked ? "checked" : ""} />
+              </label>
+            </div>
+          `;
+        }
+
+        html += `
+          <div class="carta-item${hasQty ? " has-qty" : ""} carta-item-buscar" data-oracle="${v.oracle_id}" data-card-id="${v.id}">
+            <div class="carta-header">
+              <img src="icons/${hasQty ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="24" height="24">
               <button class="btn-link-carta" type="button" data-accion="ver-print" data-id="${v.id}">
-                <strong>${v.set_name}</strong>
-                <span class="lang-pill">${formatLang(v.lang)}</span>
-                <span class="hint"> (#${v.collector_number}, ${v.rareza})</span>
+                ${escapeHtml(v.nombre)} <span class="lang-pill">${formatLang(v.lang)}</span>
               </button>
+              <span class="carta-numero">#${escapeHtml(v.collector_number || "")}</span>
             </div>
-
-            <div class="version-controls">
-              <!-- Cantidad -->
-              <div class="control-fila-buscar">
-                <span class="lbl-buscar">Cantidad</span>
-                <div class="stepper stepper-buscar">
-                  <button class="btn-step btn-qty-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
-                  <input
-                    type="number"
-                    class="inp-num inp-qty-buscar"
-                    data-oracle="${v.oracle_id}"
-                    data-lang="${lang}"
-                    min="0"
-                    max="999"
-                    value="${qty}"
-                  />
-                  <button class="btn-step btn-qty-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}">+</button>
-                </div>
-              </div>
-
-              <!-- Foil -->
-              <div class="control-fila-buscar">
-                <span class="lbl-buscar">Foil</span>
-                <div class="stepper stepper-buscar">
-                  <button class="btn-step btn-foil-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
-                  <input
-                    type="number"
-                    class="inp-num inp-foil-buscar"
-                    data-oracle="${v.oracle_id}"
-                    data-lang="${lang}"
-                    min="0"
-                    max="${qty}"
-                    value="${foilQty}"
-                    ${qty === 0 ? "disabled" : ""}
-                  />
-                  <button class="btn-step btn-foil-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
-                </div>
-              </div>
+            <div class="hint" style="margin-top: 2px;">${escapeHtml(v.set_name || "")}</div>
+            <div class="carta-imagen-container">
+              ${imgUrl ? `<img class="carta-imagen" data-img-src="${escapeAttr(imgUrl)}" alt="${escapeAttr(v.nombre || "")}" loading="lazy" />` : `<div class="carta-imagen-placeholder">Sin imagen</div>`}
             </div>
-
-            <button
-              class="btn-secundario btn-ir-set"
-              type="button"
-              data-setkey="${v.setKey}"
-              data-cardname="${escapeAttr(v.nombre || "")}"
-            >
-              Ir
-            </button>
+            <div class="carta-controles">
+              ${controlsHtml}
+            </div>
+            <button class="btn-secundario btn-ir-set" type="button" data-setkey="${v.setKey}" data-cardname="${escapeAttr(v.nombre || "")}">Ir</button>
           </div>
-        </li>
-      `;
+        `;
+      }
     }
 
-    html += `</ul></div></div>`;
+    html += `</div>`;
+  } else {
+    for (const g of grupos) {
+      const grupoId = `grupo-${g.oracleId}`;
+      const numVersiones = g.versiones.length;
+      const isExpanded = expandedGroups.has(grupoId);
+      
+      html += `
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+            <h3 style="margin: 0; flex: 1;">
+              <button class="btn-link-carta" type="button" data-accion="ver-carta" data-oracle="${g.oracleId}">
+                ${escapeHtml(g.titulo)}
+              </button>
+            </h3>
+            <button 
+              class="btn-secundario btn-toggle-versiones" 
+              type="button" 
+              data-target="${grupoId}"
+              style="padding: 6px 12px; font-size: 0.9rem;"
+            >
+              ${isExpanded ? '▲ Ocultar' : '▼ Mostrar'} ${numVersiones} versión${numVersiones !== 1 ? 'es' : ''}
+            </button>
+          </div>
+
+          <div id="${grupoId}" class="versiones-container" style="display: ${isExpanded ? 'block' : 'none'}; margin-top: 15px;">
+            <div class="hint">Aparece en:</div>
+            <ul class="lista-versiones">
+      `;
+
+      for (const v of g.versiones) {
+        // Leer cantidades según el idioma de esta versión
+        const lang = v.lang === "es" ? "es" : "en";
+        const qty = lang === "en" ? (v.st2.qty_en || 0) : (v.st2.qty_es || 0);
+        const foilQty = lang === "en" ? (v.st2.foil_en || 0) : (v.st2.foil_es || 0);
+
+        html += `
+          <li class="item-version">
+            <div class="item-version-main">
+              <div class="version-info">
+                <img src="icons/${qty > 0 ? 'Ledazul' : 'Ledrojo'}.png" class="led-indicator" alt="" width="36" height="36">
+                <button class="btn-link-carta" type="button" data-accion="ver-print" data-id="${v.id}">
+                  <strong>${escapeHtml(v.set_name)}</strong>
+                  <span class="lang-pill">${formatLang(v.lang)}</span>
+                  <span class="hint"> (#${escapeHtml(v.collector_number)}, ${escapeHtml(v.rareza)})</span>
+                </button>
+              </div>
+
+              <div class="version-controls">
+                <!-- Cantidad -->
+                <div class="control-fila-buscar">
+                  <span class="lbl-buscar">Cantidad</span>
+                  <div class="stepper stepper-buscar">
+                    <button class="btn-step btn-qty-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
+                    <input
+                      type="number"
+                      class="inp-num inp-qty-buscar"
+                      data-oracle="${v.oracle_id}"
+                      data-lang="${lang}"
+                      min="0"
+                      max="999"
+                      value="${qty}"
+                    />
+                    <button class="btn-step btn-qty-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}">+</button>
+                  </div>
+                </div>
+
+                <!-- Foil -->
+                <div class="control-fila-buscar">
+                  <span class="lbl-buscar">Foil</span>
+                  <div class="stepper stepper-buscar">
+                    <button class="btn-step btn-foil-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
+                    <input
+                      type="number"
+                      class="inp-num inp-foil-buscar"
+                      data-oracle="${v.oracle_id}"
+                      data-lang="${lang}"
+                      min="0"
+                      max="${qty}"
+                      value="${foilQty}"
+                      ${qty === 0 ? "disabled" : ""}
+                    />
+                    <button class="btn-step btn-foil-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                class="btn-secundario btn-ir-set"
+                type="button"
+                data-setkey="${v.setKey}"
+                data-cardname="${escapeAttr(v.nombre || "")}"
+              >
+                Ir
+              </button>
+            </div>
+          </li>
+        `;
+      }
+
+      html += `</ul></div></div>`;
+    }
   }
 
   cont.innerHTML = html;
-  
-  // Event listeners para botones de expandir/colapsar
-  cont.querySelectorAll(".btn-toggle-versiones").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const targetId = btn.dataset.target;
-      const container = document.getElementById(targetId);
-      
-      if (container) {
-        const isVisible = container.style.display !== "none";
-        
-        if (isVisible) {
-          container.style.display = "none";
-          btn.textContent = btn.textContent.replace("▲ Ocultar", "▼ Mostrar");
-        } else {
-          container.style.display = "block";
-          btn.textContent = btn.textContent.replace("▼ Mostrar", "▲ Ocultar");
-        }
-      }
-    });
-  });
 
   // Map por id para abrir modal de un print concreto
   const verById = new Map();
   for (const g of grupos) for (const v of g.versiones) verById.set(v.id, v);
 
-  cont.querySelectorAll("[data-accion='ver-print']").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const v = verById.get(btn.dataset.id);
-      if (!v) return;
-
-      abrirModalCarta({
-        titulo: v.nombre,
-        imageUrl: v._img || null,
-        numero: v.collector_number || "",
-        rareza: v.rareza || "",
-        precio: formatPrecioEUR(v._prices)
-      });
-    });
-  });
-
   // Título del grupo -> modal con imagen “general” del oracle
   const mapaOracleAImg = new Map();
   for (const g of grupos) mapaOracleAImg.set(g.oracleId, { titulo: g.titulo, img: g.img });
 
-  cont.querySelectorAll("[data-accion='ver-carta']").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const data = mapaOracleAImg.get(btn.dataset.oracle);
-      if (!data) return;
-      abrirModalCarta({ titulo: data.titulo, imageUrl: data.img });
+  cont._searchVerById = verById;
+  cont._searchOracleImg = mapaOracleAImg;
+
+  if (verImagenes) {
+    cont.querySelectorAll("img.carta-imagen[data-img-src]").forEach(img => {
+      const src = img.dataset.imgSrc;
+      if (src) loadImageWithCache(img, src);
     });
-  });
+  }
 
-  // Controles de cantidad en búsqueda
-  cont.querySelectorAll(".btn-qty-minus-buscar").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const oracleId = btn.dataset.oracle;
-      const lang = btn.dataset.lang || "en";
-      if (!oracleId) return;
-      const st2 = getEstadoCarta2(oracleId);
-      const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-      setQtyLang(oracleId, lang, currentQty - 1);
-      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-      renderColecciones();
-    });
-  });
+  // ===============================
+  // Event Delegation para resultadosBuscar (búsqueda)
+  // ===============================
+  if (!cont.dataset.wiredSearch) {
+    cont.dataset.wiredSearch = "1";
 
-  cont.querySelectorAll(".btn-qty-plus-buscar").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const oracleId = btn.dataset.oracle;
-      const lang = btn.dataset.lang || "en";
-      if (!oracleId) return;
-      const st2 = getEstadoCarta2(oracleId);
-      const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-      setQtyLang(oracleId, lang, currentQty + 1);
-      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-      renderColecciones();
-    });
-  });
+    cont.addEventListener("click", (e) => {
+      const target = e.target;
+      const btn = target.closest("button");
+      if (!btn) return;
 
-  cont.querySelectorAll(".inp-qty-buscar").forEach(inp => {
-    inp.addEventListener("change", () => {
-      const oracleId = inp.dataset.oracle;
-      const lang = inp.dataset.lang || "en";
-      if (!oracleId) return;
-      setQtyLang(oracleId, lang, inp.value);
-      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-      renderColecciones();
-    });
-  });
+      if (btn.classList.contains("btn-toggle-versiones")) {
+        const targetId = btn.dataset.target;
+        const container = targetId ? document.getElementById(targetId) : null;
 
-  // Controles de foil en búsqueda
-  cont.querySelectorAll(".btn-foil-minus-buscar").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const oracleId = btn.dataset.oracle;
-      const lang = btn.dataset.lang || "en";
-      if (!oracleId) return;
-      const st2 = getEstadoCarta2(oracleId);
-      const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-      setFoilLang(oracleId, lang, currentFoil - 1);
-      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-      renderColecciones();
-    });
-  });
-
-  cont.querySelectorAll(".btn-foil-plus-buscar").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const oracleId = btn.dataset.oracle;
-      const lang = btn.dataset.lang || "en";
-      if (!oracleId) return;
-      const st2 = getEstadoCarta2(oracleId);
-      const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-      setFoilLang(oracleId, lang, currentFoil + 1);
-      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-      renderColecciones();
-    });
-  });
-
-  cont.querySelectorAll(".inp-foil-buscar").forEach(inp => {
-    inp.addEventListener("change", () => {
-      const oracleId = inp.dataset.oracle;
-      const lang = inp.dataset.lang || "en";
-      if (!oracleId) return;
-      setFoilLang(oracleId, lang, inp.value);
-      renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-      renderColecciones();
-    });
-  });
-
-  // Ir al set desde la búsqueda
-  cont.querySelectorAll(".btn-ir-set").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const setKey = btn.dataset.setkey;
-      const cardName = btn.dataset.cardname || "";
-      if (!setKey) return;
-
-      filtroSoloFaltanSet = false;
-      setFiltroTextoSet(cardName);
-
-      if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
-        hiddenEmptySetKeys.delete(setKey);
-        if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
+        if (container) {
+          const isVisible = container.style.display !== "none";
+          if (isVisible) {
+            container.style.display = "none";
+            btn.textContent = btn.textContent.replace("▲ Ocultar", "▼ Mostrar");
+          } else {
+            container.style.display = "block";
+            btn.textContent = btn.textContent.replace("▼ Mostrar", "▲ Ocultar");
+          }
+        }
+        return;
       }
 
-      await abrirSet(setKey);
-      if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
-    });
-  });
+      if (btn.dataset.accion === "ver-print") {
+        const v = cont._searchVerById?.get(btn.dataset.id);
+        if (!v) return;
+        abrirModalCarta({
+          titulo: v.nombre,
+          imageUrl: v._img || null,
+          numero: v.collector_number || "",
+          rareza: v.rareza || "",
+          precio: formatPrecioEUR(v._prices)
+        });
+        return;
+      }
 
-  // ===============================
-  // Event Delegation para listaResultados (búsqueda)
-  // ===============================
-  // Reemplaza 100+ listeners individuales con 1 delegado
-  const listaResultados = document.getElementById("listaResultados");
-  if (listaResultados && !listaResultados.dataset.wiredSearch) {
-    listaResultados.dataset.wiredSearch = "1";
-    
-    listaResultados.addEventListener("click", (e) => {
-      const target = e.target;
-      
-      if (target.classList.contains("btn-qty-minus-buscar")) {
-        const oracleId = target.dataset.oracle;
-        const lang = target.dataset.lang || "en";
+      if (btn.dataset.accion === "ver-carta") {
+        const data = cont._searchOracleImg?.get(btn.dataset.oracle);
+        if (!data) return;
+        abrirModalCarta({ titulo: data.titulo, imageUrl: data.img });
+        return;
+      }
+
+      if (btn.classList.contains("btn-qty-minus-buscar")) {
+        const oracleId = btn.dataset.oracle;
+        const lang = btn.dataset.lang || "en";
         if (!oracleId) return;
         const st2 = getEstadoCarta2(oracleId);
         const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
         setQtyLang(oracleId, lang, currentQty - 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-        renderColecciones();
+        scheduleRenderColecciones();
+        return;
       }
-      
-      if (target.classList.contains("btn-qty-plus-buscar")) {
-        const oracleId = target.dataset.oracle;
-        const lang = target.dataset.lang || "en";
+
+      if (btn.classList.contains("btn-qty-plus-buscar")) {
+        const oracleId = btn.dataset.oracle;
+        const lang = btn.dataset.lang || "en";
         if (!oracleId) return;
         const st2 = getEstadoCarta2(oracleId);
         const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
         setQtyLang(oracleId, lang, currentQty + 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-        renderColecciones();
+        scheduleRenderColecciones();
+        return;
       }
-      
-      if (target.classList.contains("btn-foil-minus-buscar")) {
-        const oracleId = target.dataset.oracle;
-        const lang = target.dataset.lang || "en";
+
+      if (btn.classList.contains("btn-foil-minus-buscar")) {
+        const oracleId = btn.dataset.oracle;
+        const lang = btn.dataset.lang || "en";
         if (!oracleId) return;
         const st2 = getEstadoCarta2(oracleId);
         const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
         setFoilLang(oracleId, lang, currentFoil - 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-        renderColecciones();
+        scheduleRenderColecciones();
+        return;
       }
-      
-      if (target.classList.contains("btn-foil-plus-buscar")) {
-        const oracleId = target.dataset.oracle;
-        const lang = target.dataset.lang || "en";
+
+      if (btn.classList.contains("btn-foil-plus-buscar")) {
+        const oracleId = btn.dataset.oracle;
+        const lang = btn.dataset.lang || "en";
         if (!oracleId) return;
         const st2 = getEstadoCarta2(oracleId);
         const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
         setFoilLang(oracleId, lang, currentFoil + 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-        renderColecciones();
+        scheduleRenderColecciones();
+        return;
       }
-      
-      if (target.classList.contains("btn-ir-set")) {
+
+      if (btn.classList.contains("btn-counter-minus")) {
+        const oracleId = btn.dataset.oracle;
+        const lang = btn.dataset.lang || "en";
+        const key = btn.dataset.control;
+        if (!oracleId || !key) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentVal = getCounterValue(st2, lang, key);
+        setCounterLang(oracleId, lang, key, currentVal - 1);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        scheduleRenderColecciones();
+        return;
+      }
+
+      if (btn.classList.contains("btn-counter-plus")) {
+        const oracleId = btn.dataset.oracle;
+        const lang = btn.dataset.lang || "en";
+        const key = btn.dataset.control;
+        if (!oracleId || !key) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentVal = getCounterValue(st2, lang, key);
+        setCounterLang(oracleId, lang, key, currentVal + 1);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        scheduleRenderColecciones();
+        return;
+      }
+
+      if (btn.classList.contains("btn-ir-set")) {
         (async () => {
-          const setKey = target.dataset.setkey;
-          const cardName = target.dataset.cardname || "";
+          const setKey = btn.dataset.setkey;
+          const cardName = btn.dataset.cardname || "";
           if (!setKey) return;
-          
+
           filtroSoloFaltanSet = false;
           setFiltroTextoSet(cardName);
-          
+
           if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
             hiddenEmptySetKeys.delete(setKey);
             if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
           }
-          
+
           await abrirSet(setKey);
           if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
         })();
       }
     });
-    
-    // Change events para inputs de cantidad y foil
-    listaResultados.addEventListener("change", (e) => {
+
+    cont.addEventListener("change", (e) => {
       const target = e.target;
-      
+
       if (target.classList.contains("inp-qty-buscar")) {
         const oracleId = target.dataset.oracle;
         const lang = target.dataset.lang || "en";
         if (!oracleId) return;
         setQtyLang(oracleId, lang, target.value);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-        renderColecciones();
+        scheduleRenderColecciones();
       }
-      
+
       if (target.classList.contains("inp-foil-buscar")) {
         const oracleId = target.dataset.oracle;
         const lang = target.dataset.lang || "en";
         if (!oracleId) return;
         setFoilLang(oracleId, lang, target.value);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
-        renderColecciones();
+        scheduleRenderColecciones();
+      }
+
+      if (target.classList.contains("inp-counter")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        const key = target.dataset.control;
+        if (!oracleId || !key) return;
+        setCounterLang(oracleId, lang, key, target.value);
+        renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
+        scheduleRenderColecciones();
+      }
+
+      if (target.classList.contains("chk-tag")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang || "en";
+        const key = target.dataset.control;
+        if (!oracleId || !key) return;
+        setTagLang(oracleId, lang, key, target.checked);
       }
     });
-  };
+  }
 }
 
 
@@ -4099,7 +5345,8 @@ function exportarEstado() {
     exportedAt: new Date().toISOString(),
     estado, // Legacy para compatibilidad
     estado2, // Nuevo modelo
-    oracleIdCache // Para resolución
+    oracleIdCache, // Para resolución
+    cardControlsConfig: cardControlsConfig || DEFAULT_CARD_CONTROLS
   };
 
   const json = JSON.stringify(payload, null, 2);
@@ -4149,6 +5396,11 @@ function importarEstadoDesdeTexto(jsonText) {
     guardarOracleIdCache();
   }
 
+  if (payload.cardControlsConfig) {
+    cardControlsConfig = normalizeCardControlsConfig(payload.cardControlsConfig);
+    guardarCardControlsConfig();
+  }
+
   // Normalizar/migrar por si viene antiguo o incompleto
   migrarEstadoSiHaceFalta();
 
@@ -4176,7 +5428,7 @@ let deckActual = null;
 let modoDeckVisualizacion = 'lista'; // 'lista' o 'imagenes'
 
 function cargarDecks() {
-  const raw = localStorage.getItem(LS_DECKS_KEY);
+  const raw = safeLocalStorageGet(LS_DECKS_KEY);
   if (!raw) return;
   try {
     decks = JSON.parse(raw);
@@ -4186,8 +5438,8 @@ function cargarDecks() {
 }
 
 function guardarDecks() {
-  localStorage.setItem(LS_DECKS_KEY, JSON.stringify(decks));
-  sbMarkDirty(); // Marcar como dirty para sincronizar con la nube
+  safeLocalStorageSet(LS_DECKS_KEY, JSON.stringify(decks));
+  if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
 // Parser de formato Moxfield: "1 Argonath, Pillars of the Kings (LTC) 351"
@@ -5017,53 +6269,71 @@ function wireGlobalButtons() {
 
   // Stats: recalcular
   const btnStatsRecalcular = document.getElementById("btnStatsRecalcular");
-if (btnStatsRecalcular) {
-  btnStatsRecalcular.addEventListener("click", () => {
-    if (typeof renderEstadisticas === "function") renderEstadisticas({ forceRecalc: true });
-  });
-}
+  if (btnStatsRecalcular) {
+    btnStatsRecalcular.addEventListener("click", async () => {
+      const prevText = btnStatsRecalcular.textContent;
+      btnStatsRecalcular.disabled = true;
+      btnStatsRecalcular.textContent = "Recalculando...";
 
-  // Menú principal
-  document.querySelectorAll(".btn-menu").forEach(btn => {
-    btn.addEventListener("click", () => {
+      const start = performance.now();
+      await recomputeAllProgressFromCache();
+      if (typeof renderEstadisticas === "function") renderEstadisticas({ forceRecalc: true });
+      scheduleRenderColecciones();
+
+      const elapsed = Math.round(performance.now() - start);
+      btnStatsRecalcular.textContent = `✓ Hecho (${elapsed}ms)`;
+
+      setTimeout(() => {
+        btnStatsRecalcular.disabled = false;
+        btnStatsRecalcular.textContent = prevText;
+      }, 1200);
+    });
+  }
+
+  // Menú principal (delegado)
+  if (!document.body.dataset.menuWired) {
+    document.body.dataset.menuWired = "1";
+    document.body.addEventListener("click", (e) => {
+      const btn = e.target.closest(".btn-menu");
+      if (!btn) return;
       const destino = btn.dataset.pantalla;
+      if (!destino) return;
 
       if (destino === "colecciones") {
+        mostrarPantalla("colecciones");
         aplicarUIFiltrosColecciones();
         aplicarUIFiltrosTipo();
         renderColecciones();
-        mostrarPantalla("colecciones");
         return;
       }
 
       if (destino === "buscar") {
+        mostrarPantalla("buscar");
         const inputBuscar = document.getElementById("inputBuscar");
         if (inputBuscar) inputBuscar.value = "";
         renderResultadosBuscar("");
-        mostrarPantalla("buscar");
         return;
       }
 
       if (destino === "decks") {
-        renderListaDecks();
         mostrarPantalla("decks");
+        renderListaDecks();
         return;
       }
 
       if (destino === "estadisticas") {
-  renderEstadisticas({ forceRecalc: false }); // pinta rápido con lo guardado
-  mostrarPantalla("estadisticas");
-  return;
-}
+        mostrarPantalla("estadisticas");
+        renderEstadisticas({ forceRecalc: false }); // pinta rápido con lo guardado
+        return;
+      }
 
       if (destino === "cuenta") {
         mostrarPantalla("cuenta");
         // Actualizar fecha del catálogo
         actualizarFechaCatalogo();
-        return;
       }
     });
-  });
+  }
 
   // Volver al menú
   document.querySelectorAll("[data-action='volverMenu']").forEach(btn => {
@@ -5099,14 +6369,32 @@ if (btnStatsRecalcular) {
   if (btnBuscar) {
     btnBuscar.addEventListener("click", async () => {
       const inputBuscar = document.getElementById("inputBuscar");
-      await renderResultadosBuscar(inputBuscar ? inputBuscar.value : "");
+      await renderResultadosBuscar(inputBuscar ? inputBuscar.value : "", { exact: getBuscarExacta() });
     });
   }
 
   const inputBuscar = document.getElementById("inputBuscar");
   if (inputBuscar) {
     inputBuscar.addEventListener("keydown", async (e) => {
-      if (e.key === "Enter") await renderResultadosBuscar(inputBuscar.value);
+      if (e.key === "Enter") await renderResultadosBuscar(inputBuscar.value, { exact: getBuscarExacta() });
+    });
+  }
+
+  const chkBuscarExacta = document.getElementById("chkBuscarExacta");
+  if (chkBuscarExacta) {
+    chkBuscarExacta.addEventListener("change", () => {
+      buscarExacta = !!chkBuscarExacta.checked;
+    });
+  }
+
+  const chkBuscarVerImagenes = document.getElementById("chkBuscarVerImagenes");
+  if (chkBuscarVerImagenes) {
+    chkBuscarVerImagenes.addEventListener("change", () => {
+      buscarVerImagenes = !!chkBuscarVerImagenes.checked;
+      const q = document.getElementById("inputBuscar")?.value || "";
+      if (q.trim()) {
+        renderResultadosBuscar(q, { exact: getBuscarExacta(), verImagenes: buscarVerImagenes });
+      }
     });
   }
 
@@ -5154,13 +6442,35 @@ if (btnStatsRecalcular) {
     chkSoloFaltanSet.addEventListener("change", () => setFiltroSoloFaltanSet(chkSoloFaltanSet.checked));
   }
 
-  // Checkbox para ver/ocultar imágenes de cartas (móvil)
-  const chkVerCartasMovil = document.getElementById("chkVerCartasMovil");
-  if (chkVerCartasMovil) {
-    chkVerCartasMovil.addEventListener("change", () => {
+  const chkEnPosesionSet = document.getElementById("chkEnPosesionSet");
+  if (chkEnPosesionSet) {
+    chkEnPosesionSet.addEventListener("change", () => setFiltroEnPosesionSet(chkEnPosesionSet.checked));
+  }
+
+  const chkFiltroColorSet = document.getElementById("chkFiltroColorSet");
+  const filtroColoresSetWrap = document.getElementById("filtroColoresSet");
+  if (chkFiltroColorSet) {
+    chkFiltroColorSet.addEventListener("change", () => {
+      setFiltroColorSetEnabled(chkFiltroColorSet.checked);
+      if (filtroColoresSetWrap) filtroColoresSetWrap.classList.toggle("hidden", !chkFiltroColorSet.checked);
+    });
+  }
+
+  document.querySelectorAll(".chk-color-set").forEach(chkColor => {
+    chkColor.addEventListener("change", () => toggleColorFiltroSet(chkColor.value, chkColor.checked));
+  });
+
+  document.querySelectorAll(".chk-rareza-set").forEach(chkRareza => {
+    chkRareza.addEventListener("change", () => toggleRarezaFiltroSet(chkRareza.value, chkRareza.checked));
+  });
+
+  // Checkbox para mostrar/ocultar imágenes de cartas
+  const chkMostrarCartas = document.getElementById("chkMostrarCartas");
+  if (chkMostrarCartas) {
+    chkMostrarCartas.addEventListener("change", () => {
       const gridCartas = document.querySelector(".cartas-grid");
       if (gridCartas) {
-        if (chkVerCartasMovil.checked) {
+        if (chkMostrarCartas.checked) {
           gridCartas.classList.remove("ocultar-imagenes");
         } else {
           gridCartas.classList.add("ocultar-imagenes");
@@ -5185,6 +6495,159 @@ if (btnStatsRecalcular) {
     });
   }
 
+  // Opciones de controles de cartas (global)
+  const btnOpcionesControles = document.getElementById("btnOpcionesControles");
+  const modalOpcionesControles = document.getElementById("modalOpcionesControles");
+  const btnCerrarOpcionesControles = document.getElementById("btnCerrarOpcionesControles");
+
+  const closeOpcionesControles = () => {
+    if (modalOpcionesControles) modalOpcionesControles.style.display = "none";
+  };
+
+  if (btnOpcionesControles && modalOpcionesControles) {
+    btnOpcionesControles.addEventListener("click", () => {
+      renderCardControlsOptionsUI();
+      modalOpcionesControles.style.display = "flex";
+    });
+  }
+
+  if (btnCerrarOpcionesControles) {
+    btnCerrarOpcionesControles.addEventListener("click", closeOpcionesControles);
+  }
+
+  if (modalOpcionesControles) {
+    modalOpcionesControles.addEventListener("click", (e) => {
+      if (e.target === modalOpcionesControles) closeOpcionesControles();
+    });
+  }
+
+  document.querySelectorAll('input[name="modoIdiomaCartas"]').forEach(radio => {
+    radio.addEventListener("change", () => {
+      applyCardControlsConfig({
+        ...getCardControlsConfig(),
+        langMode: radio.value
+      });
+    });
+  });
+
+  const chkMostrarCantidad = document.getElementById("chkMostrarCantidad");
+  if (chkMostrarCantidad) {
+    chkMostrarCantidad.addEventListener("change", () => {
+      applyCardControlsConfig({
+        ...getCardControlsConfig(),
+        showQty: chkMostrarCantidad.checked
+      });
+    });
+  }
+
+  const chkMostrarFoil = document.getElementById("chkMostrarFoil");
+  if (chkMostrarFoil) {
+    chkMostrarFoil.addEventListener("change", () => {
+      applyCardControlsConfig({
+        ...getCardControlsConfig(),
+        showFoil: chkMostrarFoil.checked
+      });
+    });
+  }
+
+  const listaContadoresOpciones = document.getElementById("listaContadoresOpciones");
+  if (listaContadoresOpciones) {
+    listaContadoresOpciones.addEventListener("click", (e) => {
+      const item = e.target.closest(".opciones-item[data-control-type='counter']");
+      if (!item) return;
+      const key = item.dataset.key;
+      if (!key) return;
+
+      if (e.target.dataset.action === "remove") {
+        const cfg = getCardControlsConfig();
+        const extraCounters = (cfg.extraCounters || []).filter(c => c.key !== key);
+        applyCardControlsConfig({ ...cfg, extraCounters });
+      }
+    });
+
+    listaContadoresOpciones.addEventListener("change", (e) => {
+      if (e.target.dataset.action !== "toggle") return;
+      const item = e.target.closest(".opciones-item[data-control-type='counter']");
+      if (!item) return;
+      const key = item.dataset.key;
+      if (!key) return;
+      const cfg = getCardControlsConfig();
+      const extraCounters = (cfg.extraCounters || []).map(c => c.key === key ? { ...c, enabled: !!e.target.checked } : c);
+      applyCardControlsConfig({ ...cfg, extraCounters });
+    });
+  }
+
+  const listaTagsOpciones = document.getElementById("listaTagsOpciones");
+  if (listaTagsOpciones) {
+    listaTagsOpciones.addEventListener("click", (e) => {
+      const item = e.target.closest(".opciones-item[data-control-type='tag']");
+      if (!item) return;
+      const key = item.dataset.key;
+      if (!key) return;
+      if (e.target.dataset.action === "remove") {
+        const cfg = getCardControlsConfig();
+        const extraTags = (cfg.extraTags || []).filter(t => t.key !== key);
+        const riTagEnabled = key === "ri" ? false : !!cfg.riTagEnabled;
+        applyCardControlsConfig({ ...cfg, extraTags, riTagEnabled });
+      }
+    });
+
+    listaTagsOpciones.addEventListener("change", (e) => {
+      if (e.target.dataset.action !== "toggle") return;
+      const item = e.target.closest(".opciones-item[data-control-type='tag']");
+      if (!item) return;
+      const key = item.dataset.key;
+      if (!key) return;
+      const cfg = getCardControlsConfig();
+      const extraTags = (cfg.extraTags || []).map(t => t.key === key ? { ...t, enabled: !!e.target.checked } : t);
+      applyCardControlsConfig({ ...cfg, extraTags });
+    });
+  }
+
+  const btnAgregarContador = document.getElementById("btnAgregarContador");
+  const inputNuevoContador = document.getElementById("inputNuevoContador");
+  if (btnAgregarContador && inputNuevoContador) {
+    btnAgregarContador.addEventListener("click", () => {
+      const label = String(inputNuevoContador.value || "").trim();
+      if (!label) return;
+      const cfg = getCardControlsConfig();
+      const existingKeys = new Set([
+        ...(cfg.extraCounters || []).map(c => c.key),
+        ...(cfg.extraTags || []).map(t => t.key),
+        "qty",
+        "foil",
+        "ri"
+      ]);
+      const key = makeControlKey(label, existingKeys);
+      const extraCounters = [...(cfg.extraCounters || []), { key, label, enabled: true }];
+      applyCardControlsConfig({ ...cfg, extraCounters });
+      inputNuevoContador.value = "";
+      inputNuevoContador.focus();
+    });
+  }
+
+  const btnAgregarTag = document.getElementById("btnAgregarTag");
+  const inputNuevoTag = document.getElementById("inputNuevoTag");
+  if (btnAgregarTag && inputNuevoTag) {
+    btnAgregarTag.addEventListener("click", () => {
+      const label = String(inputNuevoTag.value || "").trim();
+      if (!label) return;
+      const cfg = getCardControlsConfig();
+      const existingKeys = new Set([
+        ...(cfg.extraCounters || []).map(c => c.key),
+        ...(cfg.extraTags || []).map(t => t.key),
+        "qty",
+        "foil"
+      ]);
+      const key = makeControlKey(label, existingKeys);
+      const extraTags = [...(cfg.extraTags || []), { key, label, enabled: true }];
+      const riTagEnabled = key === "ri" ? true : !!cfg.riTagEnabled;
+      applyCardControlsConfig({ ...cfg, extraTags, riTagEnabled });
+      inputNuevoTag.value = "";
+      inputNuevoTag.focus();
+    });
+  }
+
   // Toggle de idioma eliminado - ya no es necesario
   // Ahora siempre cargamos EN pero mostramos cantidades de ambos idiomas usando estado2
 
@@ -5197,6 +6660,20 @@ if (btnStatsRecalcular) {
       autocompletarContent.classList.toggle("hidden");
       const arrow = btnToggleAutocompletar.querySelector(".arrow");
       if (arrow) arrow.textContent = autocompletarContent.classList.contains("hidden") ? "▼" : "▲";
+    });
+  }
+
+  // Filtros del set - Toggle desplegable
+  const btnToggleFiltrosSet = document.getElementById("btnToggleFiltrosSet");
+  const filtrosSetContent = document.getElementById("filtrosSetContent");
+
+  if (btnToggleFiltrosSet && filtrosSetContent) {
+    btnToggleFiltrosSet.addEventListener("click", () => {
+      filtrosSetContent.classList.toggle("hidden");
+      const arrow = btnToggleFiltrosSet.querySelector(".arrow");
+      if (arrow) {
+        arrow.textContent = filtrosSetContent.classList.contains("hidden") ? "▼" : "▲";
+      }
     });
   }
 
@@ -5363,6 +6840,8 @@ if (btnStatsRecalcular) {
         const btn = target.classList.contains("btn-lang-switch") ? target : target.closest(".btn-lang-switch");
         const oracleId = btn.dataset.oracle;
         if (!oracleId) return;
+
+        if (getCardControlsConfig().langMode !== "both") return;
         
         const cartaControles = btn.closest(".carta-controles");
         if (!cartaControles) return;
@@ -5470,6 +6949,33 @@ if (btnStatsRecalcular) {
         scheduleRenderColecciones();
         return;
       }
+
+      // Contadores personalizados
+      if (target.classList.contains("btn-counter-minus")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        const key = target.dataset.control;
+        if (!oracleId || !lang || !key) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentVal = getCounterValue(st2, lang, key);
+        setCounterLang(oracleId, lang, key, currentVal - 1);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+
+      if (target.classList.contains("btn-counter-plus")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        const key = target.dataset.control;
+        if (!oracleId || !lang || !key) return;
+        const st2 = getEstadoCarta2(oracleId);
+        const currentVal = getCounterValue(st2, lang, key);
+        setCounterLang(oracleId, lang, key, currentVal + 1);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
     });
     
     // Change events para inputs
@@ -5497,13 +7003,26 @@ if (btnStatsRecalcular) {
         scheduleRenderColecciones();
         return;
       }
-      
-      // Checkbox Ri
-      if (target.classList.contains("chk-want")) {
+
+      // Inputs de contadores personalizados
+      if (target.classList.contains("inp-counter")) {
         const oracleId = target.dataset.oracle;
         const lang = target.dataset.lang;
-        if (!oracleId || !lang) return;
-        setRiLang(oracleId, lang, target.checked);
+        const key = target.dataset.control;
+        if (!oracleId || !lang || !key) return;
+        setCounterLang(oracleId, lang, key, target.value);
+        actualizarPanelLang(oracleId, lang);
+        scheduleRenderColecciones();
+        return;
+      }
+      
+      // Tags
+      if (target.classList.contains("chk-tag")) {
+        const oracleId = target.dataset.oracle;
+        const lang = target.dataset.lang;
+        const key = target.dataset.control;
+        if (!oracleId || !lang || !key) return;
+        setTagLang(oracleId, lang, key, target.checked);
         return;
       }
     });
@@ -5834,7 +7353,7 @@ function actualizarFechaCatalogo() {
   const el = document.getElementById("fechaCatalogo");
   if (!el) return;
   
-  const raw = localStorage.getItem(LS_CATALOGO_TIMESTAMP);
+  const raw = safeLocalStorageGet(LS_CATALOGO_TIMESTAMP);
   if (!raw) {
     el.textContent = "Catálogo: no descargado";
     return;
@@ -5958,7 +7477,9 @@ async function init() {
   cargarUILangByOracle();
   
   cargarProgresoPorSet();
+  cargarCardControlsConfig();
   cargarFiltrosColecciones();
+  scheduleStatsSnapshotUpdate({ renderIfVisible: false });
   cargarHiddenEmptySets();
   cargarHiddenCollections();
   cargarStatsSnapshot();
@@ -5972,14 +7493,17 @@ async function init() {
     cleanExpiredCache().catch(err => {
       console.warn('Error limpiando cache expirado:', err);
     });
+    cleanExpiredImageCache().catch(err => {
+      if (DEBUG) console.warn('Error limpiando cache de imágenes:', err);
+    });
   }, 5000); // Después de 5 segundos para no bloquear el inicio
 
   try {
-  const raw = localStorage.getItem(LS_STATS_SNAPSHOT);
-  statsSnapshot = raw ? JSON.parse(raw) : null;
-} catch {
-  statsSnapshot = null;
-}
+    const raw = safeLocalStorageGet(LS_STATS_SNAPSHOT);
+    statsSnapshot = raw ? JSON.parse(raw) : null;
+  } catch {
+    statsSnapshot = null;
+  }
   // ✅ Supabase (nuevo): sesión + listeners + pull + autosave
     try { 
     await sbInit(); 
@@ -6209,7 +7733,7 @@ function updateTopBtnVisibility() {
     console.log('[TOPBTN] scroll event', { scrollTop: top, shouldShow });
   }
 
-  btn.classList.toggle('is-visible', shouldShow);
+  btn.classList.toggle('visible', shouldShow);
 }
 
 function unbindTopBtnListeners() {
