@@ -292,7 +292,7 @@ button:disabled, .btn-principal:disabled, .btn-secundario:disabled {
 .btn-menu {
   width: 100%;
   padding: 14px;
-  font-size: 30px;
+  font-size: 26px;
   background: var(--panel);
 }
 
