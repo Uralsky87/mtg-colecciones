@@ -1360,10 +1360,10 @@ label {
 }
 
 .cartas-grid.ocultar-imagenes .carta-item {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px 10px;
 }
 
 .cartas-grid.ocultar-imagenes .carta-imagen-container {
@@ -1371,14 +1371,20 @@ label {
 }
 
 .cartas-grid.ocultar-imagenes .carta-header {
-  flex: 1;
+  width: 100%;
   min-height: auto;
+  flex-wrap: wrap;
+}
+
+.cartas-grid.ocultar-imagenes .btn-link-carta {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .cartas-grid.ocultar-imagenes .carta-controles {
-  flex-shrink: 0;
-  gap: 3px;
-  padding: 3px;
+  width: 100%;
+  gap: 4px;
+  padding: 4px;
 }
 
 @media (min-width: 560px) {
