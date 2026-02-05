@@ -148,6 +148,7 @@ h3 { font-size: 16px; margin: 0 0 10px; }
 @media (max-width: 560px) {
   .logo-inicio { max-width: 85%; margin-bottom: 20px; }
   .logo-menu { max-width: 70%; margin-bottom: 18px; }
+  .logo-menu-text { font-size: calc(1.5 * clamp(42px, 10.6vw, 71px)); }
 }
 
 .pantalla { display: none; position: relative; z-index: 1; }
@@ -1350,6 +1351,34 @@ label {
   grid-template-columns: repeat(1, 1fr);
   gap: 10px;
   margin-bottom: 14px;
+}
+
+/* Vista compacta sin imágenes */
+.cartas-grid.ocultar-imagenes {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.cartas-grid.ocultar-imagenes .carta-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.cartas-grid.ocultar-imagenes .carta-imagen-container {
+  display: none;
+}
+
+.cartas-grid.ocultar-imagenes .carta-header {
+  flex: 1;
+  min-height: auto;
+}
+
+.cartas-grid.ocultar-imagenes .carta-controles {
+  flex-shrink: 0;
+  gap: 3px;
+  padding: 3px;
 }
 
 @media (min-width: 560px) {

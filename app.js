@@ -172,6 +172,11 @@ const IMAGE_CACHE_EXPIRY_DAYS = 14; // Cache de imágenes
 const IMAGE_CACHE_MAX_BYTES = 100 * 1024 * 1024; // 100 MB
 const LS_IMAGE_CACHE_SIZE = "mtg_image_cache_bytes_v1";
 
+// Cache en memoria para evitar parpadeos al re-render en scroll virtual
+const MEMORY_IMAGE_CACHE_MAX_BYTES = 40 * 1024 * 1024; // 40 MB
+const memoryImageBlobCache = new Map();
+let memoryImageBlobBytes = 0;
+
 let dbInstance = null;
 
 // Abrir/crear la base de datos
@@ -223,6 +228,30 @@ function setImageCacheSize(bytes) {
 function bumpImageCacheSize(delta) {
   const current = getImageCacheSize();
   setImageCacheSize(current + (Number(delta) || 0));
+}
+
+function rememberImageBlob(key, blob) {
+  if (!key || !blob) return;
+  const size = blob.size || 0;
+  if (!Number.isFinite(size) || size <= 0) return;
+
+  if (memoryImageBlobCache.has(key)) return;
+
+  while (memoryImageBlobBytes + size > MEMORY_IMAGE_CACHE_MAX_BYTES && memoryImageBlobCache.size > 0) {
+    const firstKey = memoryImageBlobCache.keys().next().value;
+    const firstBlob = memoryImageBlobCache.get(firstKey);
+    memoryImageBlobCache.delete(firstKey);
+    memoryImageBlobBytes -= (firstBlob?.size || 0);
+  }
+
+  if (memoryImageBlobBytes + size <= MEMORY_IMAGE_CACHE_MAX_BYTES) {
+    memoryImageBlobCache.set(key, blob);
+    memoryImageBlobBytes += size;
+  }
+}
+
+function getMemoryImageBlob(key) {
+  return key ? memoryImageBlobCache.get(key) : null;
 }
 
 function setImageSrc(imgEl, src) {
@@ -344,8 +373,17 @@ async function loadImageWithCache(imgEl, url) {
   imgEl.dataset.imgCacheState = 'loading';
 
   try {
+    const memBlob = getMemoryImageBlob(key);
+    if (memBlob) {
+      const blobUrl = URL.createObjectURL(memBlob);
+      setImageSrc(imgEl, blobUrl);
+      imgEl.dataset.imgCacheState = 'loaded';
+      return;
+    }
+
     const cached = await getImageFromDB(key);
     if (cached && cached.blob) {
+      rememberImageBlob(key, cached.blob);
       const blobUrl = URL.createObjectURL(cached.blob);
       setImageSrc(imgEl, blobUrl);
       imgEl.dataset.imgCacheState = 'loaded';
@@ -355,18 +393,12 @@ async function loadImageWithCache(imgEl, url) {
     setImageSrc(imgEl, key);
     imgEl.dataset.imgCacheState = 'loaded';
 
-    // Guardar en background (solo mismo origen para evitar errores CORS)
-    const sameOrigin = (() => {
-      try { return new URL(key, window.location.href).origin === window.location.origin; }
-      catch { return false; }
-    })();
-
-    if (sameOrigin) {
-      const res = await fetch(key, { cache: 'force-cache' });
-      if (res && res.ok) {
-        const blob = await res.blob();
-        saveImageToDB(key, blob);
-      }
+    // Guardar en background (si CORS permite)
+    const res = await fetch(key, { cache: 'force-cache' });
+    if (res && res.ok) {
+      const blob = await res.blob();
+      rememberImageBlob(key, blob);
+      saveImageToDB(key, blob);
     }
   } catch (err) {
     imgEl.dataset.imgCacheState = 'error';
@@ -7638,17 +7670,44 @@ function mostrarBannerActualizacion(newWorker) {
   const btnCerrar = document.getElementById("btnCerrarUpdate");
   
   if (!banner) return;
+
+  if (!newWorker || newWorker.state === "activated" || newWorker.state === "redundant") {
+    banner.classList.add("hidden");
+    return;
+  }
   
   banner.classList.remove("hidden");
+
+  const onStateChange = () => {
+    if (newWorker.state === "activated" || newWorker.state === "redundant") {
+      banner.classList.add("hidden");
+    }
+  };
+  newWorker.addEventListener("statechange", onStateChange, { once: false });
   
   btnActualizar.addEventListener("click", () => {
+    if (newWorker.state === "activated" || newWorker.state === "redundant") {
+      banner.classList.add("hidden");
+      return;
+    }
+
+    let reloaded = false;
+
     // Enviar mensaje al service worker para que se active inmediatamente
     newWorker.postMessage({ type: "SKIP_WAITING" });
     
     // Recargar la página cuando el nuevo SW tome control
     navigator.serviceWorker.addEventListener("controllerchange", () => {
+      reloaded = true;
       window.location.reload();
-    });
+    }, { once: true });
+
+    // Si ya estaba actualizado, ocultar el banner
+    setTimeout(() => {
+      if (!reloaded) {
+        banner.classList.add("hidden");
+      }
+    }, 3000);
   }, { once: true });
   
   btnCerrar.addEventListener("click", () => {
