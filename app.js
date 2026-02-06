@@ -3996,7 +3996,7 @@ let filtroRarezasSet = new Set(["Común", "Infrecuente", "Rara", "Mítica"]);
 let ultimaListaSetRender = [];
 
 const VIRTUAL_SCROLL_MIN_ITEMS = 120;
-const VIRTUAL_SCROLL_BUFFER_ROWS = 4;
+const VIRTUAL_SCROLL_BUFFER_ROWS = 8;
 const VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT = 380;
 
 const virtualScrollState = {
@@ -4088,7 +4088,8 @@ function toggleRarezaFiltroSet(rareza, enabled) {
   if (setActualKey) renderTablaSet(setActualKey);
 }
 
-function resetScrollSetList() {
+function resetScrollSetList({ allowAutoScroll = false } = {}) {
+  if (!allowAutoScroll) return;
   const cont = document.getElementById("listaCartasSet");
   if (!cont) return;
   const rect = cont.getBoundingClientRect();
@@ -4683,10 +4684,11 @@ function renderTablaSet(setKey) {
       wrapper.style.paddingTop = `${topPad}px`;
       wrapper.style.paddingBottom = `${bottomPad}px`;
 
-      grid.innerHTML = "";
+      const gridFrag = document.createDocumentFragment();
       for (let i = startIdx; i < endIdx; i++) {
-        grid.appendChild(createCartaItem(lista[i], i));
+        gridFrag.appendChild(createCartaItem(lista[i], i));
       }
+      grid.replaceChildren(gridFrag);
 
       applyVerCartasState(grid);
 
