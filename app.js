@@ -2,7 +2,7 @@
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
-const VERSION = "0.8";
+const VERSION = "0.81";
 const DEBUG = false; // Cambiar a true para habilitar métricas de rendimiento
 const JS_URL = (typeof document !== "undefined" && document.currentScript?.src) || "app.js loaded";
 console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
@@ -4101,19 +4101,6 @@ function aplicarUIFiltrosSet() {
   });
 }
 
-  else filtroRarezasSet.delete(key);
-  resetScrollSetList();
-  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
-}
-
-function setFiltroYearSet(yearValue) {
-  const raw = String(yearValue || "").trim();
-  const next = raw && raw !== "all" ? raw : "all";
-  filtroYearSet = next;
-  resetScrollSetList();
-  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
-}
-
 function resetScrollSetList({ allowAutoScroll = false } = {}) {
   if (!allowAutoScroll) return;
   const cont = document.getElementById("listaCartasSet");
@@ -4144,35 +4131,6 @@ function renderTablaSetWithStableScroll(setKey) {
   });
 }
 
-function getCardYear(card) {
-  const releasedAt = card?.released_at || card?._raw?.released_at || "";
-  const year = String(releasedAt).slice(0, 4);
-  return year && /^\d{4}$/.test(year) ? year : "";
-}
-
-function updateFiltroYearSetOptions(setKey) {
-  const select = document.getElementById("selectFiltroYearSet");
-  if (!select || !setKey) return;
-  const lista = cartasDeSetKey(setKey) || [];
-  const years = new Set();
-  for (const card of lista) {
-    const year = getCardYear(card);
-    if (year) years.add(year);
-  }
-  filtroYearSetOptions = Array.from(years).sort((a, b) => b.localeCompare(a));
-  let nextValue = filtroYearSet;
-  if (nextValue !== "all" && !filtroYearSetOptions.includes(nextValue)) {
-    nextValue = "all";
-    filtroYearSet = "all";
-  }
-
-  select.innerHTML = [
-    `<option value="all">Todos</option>`,
-    ...filtroYearSetOptions.map(y => `<option value="${y}">${y}</option>`)
-  ].join("");
-  select.value = nextValue;
-  select.disabled = filtroYearSetOptions.length === 0;
-}
 
 function getCardTotalsForSetFilter(card) {
   if (card?.oracle_id) {
@@ -6399,48 +6357,59 @@ function wireGlobalButtons() {
     });
   }
 
+  const handleMenuNavigation = (destino) => {
+    if (!destino) return;
+
+    if (destino === "colecciones") {
+      mostrarPantalla("colecciones");
+      aplicarUIFiltrosColecciones();
+      aplicarUIFiltrosTipo();
+      renderColecciones();
+      return;
+    }
+
+    if (destino === "buscar") {
+      mostrarPantalla("buscar");
+      const inputBuscar = document.getElementById("inputBuscar");
+      if (inputBuscar) inputBuscar.value = "";
+      renderResultadosBuscar("");
+      return;
+    }
+
+    if (destino === "decks") {
+      mostrarPantalla("decks");
+      renderListaDecks();
+      return;
+    }
+
+    if (destino === "estadisticas") {
+      mostrarPantalla("estadisticas");
+      renderEstadisticas({ forceRecalc: false }); // pinta rápido con lo guardado
+      return;
+    }
+
+    if (destino === "cuenta") {
+      mostrarPantalla("cuenta");
+      // Actualizar fecha del catálogo
+      actualizarFechaCatalogo();
+    }
+  };
+
+  document.querySelectorAll(".btn-menu").forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", () => {
+      handleMenuNavigation(btn.dataset.pantalla);
+    });
+  });
+
   // Menú principal (delegado)
   if (!document.body.dataset.menuWired) {
     document.body.dataset.menuWired = "1";
     document.body.addEventListener("click", (e) => {
       const btn = e.target.closest(".btn-menu");
       if (!btn) return;
-      const destino = btn.dataset.pantalla;
-      if (!destino) return;
-
-      if (destino === "colecciones") {
-        mostrarPantalla("colecciones");
-        aplicarUIFiltrosColecciones();
-        aplicarUIFiltrosTipo();
-        renderColecciones();
-        return;
-      }
-
-      if (destino === "buscar") {
-        mostrarPantalla("buscar");
-        const inputBuscar = document.getElementById("inputBuscar");
-        if (inputBuscar) inputBuscar.value = "";
-        renderResultadosBuscar("");
-        return;
-      }
-
-      if (destino === "decks") {
-        mostrarPantalla("decks");
-        renderListaDecks();
-        return;
-      }
-
-      if (destino === "estadisticas") {
-        mostrarPantalla("estadisticas");
-        renderEstadisticas({ forceRecalc: false }); // pinta rápido con lo guardado
-        return;
-      }
-
-      if (destino === "cuenta") {
-        mostrarPantalla("cuenta");
-        // Actualizar fecha del catálogo
-        actualizarFechaCatalogo();
-      }
+      handleMenuNavigation(btn.dataset.pantalla);
     });
   }
 
@@ -6862,14 +6831,16 @@ function wireGlobalButtons() {
     });
   }
 
-  const btnToggleFiltroYearColecciones = document.getElementById("btnToggleFiltroYearColecciones");
-  const filtroYearColeccionesContent = document.getElementById("filtroYearColeccionesContent");
-  if (btnToggleFiltroYearColecciones && filtroYearColeccionesContent && !btnToggleFiltroYearColecciones.dataset.wired) {
-    btnToggleFiltroYearColecciones.dataset.wired = "1";
-    btnToggleFiltroYearColecciones.addEventListener("click", () => {
-      filtroYearColeccionesContent.classList.toggle("hidden");
-      const arrow = btnToggleFiltroYearColecciones.querySelector(".arrow");
-      if (arrow) arrow.textContent = filtroYearColeccionesContent.classList.contains("hidden") ? "▼" : "▲";
+  if (!document.body.dataset.yearFilterWired) {
+    document.body.dataset.yearFilterWired = "1";
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("#btnToggleFiltroYearColecciones");
+      if (!btn) return;
+      const content = document.getElementById("filtroYearColeccionesContent");
+      if (!content) return;
+      content.classList.toggle("hidden");
+      const arrow = btn.querySelector(".arrow");
+      if (arrow) arrow.textContent = content.classList.contains("hidden") ? "▼" : "▲";
     });
   }
   

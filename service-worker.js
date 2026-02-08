@@ -1,11 +1,11 @@
-const CACHE = "mtg-colecciones-v0.8";
+const CACHE = "mtg-colecciones-v0.81";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
-  "./styles.css?v=0.8",
+  "./styles.css?v=0.81",
   "./app.js",
-  "./app.js?v=0.8",
+  "./app.js?v=0.81",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -17,8 +17,8 @@ const ASSETS = [
 ];
 
 // Runtime caching strategies
-const CACHE_RUNTIME = "mtg-runtime-v0.8";
-const CACHE_IMAGES = "mtg-images-v0.8";
+const CACHE_RUNTIME = "mtg-runtime-v0.81";
+const CACHE_IMAGES = "mtg-images-v0.81";
 const CACHE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function fallbackResponseFor(req) {
@@ -60,7 +60,7 @@ self.addEventListener("activate", (event) => {
     const keys = await caches.keys();
     // Delete old caches, keep only current version
     await Promise.all(keys
-      .filter(k => !k.includes("v0.8"))
+      .filter(k => !k.includes("v0.81"))
       .map(k => {
         console.log(`SW: deleting old cache ${k}`);
         return caches.delete(k);
