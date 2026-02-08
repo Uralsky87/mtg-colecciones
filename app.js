@@ -2907,7 +2907,6 @@ async function ensureSetCardsLoaded(setKey) {
     type_line: card.type_line || '',
     cmc: card.cmc || 0,
     color_identity: card.color_identity || [],
-    released_at: card.released_at || "",
     _img: pickImage(card),
     _prices: card.prices || null,
     _colors: card.colors || null,
@@ -3458,6 +3457,9 @@ let filtroIdiomaColecciones = "all"; // "all" | "en" | "es"
 
 let filtroTextoColecciones = ""; // texto del buscador
 
+let filtroYearColecciones = "all";
+let filtroYearColeccionesOptions = [];
+
 let vistaColecciones = "simbolo"; // "simbolo" | "lista"
 
 const LS_FILTERS_KEY = "mtg_colecciones_filtros_v1";
@@ -3629,6 +3631,43 @@ function setFiltroTextoColecciones(texto) {
   scheduleRenderColecciones();
 }
 
+function setFiltroYearColecciones(yearValue) {
+  const raw = String(yearValue || "").trim();
+  const next = raw && raw !== "all" ? raw : "all";
+  filtroYearColecciones = next;
+  guardarFiltrosColecciones();
+  scheduleRenderColecciones();
+}
+
+function getSetYearFromReleasedAt(releasedAt) {
+  const year = String(releasedAt || "").slice(0, 4);
+  return year && /^\d{4}$/.test(year) ? year : "";
+}
+
+function updateFiltroYearColeccionesOptions(setsAll) {
+  const select = document.getElementById("selectFiltroYearColecciones");
+  if (!select) return;
+  const sets = Array.isArray(setsAll) ? setsAll : obtenerColecciones();
+  const years = new Set();
+  for (const s of sets || []) {
+    const year = getSetYearFromReleasedAt(s.released_at);
+    if (year) years.add(year);
+  }
+  filtroYearColeccionesOptions = Array.from(years).sort((a, b) => b.localeCompare(a));
+  let nextValue = filtroYearColecciones;
+  if (nextValue !== "all" && !filtroYearColeccionesOptions.includes(nextValue)) {
+    nextValue = "all";
+    filtroYearColecciones = "all";
+  }
+
+  select.innerHTML = [
+    `<option value="all">Todos</option>`,
+    ...filtroYearColeccionesOptions.map(y => `<option value="${y}">${y}</option>`)
+  ].join("");
+  select.value = nextValue;
+  select.disabled = filtroYearColeccionesOptions.length === 0;
+}
+
 
 function progresoDeColeccion(setKey) {
   // Si está cargado en memoria esta sesión
@@ -3679,6 +3718,12 @@ function aplicarUIFiltrosColecciones() {
   const inputBuscarCol = document.getElementById("inputBuscarColecciones");
   if (inputBuscarCol) inputBuscarCol.value = filtroTextoColecciones || "";
 
+  const selectYear = document.getElementById("selectFiltroYearColecciones");
+  if (selectYear) {
+    selectYear.value = filtroYearColecciones;
+    selectYear.disabled = filtroYearColeccionesOptions.length === 0;
+  }
+
   // Establecer el radio de vista correcto
   const radioVista = document.querySelector(`input[name="vistaColecciones"][value="${vistaColecciones}"]`);
   if (radioVista) radioVista.checked = true;
@@ -3723,6 +3768,7 @@ function renderColecciones() {
   }
 
   let sets = obtenerColecciones();
+  updateFiltroYearColeccionesOptions(sets);
 
   // Primero aplicar filtro de colecciones ocultas
   // Si mostrarOcultas está activo, solo mostrar las ocultas
@@ -3779,6 +3825,10 @@ function renderColecciones() {
   // filtro texto
   if (filtroTextoColecciones) {
     sets = sets.filter(s => normalizarTexto(s.nombre).includes(filtroTextoColecciones));
+  }
+
+  if (filtroYearColecciones && filtroYearColecciones !== "all") {
+    sets = sets.filter(s => getSetYearFromReleasedAt(s.released_at) === filtroYearColecciones);
   }
 
   if (sets.length === 0) {
@@ -3942,7 +3992,8 @@ function guardarFiltrosColecciones() {
   const data = {
     lang: filtroIdiomaColecciones,
     texto: filtroTextoColecciones,
-    vista: vistaColecciones
+    vista: vistaColecciones,
+    year: filtroYearColecciones
   };
   safeLocalStorageSet(LS_FILTERS_KEY, JSON.stringify(data));
   if (typeof sbMarkDirty === "function") sbMarkDirty();
@@ -3963,6 +4014,9 @@ function cargarFiltrosColecciones() {
       }
       if (data.vista === "lista" || data.vista === "simbolo") {
         vistaColecciones = data.vista;
+      }
+      if (typeof data.year === "string") {
+        filtroYearColecciones = data.year.trim() || "all";
       }
     }
   } catch {
@@ -3994,8 +4048,6 @@ let filtroEnPosesionSet = false;
 let filtroColorSetEnabled = false;
 let filtroColoresSet = new Set();
 let filtroRarezasSet = new Set(["Común", "Infrecuente", "Rara", "Mítica"]);
-let filtroYearSet = "all";
-let filtroYearSetOptions = [];
 let ultimaListaSetRender = [];
 
 const VIRTUAL_SCROLL_MIN_ITEMS = 120;
@@ -4044,54 +4096,11 @@ function aplicarUIFiltrosSet() {
     chkColorOpt.checked = filtroColoresSet.has(chkColorOpt.value);
   });
 
-  const selectYear = document.getElementById("selectFiltroYearSet");
-  if (selectYear) {
-    selectYear.value = filtroYearSet;
-    selectYear.disabled = filtroYearSetOptions.length === 0;
-  }
-
   document.querySelectorAll(".chk-rareza-set").forEach(chkR => {
     chkR.checked = filtroRarezasSet.has(chkR.value);
   });
 }
 
-function setFiltroTextoSet(texto) {
-  filtroTextoSet = normalizarTexto((texto || "").trim());
-  resetScrollSetList();
-  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
-}
-
-function setFiltroSoloFaltanSet(val) {
-  filtroSoloFaltanSet = !!val;
-  resetScrollSetList();
-  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
-}
-
-function setFiltroEnPosesionSet(val) {
-  filtroEnPosesionSet = !!val;
-  resetScrollSetList();
-  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
-}
-
-function setFiltroColorSetEnabled(val) {
-  filtroColorSetEnabled = !!val;
-  resetScrollSetList();
-  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
-}
-
-function toggleColorFiltroSet(color, enabled) {
-  const key = String(color || "").toUpperCase();
-  if (!key) return;
-  if (enabled) filtroColoresSet.add(key);
-  else filtroColoresSet.delete(key);
-  resetScrollSetList();
-  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
-}
-
-function toggleRarezaFiltroSet(rareza, enabled) {
-  const key = String(rareza || "");
-  if (!key) return;
-  if (enabled) filtroRarezasSet.add(key);
   else filtroRarezasSet.delete(key);
   resetScrollSetList();
   if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
@@ -4252,10 +4261,6 @@ if (ft) {
     lista = lista.filter(c => cardMatchesRarityFilter(c));
   }
 
-  if (filtroYearSet && filtroYearSet !== "all") {
-    lista = lista.filter(c => getCardYear(c) === filtroYearSet);
-  }
-
   return lista;
 }
 
@@ -4306,7 +4311,6 @@ renderColecciones(); // para que al volver ya no salga
   const { tengo, total } = progresoDeColeccion(setKey);
   document.getElementById("progresoSet").textContent = `Progreso: ${tengo} / ${total}`;
 
-  updateFiltroYearSetOptions(setKey);
   aplicarUIFiltrosSet();
   renderTablaSet(setKey);
 }
@@ -6518,6 +6522,13 @@ function wireGlobalButtons() {
     });
   }
 
+  const selectFiltroYearColecciones = document.getElementById("selectFiltroYearColecciones");
+  if (selectFiltroYearColecciones) {
+    selectFiltroYearColecciones.addEventListener("change", () => {
+      setFiltroYearColecciones(selectFiltroYearColecciones.value);
+    });
+  }
+
   // Cambio de vista en colecciones
   document.querySelectorAll("input[name='vistaColecciones']").forEach(radio => {
     radio.addEventListener("change", () => {
@@ -6564,11 +6575,6 @@ function wireGlobalButtons() {
   document.querySelectorAll(".chk-color-set").forEach(chkColor => {
     chkColor.addEventListener("change", () => toggleColorFiltroSet(chkColor.value, chkColor.checked));
   });
-
-  const selectFiltroYearSet = document.getElementById("selectFiltroYearSet");
-  if (selectFiltroYearSet) {
-    selectFiltroYearSet.addEventListener("change", () => setFiltroYearSet(selectFiltroYearSet.value));
-  }
 
   document.querySelectorAll(".chk-rareza-set").forEach(chkRareza => {
     chkRareza.addEventListener("change", () => toggleRarezaFiltroSet(chkRareza.value, chkRareza.checked));
@@ -6853,6 +6859,17 @@ function wireGlobalButtons() {
       filtroContent.classList.toggle("hidden");
       const arrow = btnToggleFiltro.querySelector(".arrow");
       if (arrow) arrow.textContent = filtroContent.classList.contains("hidden") ? "▼" : "▲";
+    });
+  }
+
+  const btnToggleFiltroYearColecciones = document.getElementById("btnToggleFiltroYearColecciones");
+  const filtroYearColeccionesContent = document.getElementById("filtroYearColeccionesContent");
+  if (btnToggleFiltroYearColecciones && filtroYearColeccionesContent && !btnToggleFiltroYearColecciones.dataset.wired) {
+    btnToggleFiltroYearColecciones.dataset.wired = "1";
+    btnToggleFiltroYearColecciones.addEventListener("click", () => {
+      filtroYearColeccionesContent.classList.toggle("hidden");
+      const arrow = btnToggleFiltroYearColecciones.querySelector(".arrow");
+      if (arrow) arrow.textContent = filtroYearColeccionesContent.classList.contains("hidden") ? "▼" : "▲";
     });
   }
   

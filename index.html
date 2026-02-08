@@ -129,6 +129,20 @@
       </div>
     </div>
 
+    <div class="filtro-desplegable-container">
+      <button id="btnToggleFiltroYearColecciones" class="btn-filtro-header" type="button">
+        <span>Filtrar por año</span>
+        <span class="arrow">▼</span>
+      </button>
+      
+      <div id="filtroYearColeccionesContent" class="filtro-content hidden">
+        <label for="selectFiltroYearColecciones" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px;">
+          Selecciona el año
+        </label>
+        <select id="selectFiltroYearColecciones"></select>
+      </div>
+    </div>
+
     <div id="listaColecciones"></div>
   </section>
 
@@ -285,13 +299,6 @@
               <span>Incoloro</span>
             </label>
           </div>
-        </div>
-
-        <div style="margin-top: 12px;">
-          <label for="selectFiltroYearSet" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px;">
-            Filtrar por año
-          </label>
-          <select id="selectFiltroYearSet"></select>
         </div>
 
         <div style="margin-top: 12px;">
