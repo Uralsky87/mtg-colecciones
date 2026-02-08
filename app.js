@@ -2907,6 +2907,7 @@ async function ensureSetCardsLoaded(setKey) {
     type_line: card.type_line || '',
     cmc: card.cmc || 0,
     color_identity: card.color_identity || [],
+    released_at: card.released_at || "",
     _img: pickImage(card),
     _prices: card.prices || null,
     _colors: card.colors || null,
@@ -3993,6 +3994,8 @@ let filtroEnPosesionSet = false;
 let filtroColorSetEnabled = false;
 let filtroColoresSet = new Set();
 let filtroRarezasSet = new Set(["Común", "Infrecuente", "Rara", "Mítica"]);
+let filtroYearSet = "all";
+let filtroYearSetOptions = [];
 let ultimaListaSetRender = [];
 
 const VIRTUAL_SCROLL_MIN_ITEMS = 120;
@@ -4041,6 +4044,12 @@ function aplicarUIFiltrosSet() {
     chkColorOpt.checked = filtroColoresSet.has(chkColorOpt.value);
   });
 
+  const selectYear = document.getElementById("selectFiltroYearSet");
+  if (selectYear) {
+    selectYear.value = filtroYearSet;
+    selectYear.disabled = filtroYearSetOptions.length === 0;
+  }
+
   document.querySelectorAll(".chk-rareza-set").forEach(chkR => {
     chkR.checked = filtroRarezasSet.has(chkR.value);
   });
@@ -4049,25 +4058,25 @@ function aplicarUIFiltrosSet() {
 function setFiltroTextoSet(texto) {
   filtroTextoSet = normalizarTexto((texto || "").trim());
   resetScrollSetList();
-  if (setActualKey) renderTablaSet(setActualKey);
+  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
 }
 
 function setFiltroSoloFaltanSet(val) {
   filtroSoloFaltanSet = !!val;
   resetScrollSetList();
-  if (setActualKey) renderTablaSet(setActualKey);
+  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
 }
 
 function setFiltroEnPosesionSet(val) {
   filtroEnPosesionSet = !!val;
   resetScrollSetList();
-  if (setActualKey) renderTablaSet(setActualKey);
+  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
 }
 
 function setFiltroColorSetEnabled(val) {
   filtroColorSetEnabled = !!val;
   resetScrollSetList();
-  if (setActualKey) renderTablaSet(setActualKey);
+  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
 }
 
 function toggleColorFiltroSet(color, enabled) {
@@ -4076,7 +4085,7 @@ function toggleColorFiltroSet(color, enabled) {
   if (enabled) filtroColoresSet.add(key);
   else filtroColoresSet.delete(key);
   resetScrollSetList();
-  if (setActualKey) renderTablaSet(setActualKey);
+  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
 }
 
 function toggleRarezaFiltroSet(rareza, enabled) {
@@ -4085,7 +4094,15 @@ function toggleRarezaFiltroSet(rareza, enabled) {
   if (enabled) filtroRarezasSet.add(key);
   else filtroRarezasSet.delete(key);
   resetScrollSetList();
-  if (setActualKey) renderTablaSet(setActualKey);
+  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
+}
+
+function setFiltroYearSet(yearValue) {
+  const raw = String(yearValue || "").trim();
+  const next = raw && raw !== "all" ? raw : "all";
+  filtroYearSet = next;
+  resetScrollSetList();
+  if (setActualKey) renderTablaSetWithStableScroll(setActualKey);
 }
 
 function resetScrollSetList({ allowAutoScroll = false } = {}) {
@@ -4097,6 +4114,55 @@ function resetScrollSetList({ allowAutoScroll = false } = {}) {
   if (Number.isFinite(top)) {
     window.scrollTo({ top, behavior: "auto" });
   }
+}
+
+function renderTablaSetWithStableScroll(setKey) {
+  if (!setKey) return;
+  const scrollTop = window.scrollY;
+  const activeEl = document.activeElement;
+  renderTablaSet(setKey);
+  requestAnimationFrame(() => {
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const nextTop = Math.min(scrollTop, maxScroll);
+    if (Number.isFinite(nextTop)) window.scrollTo({ top: nextTop, behavior: "auto" });
+    if (activeEl && typeof activeEl.focus === "function") {
+      try {
+        activeEl.focus({ preventScroll: true });
+      } catch {
+        activeEl.focus();
+      }
+    }
+  });
+}
+
+function getCardYear(card) {
+  const releasedAt = card?.released_at || card?._raw?.released_at || "";
+  const year = String(releasedAt).slice(0, 4);
+  return year && /^\d{4}$/.test(year) ? year : "";
+}
+
+function updateFiltroYearSetOptions(setKey) {
+  const select = document.getElementById("selectFiltroYearSet");
+  if (!select || !setKey) return;
+  const lista = cartasDeSetKey(setKey) || [];
+  const years = new Set();
+  for (const card of lista) {
+    const year = getCardYear(card);
+    if (year) years.add(year);
+  }
+  filtroYearSetOptions = Array.from(years).sort((a, b) => b.localeCompare(a));
+  let nextValue = filtroYearSet;
+  if (nextValue !== "all" && !filtroYearSetOptions.includes(nextValue)) {
+    nextValue = "all";
+    filtroYearSet = "all";
+  }
+
+  select.innerHTML = [
+    `<option value="all">Todos</option>`,
+    ...filtroYearSetOptions.map(y => `<option value="${y}">${y}</option>`)
+  ].join("");
+  select.value = nextValue;
+  select.disabled = filtroYearSetOptions.length === 0;
 }
 
 function getCardTotalsForSetFilter(card) {
@@ -4186,6 +4252,10 @@ if (ft) {
     lista = lista.filter(c => cardMatchesRarityFilter(c));
   }
 
+  if (filtroYearSet && filtroYearSet !== "all") {
+    lista = lista.filter(c => getCardYear(c) === filtroYearSet);
+  }
+
   return lista;
 }
 
@@ -4236,6 +4306,7 @@ renderColecciones(); // para que al volver ya no salga
   const { tengo, total } = progresoDeColeccion(setKey);
   document.getElementById("progresoSet").textContent = `Progreso: ${tengo} / ${total}`;
 
+  updateFiltroYearSetOptions(setKey);
   aplicarUIFiltrosSet();
   renderTablaSet(setKey);
 }
@@ -6493,6 +6564,11 @@ function wireGlobalButtons() {
   document.querySelectorAll(".chk-color-set").forEach(chkColor => {
     chkColor.addEventListener("change", () => toggleColorFiltroSet(chkColor.value, chkColor.checked));
   });
+
+  const selectFiltroYearSet = document.getElementById("selectFiltroYearSet");
+  if (selectFiltroYearSet) {
+    selectFiltroYearSet.addEventListener("change", () => setFiltroYearSet(selectFiltroYearSet.value));
+  }
 
   document.querySelectorAll(".chk-rareza-set").forEach(chkRareza => {
     chkRareza.addEventListener("change", () => toggleRarezaFiltroSet(chkRareza.value, chkRareza.checked));

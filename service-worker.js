@@ -21,6 +21,14 @@ const CACHE_RUNTIME = "mtg-runtime-v0.8";
 const CACHE_IMAGES = "mtg-images-v0.8";
 const CACHE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+function fallbackResponseFor(req) {
+  const accept = (req && req.headers && req.headers.get("accept")) || "";
+  if (accept.includes("text/html")) {
+    return caches.match("./index.html").then(res => res || new Response("", { status: 504, statusText: "Offline" }));
+  }
+  return caches.match("./").then(res => res || new Response("", { status: 504, statusText: "Offline" }));
+}
+
 // Escuchar mensaje de SKIP_WAITING
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
@@ -78,9 +86,9 @@ self.addEventListener("fetch", (e) => {
             caches.open(CACHE_RUNTIME).then(c => c.put(req, copy));
           }
           return res;
-        }).catch(() => cached);
+        }).catch(() => null);
         
-        return cached || fetchPromise;
+        return cached || fetchPromise.then(res => res || fallbackResponseFor(req));
       })
     );
     return;
@@ -117,7 +125,7 @@ self.addEventListener("fetch", (e) => {
             caches.open(CACHE_IMAGES).then(c => c.put(req, respWithMeta));
           }
           return res;
-        }).catch(() => cached || caches.match("./"));
+        }).catch(() => cached || fallbackResponseFor(req));
       })
     );
     return;
@@ -131,8 +139,6 @@ self.addEventListener("fetch", (e) => {
         caches.open(CACHE_RUNTIME).then(c => c.put(req, copy));
       }
       return res;
-    }).catch(() => 
-      caches.match(req) || caches.match("./index.html")
-    )
+    }).catch(() => null).then(res => res || caches.match(req).then(cached => cached || fallbackResponseFor(req)))
   );
 });
