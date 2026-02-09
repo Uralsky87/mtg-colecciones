@@ -978,6 +978,158 @@ label {
   margin-top: 6px;
 }
 
+/* ===== Comandantes ===== */
+
+.commander-card .commander-title {
+  margin: 0 0 10px;
+  text-align: center;
+}
+
+.filtro-bloque {
+  margin-bottom: 14px;
+}
+
+.filtro-label {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.mana-colores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.mana-check {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: var(--px) solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  box-shadow: 2px 2px 0 var(--shadow);
+  cursor: pointer;
+  user-select: none;
+}
+
+.mana-check input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mana-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--px) solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 2px 2px 0 var(--shadow);
+}
+
+.mana-svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.mana-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.mana-check input:checked + .mana-icon {
+  box-shadow: 0 0 0 2px var(--violet), 2px 2px 0 var(--shadow);
+}
+
+.mana-w { color: #C6B27A; }
+.mana-u { color: #3F7FB8; }
+.mana-b { color: #2F2C2B; }
+.mana-r { color: #C3513C; }
+.mana-g { color: #3B7C4D; }
+.mana-c { color: #6A6F78; }
+
+.mana-rango-bar {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mana-step {
+  padding: 8px 0;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--panel);
+  border: var(--px) solid var(--border);
+  box-shadow: 2px 2px 0 var(--shadow);
+}
+
+.mana-step.in-range {
+  background: #FCE9B9;
+}
+
+.mana-step.active {
+  background: var(--mustard);
+}
+
+.mana-rango-info {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.commander-exacto {
+  margin-top: 8px;
+}
+
+.commander-actions {
+  margin-top: 6px;
+}
+
+.cartas-grid-comandantes {
+  margin-top: 8px;
+}
+
+.carta-item-comandante .cmd-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.carta-item-comandante .cmd-title {
+  text-align: center;
+}
+
+.carta-item-comandante .btn-cmd-nav {
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.carta-item-comandante .cmd-set {
+  margin-top: 4px;
+}
+
+.carta-item-comandante .cmd-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .mana-colores { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+  .mana-rango-bar { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+
 .opciones-item {
   display: flex;
   align-items: center;

@@ -37,6 +37,7 @@
     <div class="menu">
       <button class="btn-menu" data-pantalla="colecciones">Colecciones</button>
       <button class="btn-menu" data-pantalla="buscar">Buscar</button>
+      <button class="btn-menu" data-pantalla="comandantes">Comandantes</button>
       <button class="btn-menu" data-pantalla="estadisticas">Estadísticas</button>
       <button class="btn-menu" data-pantalla="cuenta">Cuenta</button>
       <button id="btnBuscarActualizaciones" class="btn-menu btn-actualizar">Comprobar actualizaciones</button>
@@ -396,6 +397,131 @@
     </div>
 
     <div id="resultadosBuscar"></div>
+  </section>
+
+  <!-- =======================
+       PANTALLA: COMANDANTES
+  ======================= -->
+  <section id="pantallaComandantes" class="pantalla">
+    <div class="topbar">
+      <img src="icons/flecharegresar.png" class="btn-back" data-action="volverMenu" aria-label="Volver al menú" alt="Volver" />
+      <h2>Comandantes</h2>
+    </div>
+
+    <div class="card commander-card">
+      <h3 class="commander-title">Filtra para encontrar tu comandante</h3>
+
+      <div class="filtro-bloque">
+        <div class="filtro-label">Colores</div>
+        <div class="mana-colores" role="group" aria-label="Filtros de color">
+          <label class="mana-check mana-w">
+            <input type="checkbox" class="chk-commander-color" value="w" />
+            <span class="mana-icon mana-icon-w" aria-hidden="true">
+              <svg class="mana-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <circle cx="12" cy="12" r="5" />
+                <rect x="11" y="2" width="2" height="4" />
+                <rect x="11" y="18" width="2" height="4" />
+                <rect x="2" y="11" width="4" height="2" />
+                <rect x="18" y="11" width="4" height="2" />
+              </svg>
+            </span>
+            <span class="mana-label">Blanco</span>
+          </label>
+
+          <label class="mana-check mana-u">
+            <input type="checkbox" class="chk-commander-color" value="u" />
+            <span class="mana-icon mana-icon-u" aria-hidden="true">
+              <svg class="mana-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M12 3c-2.5 3.6-5 6.4-5 9.2a5 5 0 0 0 10 0C17 9.4 14.5 6.6 12 3z" />
+              </svg>
+            </span>
+            <span class="mana-label">Azul</span>
+          </label>
+
+          <label class="mana-check mana-b">
+            <input type="checkbox" class="chk-commander-color" value="b" />
+            <span class="mana-icon mana-icon-b" aria-hidden="true">
+              <svg class="mana-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <circle cx="12" cy="10" r="6" />
+                <rect x="7" y="14" width="10" height="6" rx="2" />
+                <circle cx="9" cy="10" r="1.5" fill="#fff" />
+                <circle cx="15" cy="10" r="1.5" fill="#fff" />
+              </svg>
+            </span>
+            <span class="mana-label">Negro</span>
+          </label>
+
+          <label class="mana-check mana-r">
+            <input type="checkbox" class="chk-commander-color" value="r" />
+            <span class="mana-icon mana-icon-r" aria-hidden="true">
+              <svg class="mana-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M12 3c1.6 2.2.8 4.2-1 5.8 3.6-.2 6 2 6 5.2 0 3-2.4 5-5.5 5S6 17 6 14.5C6 10.8 9.2 9 12 3z" />
+              </svg>
+            </span>
+            <span class="mana-label">Rojo</span>
+          </label>
+
+          <label class="mana-check mana-g">
+            <input type="checkbox" class="chk-commander-color" value="g" />
+            <span class="mana-icon mana-icon-g" aria-hidden="true">
+              <svg class="mana-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <circle cx="12" cy="9" r="5" />
+                <rect x="11" y="13" width="2" height="7" />
+              </svg>
+            </span>
+            <span class="mana-label">Verde</span>
+          </label>
+
+          <label class="mana-check mana-c">
+            <input type="checkbox" id="chkCommanderColorless" value="c" />
+            <span class="mana-icon mana-icon-c" aria-hidden="true">
+              <svg class="mana-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" transform="rotate(45 12 12)" />
+              </svg>
+            </span>
+            <span class="mana-label">Incoloro</span>
+          </label>
+        </div>
+        <label class="chkline commander-exacto">
+          <input id="chkCommanderExacto" type="checkbox" />
+          <span>Solo identidad exacta</span>
+        </label>
+      </div>
+
+      <div class="filtro-bloque">
+        <div class="filtro-label">Coste de mana</div>
+        <div id="manaRangoBar" class="mana-rango-bar" role="group" aria-label="Rango de coste de mana">
+          <button class="mana-step" type="button" data-cmc="0">0</button>
+          <button class="mana-step" type="button" data-cmc="1">1</button>
+          <button class="mana-step" type="button" data-cmc="2">2</button>
+          <button class="mana-step" type="button" data-cmc="3">3</button>
+          <button class="mana-step" type="button" data-cmc="4">4</button>
+          <button class="mana-step" type="button" data-cmc="5">5</button>
+          <button class="mana-step" type="button" data-cmc="6">6</button>
+          <button class="mana-step" type="button" data-cmc="7">7</button>
+          <button class="mana-step" type="button" data-cmc="8">8</button>
+          <button class="mana-step" type="button" data-cmc="9">9</button>
+          <button class="mana-step" type="button" data-cmc="10+">10+</button>
+        </div>
+        <div class="mana-rango-info">
+          <span id="manaRangoTexto" class="hint">Sin rango de coste.</span>
+          <button id="btnLimpiarManaRango" class="btn-secundario" type="button">Limpiar rango</button>
+        </div>
+      </div>
+
+      <div class="filtro-bloque">
+        <label for="inputRulingCommander">Texto en ruling:</label>
+        <input id="inputRulingCommander" type="text" placeholder="Ej: draw a card, lifelink..." />
+        <small class="hint">Busca palabras dentro del texto de reglas.</small>
+      </div>
+
+      <div class="acciones-verticales commander-actions">
+        <button id="btnBuscarComandantes" class="btn-principal" type="button">Buscar</button>
+        <button id="btnLuckyCommander" class="btn-secundario" type="button">Voy a tener suerte</button>
+      </div>
+    </div>
+
+    <div id="resultadosComandantes"></div>
   </section>
 
     <!-- =======================

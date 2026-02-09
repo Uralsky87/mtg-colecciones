@@ -16,6 +16,365 @@ function safeLocalStorageGet(key) {
   }
 }
 
+// ===============================
+// 6b) Comandantes: búsqueda por filtros
+// ===============================
+
+const COMMANDER_CMC_STEPS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10+"];
+let commanderCmcMin = null;
+let commanderCmcMax = null;
+let commanderCmcMaxOpen = false;
+
+function parseCommanderCmcValue(raw) {
+  const label = String(raw || "").trim();
+  if (label === "10+") return { value: 10, open: true, label };
+  const num = Number(label);
+  return Number.isFinite(num) ? { value: num, open: false, label: String(num) } : null;
+}
+
+function formatCommanderCmcLabel(value, open) {
+  if (open && value === 10) return "10+";
+  return String(value);
+}
+
+function getCommanderSelectedColors() {
+  const order = ["w", "u", "b", "r", "g"];
+  const selected = new Set();
+  document.querySelectorAll(".chk-commander-color:checked").forEach(chk => {
+    if (chk?.value) selected.add(chk.value);
+  });
+  return order.filter(c => selected.has(c));
+}
+
+function isCommanderColorlessSelected() {
+  const chk = document.getElementById("chkCommanderColorless");
+  return chk ? !!chk.checked : false;
+}
+
+function isCommanderExactColorsSelected() {
+  const chk = document.getElementById("chkCommanderExacto");
+  return chk ? !!chk.checked : false;
+}
+
+function buildCommanderQueryFromUI() {
+  const colors = getCommanderSelectedColors();
+  const colorless = isCommanderColorlessSelected();
+  const exactColors = isCommanderExactColorsSelected();
+  const rulingRaw = document.getElementById("inputRulingCommander")?.value || "";
+  const ruling = String(rulingRaw).replace(/"/g, "").trim();
+
+  const clauses = ["game:paper", "(lang:en or lang:es)", "is:commander", "order:cmc"];
+
+  if (colors.length > 0) {
+    clauses.push(`${exactColors ? "id=" : "id:"}${colors.join("")}`);
+  } else if (colorless) {
+    clauses.push("id:c");
+  }
+
+  if (Number.isFinite(commanderCmcMin)) {
+    clauses.push(`cmc>=${commanderCmcMin}`);
+  }
+
+  if (Number.isFinite(commanderCmcMax) && !commanderCmcMaxOpen) {
+    clauses.push(`cmc<=${commanderCmcMax}`);
+  }
+
+  if (ruling) {
+    clauses.push(`o:"${ruling}"`);
+  }
+
+  return clauses.join(" ").trim();
+}
+
+function updateCommanderCmcUI() {
+  const bar = document.getElementById("manaRangoBar");
+  if (!bar) return;
+
+  const min = Number.isFinite(commanderCmcMin) ? commanderCmcMin : null;
+  const max = Number.isFinite(commanderCmcMax) ? commanderCmcMax : null;
+
+  bar.querySelectorAll(".mana-step").forEach(btn => {
+    const parsed = parseCommanderCmcValue(btn.dataset.cmc || "");
+    if (!parsed) return;
+
+    const val = parsed.value;
+    const active = (min !== null && max === null && val === min) || (min !== null && max !== null && (val === min || val === max));
+    let inRange = false;
+
+    if (min !== null && max !== null) {
+      if (commanderCmcMaxOpen) {
+        inRange = val >= min;
+      } else {
+        inRange = val >= min && val <= max;
+      }
+    }
+
+    btn.classList.toggle("active", active);
+    btn.classList.toggle("in-range", inRange);
+  });
+
+  const texto = document.getElementById("manaRangoTexto");
+  if (!texto) return;
+
+  if (min === null && max === null) {
+    texto.textContent = "Sin rango de coste.";
+  } else if (min !== null && max === null) {
+    texto.textContent = min === 10 ? "Coste 10+." : `Coste desde ${formatCommanderCmcLabel(min, false)}.`;
+  } else if (min !== null && max !== null) {
+    texto.textContent = commanderCmcMaxOpen
+      ? `Coste desde ${formatCommanderCmcLabel(min, false)} a 10+.`
+      : `Coste entre ${formatCommanderCmcLabel(min, false)} y ${formatCommanderCmcLabel(max, false)}.`;
+  }
+}
+
+function setCommanderCmcRange(min, max, maxOpen) {
+  commanderCmcMin = Number.isFinite(min) ? min : null;
+  commanderCmcMax = Number.isFinite(max) ? max : null;
+  commanderCmcMaxOpen = !!maxOpen;
+  updateCommanderCmcUI();
+}
+
+function handleCommanderCmcSelection(raw) {
+  const parsed = parseCommanderCmcValue(raw);
+  if (!parsed) return;
+
+  const val = parsed.value;
+  const isOpen = parsed.open;
+
+  if (commanderCmcMin === null || commanderCmcMax !== null) {
+    if (isOpen) {
+      setCommanderCmcRange(val, null, false);
+    } else {
+      setCommanderCmcRange(val, null, false);
+    }
+    return;
+  }
+
+  if (commanderCmcMax === null) {
+    const prevMin = commanderCmcMin;
+    let min = commanderCmcMin;
+    let max = val;
+    let maxOpen = isOpen;
+
+    if (max < min) {
+      const tmp = min;
+      min = max;
+      max = tmp;
+      maxOpen = prevMin === 10;
+    }
+
+    setCommanderCmcRange(min, max, maxOpen);
+  }
+}
+
+function resetCommanderSearchUI() {
+  document.querySelectorAll(".chk-commander-color").forEach(chk => {
+    chk.checked = false;
+  });
+
+  const chkColorless = document.getElementById("chkCommanderColorless");
+  if (chkColorless) chkColorless.checked = false;
+
+  const rulingInput = document.getElementById("inputRulingCommander");
+  if (rulingInput) rulingInput.value = "";
+
+  setCommanderCmcRange(null, null, false);
+
+  const cont = document.getElementById("resultadosComandantes");
+  if (cont) {
+    cont.innerHTML = `<div class="card"><p>Selecciona filtros y pulsa “Buscar”.</p></div>`;
+  }
+}
+
+async function renderResultadosComandantes(opts = {}) {
+  const cont = document.getElementById("resultadosComandantes");
+  if (!cont) return;
+
+  const query = buildCommanderQueryFromUI();
+
+  cancelCommanderSearchAbort();
+  commanderSearchAbortController = new AbortController();
+
+  cont.innerHTML = `<div class="card"><p>Buscando comandantes en Scryfall…</p></div>`;
+
+  let cards = [];
+  try {
+    cards = await scrySearchCommanders(query, {
+      signal: commanderSearchAbortController.signal,
+      unique: "prints"
+    });
+  } catch (err) {
+    if (err && err.name === "AbortError") return;
+    console.error(err);
+    cont.innerHTML = `<div class="card"><p>Error buscando. Mira la consola.</p></div>`;
+    return;
+  }
+
+  let grupos = agruparResultadosBusqueda(cards);
+
+  if (grupos.length === 0) {
+    cont.innerHTML = `<div class="card"><p>No se encontraron comandantes para los filtros actuales.</p></div>`;
+    return;
+  }
+
+  if (opts.randomOne) {
+    const idx = Math.floor(Math.random() * grupos.length);
+    grupos = [grupos[idx]];
+  }
+
+  const avisoLimit = (cards.length >= COMMANDER_SEARCH_LIMIT)
+    ? `<div class="card"><p class="hint">Nota: se muestran solo las primeras ${COMMANDER_SEARCH_LIMIT} ediciones. Ajusta filtros para acotar.</p></div>`
+    : "";
+
+  let html = avisoLimit;
+
+  html += `<div class="cartas-grid cartas-grid-comandantes">`;
+
+  for (const g of grupos) {
+    const versiones = g.versiones || [];
+    if (versiones.length === 0) continue;
+
+    let idx = versiones.findIndex(v => String(v.lang || "").toLowerCase() === "es");
+    if (idx < 0) idx = versiones.findIndex(v => String(v.lang || "").toLowerCase() === "en");
+    if (idx < 0) idx = 0;
+
+    const v = versiones[idx];
+    const imgUrl = v._img || "";
+
+    html += `
+      <div class="carta-item carta-item-comandante" data-oracle="${g.oracleId}" data-idx="${idx}">
+        <div class="carta-header cmd-header">
+          <button class="btn-secundario btn-cmd-nav btn-cmd-prev" type="button" aria-label="Anterior">◀</button>
+          <button class="btn-link-carta cmd-title" type="button" data-accion="ver-print" data-id="${v.id}">
+            ${escapeHtml(v.nombre)} <span class="lang-pill">${formatLang(v.lang)}</span>
+          </button>
+          <button class="btn-secundario btn-cmd-nav btn-cmd-next" type="button" aria-label="Siguiente">▶</button>
+        </div>
+        <div class="hint cmd-set">
+          ${escapeHtml(v.set_name || "")} <span class="cmd-collector">(#${escapeHtml(v.collector_number || "")}, ${escapeHtml(v.rareza)})</span>
+        </div>
+        <div class="carta-imagen-container">
+          <img class="carta-imagen cmd-img" data-img-src="${escapeAttr(imgUrl)}" alt="${escapeAttr(v.nombre || "")}" loading="lazy" style="${imgUrl ? "" : "display:none;"}" />
+          <div class="carta-imagen-placeholder cmd-placeholder" style="${imgUrl ? "display:none;" : ""}">Sin imagen</div>
+        </div>
+        <div class="cmd-actions">
+          <button class="btn-secundario btn-ir-set" type="button" data-setkey="${v.setKey}" data-cardname="${escapeAttr(v.nombre || "")}">Ir</button>
+        </div>
+      </div>
+    `;
+  }
+
+  html += `</div>`;
+
+  cont.innerHTML = html;
+
+  const verById = new Map();
+  for (const g of grupos) for (const v of g.versiones) verById.set(v.id, v);
+
+  const mapaOracleAImg = new Map();
+  for (const g of grupos) mapaOracleAImg.set(g.oracleId, { titulo: g.titulo, img: g.img, versiones: g.versiones || [] });
+
+  cont._searchVerById = verById;
+  cont._searchOracleImg = mapaOracleAImg;
+
+  cont.querySelectorAll("img.carta-imagen[data-img-src]").forEach(img => {
+    const src = img.dataset.imgSrc;
+    if (src) loadImageWithCache(img, src);
+  });
+
+  if (!cont.dataset.wiredCommanderSearch) {
+    cont.dataset.wiredCommanderSearch = "1";
+
+    cont.addEventListener("click", (e) => {
+      const target = e.target;
+      const btn = target.closest("button");
+      if (!btn) return;
+
+      if (btn.classList.contains("btn-cmd-prev") || btn.classList.contains("btn-cmd-next")) {
+        const cardEl = btn.closest(".carta-item-comandante");
+        if (!cardEl) return;
+        const oracleId = cardEl.dataset.oracle;
+        const data = cont._searchOracleImg?.get(oracleId);
+        const versiones = data?.versiones || [];
+        if (versiones.length === 0) return;
+
+        const currentIdx = Number(cardEl.dataset.idx || 0);
+        const dir = btn.classList.contains("btn-cmd-next") ? 1 : -1;
+        const nextIdx = (currentIdx + dir + versiones.length) % versiones.length;
+        const v = versiones[nextIdx];
+
+        cardEl.dataset.idx = String(nextIdx);
+
+        const titleBtn = cardEl.querySelector(".cmd-title");
+        if (titleBtn) {
+          titleBtn.dataset.id = v.id;
+          titleBtn.innerHTML = `${escapeHtml(v.nombre)} <span class="lang-pill">${formatLang(v.lang)}</span>`;
+        }
+
+        const setEl = cardEl.querySelector(".cmd-set");
+        if (setEl) {
+          setEl.innerHTML = `${escapeHtml(v.set_name || "")} <span class="cmd-collector">(#${escapeHtml(v.collector_number || "")}, ${escapeHtml(v.rareza)})</span>`;
+        }
+
+        const img = cardEl.querySelector("img.carta-imagen");
+        const placeholder = cardEl.querySelector(".cmd-placeholder");
+        const imgUrl = v._img || "";
+        if (img) {
+          img.dataset.imgSrc = imgUrl;
+          img.alt = v.nombre || "";
+          if (imgUrl) {
+            img.style.display = "";
+            if (placeholder) placeholder.style.display = "none";
+            loadImageWithCache(img, imgUrl);
+          } else {
+            img.style.display = "none";
+            if (placeholder) placeholder.style.display = "";
+          }
+        }
+
+        const btnIr = cardEl.querySelector(".btn-ir-set");
+        if (btnIr) {
+          btnIr.dataset.setkey = v.setKey;
+          btnIr.dataset.cardname = v.nombre || "";
+        }
+        return;
+      }
+
+      if (btn.dataset.accion === "ver-print") {
+        const v = cont._searchVerById?.get(btn.dataset.id);
+        if (!v) return;
+        abrirModalCarta({
+          titulo: v.nombre,
+          imageUrl: v._img || null,
+          numero: v.collector_number || "",
+          rareza: v.rareza || "",
+          precio: formatPrecioEUR(v._prices)
+        });
+        return;
+      }
+
+      if (btn.classList.contains("btn-ir-set")) {
+        (async () => {
+          const setKey = btn.dataset.setkey;
+          const cardName = btn.dataset.cardname || "";
+          if (!setKey) return;
+
+          filtroSoloFaltanSet = false;
+          setFiltroTextoSet(cardName);
+
+          if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
+            hiddenEmptySetKeys.delete(setKey);
+            if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
+          }
+
+          await abrirSet(setKey);
+          if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
+        })();
+      }
+    });
+  }
+}
+
 function safeLocalStorageSet(key, value) {
   try {
     localStorage.setItem(key, value);
@@ -77,6 +436,7 @@ function getMetricsReport() {
 // Cancela búsquedas y cargas obsoletas si el usuario navega o teclea
 let searchAbortController = null;
 let setLoadAbortController = null;
+let commanderSearchAbortController = null;
 
 function cancelSearchAbort() {
   if (searchAbortController) {
@@ -89,6 +449,13 @@ function cancelSetLoadAbort() {
   if (setLoadAbortController) {
     setLoadAbortController.abort();
     setLoadAbortController = null;
+  }
+}
+
+function cancelCommanderSearchAbort() {
+  if (commanderSearchAbortController) {
+    commanderSearchAbortController.abort();
+    commanderSearchAbortController = null;
   }
 }
 
@@ -2623,6 +2990,7 @@ async function scryGetCardsBySetAndLang(setCode, lang) {
 
 const SEARCH_LANGS = ["en", "es"];
 const SEARCH_LIMIT = 200; // evita bajar 1000+ prints en cartas hiper reimpresas
+const COMMANDER_SEARCH_LIMIT = 200;
 let buscarExacta = false;
 let buscarVerImagenes = false;
 
@@ -2662,6 +3030,26 @@ async function scrySearchPrintsByName(texto, opts = {}) {
     return await scryFetchAllPagesLimited(url, SEARCH_LIMIT, opts);
   } catch (err) {
     // Si no encuentra nada, Scryfall suele devolver 404 not_found
+    if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
+      return [];
+    }
+    throw err;
+  }
+}
+
+async function scrySearchCommanders(query, opts = {}) {
+  if (!query) return [];
+
+  const params = new URLSearchParams();
+  params.append("q", query);
+
+  if (opts.unique) params.append("unique", opts.unique);
+
+  const url = `${SCY_BASE}/cards/search?${params.toString()}`;
+
+  try {
+    return await scryFetchAllPagesLimited(url, COMMANDER_SEARCH_LIMIT, opts);
+  } catch (err) {
     if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
       return [];
     }
@@ -3371,6 +3759,7 @@ const pantallas = {
   colecciones: document.getElementById("pantallaColecciones"),
   set: document.getElementById("pantallaSet"),
   buscar: document.getElementById("pantallaBuscar"),
+  comandantes: document.getElementById("pantallaComandantes"),
   decks: document.getElementById("pantallaDecks"),
   verDeck: document.getElementById("pantallaVerDeck"),
   estadisticas: document.getElementById("pantallaEstadisticas"),
@@ -3419,6 +3808,8 @@ function navegarAtras() {
       const inputBuscar = document.getElementById("inputBuscar");
       if (inputBuscar) inputBuscar.value = "";
       renderResultadosBuscar("");
+    } else if (pantallaAnterior === "comandantes") {
+      resetCommanderSearchUI();
     } else if (pantallaAnterior === "estadisticas") {
       renderEstadisticas({ forceRecalc: false });
     } else if (pantallaAnterior === "cuenta") {
@@ -6376,6 +6767,12 @@ function wireGlobalButtons() {
       return;
     }
 
+    if (destino === "comandantes") {
+      mostrarPantalla("comandantes");
+      resetCommanderSearchUI();
+      return;
+    }
+
     if (destino === "decks") {
       mostrarPantalla("decks");
       renderListaDecks();
@@ -6474,6 +6871,40 @@ function wireGlobalButtons() {
         renderResultadosBuscar(q, { exact: getBuscarExacta(), verImagenes: buscarVerImagenes });
       }
     });
+  }
+
+  // Buscar comandantes
+  const btnBuscarComandantes = document.getElementById("btnBuscarComandantes");
+  if (btnBuscarComandantes) {
+    btnBuscarComandantes.addEventListener("click", async () => {
+      await renderResultadosComandantes();
+    });
+  }
+
+  const btnLuckyCommander = document.getElementById("btnLuckyCommander");
+  if (btnLuckyCommander) {
+    btnLuckyCommander.addEventListener("click", async () => {
+      await renderResultadosComandantes({ randomOne: true });
+    });
+  }
+
+  const inputRulingCommander = document.getElementById("inputRulingCommander");
+  if (inputRulingCommander) {
+    inputRulingCommander.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") await renderResultadosComandantes();
+    });
+  }
+
+  const manaRangoBar = document.getElementById("manaRangoBar");
+  if (manaRangoBar) {
+    manaRangoBar.querySelectorAll(".mana-step").forEach(btn => {
+      btn.addEventListener("click", () => handleCommanderCmcSelection(btn.dataset.cmc));
+    });
+  }
+
+  const btnLimpiarManaRango = document.getElementById("btnLimpiarManaRango");
+  if (btnLimpiarManaRango) {
+    btnLimpiarManaRango.addEventListener("click", () => setCommanderCmcRange(null, null, false));
   }
 
   // Buscador de colecciones
