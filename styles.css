@@ -1,3 +1,30 @@
+/* Layout filtro año */
+.filtro-year-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#selectFiltroYearColecciones {
+  min-width: 90px;
+  max-width: 140px;
+  font-size: 14px;
+  padding: 6px 8px;
+}
+
+.btn-limpiar-filtro-year {
+  font-size: 16px;
+  padding: 4px 10px;
+  background: #f6f6f8;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  color: #e74c3c;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-limpiar-filtro-year:hover {
+  background: #ffeaea;
+}
 /* Año seleccionado en filtro año */
 .filtro-year-seleccionado {
   font-family: inherit;

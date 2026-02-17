@@ -1,4 +1,16 @@
-﻿// ===============================
+﻿// Limpiar filtro año
+document.addEventListener("DOMContentLoaded", () => {
+  const btnLimpiarYear = document.getElementById("btnLimpiarFiltroYearColecciones");
+  if (btnLimpiarYear) {
+    btnLimpiarYear.addEventListener("click", () => {
+      setFiltroYearColecciones("all");
+      // Actualizar UI
+      aplicarUIFiltrosColecciones();
+      scheduleRenderColecciones();
+    });
+  }
+});
+// ===============================
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
@@ -4454,7 +4466,7 @@ let filtroRarezasSet = new Set(["Común", "Infrecuente", "Rara", "Mítica"]);
 let ultimaListaSetRender = [];
 
 const VIRTUAL_SCROLL_MIN_ITEMS = 120;
-const VIRTUAL_SCROLL_BUFFER_ROWS = 16; // Aumenta el buffer para reducir parpadeo
+const VIRTUAL_SCROLL_BUFFER_ROWS = 32; // Buffer mayor para minimizar parpadeo
 const VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT = 380;
 
 const virtualScrollState = {
@@ -5110,6 +5122,7 @@ function renderTablaSet(setKey) {
       const startIdx = Math.max(0, startRow * columns);
       const endIdx = Math.min(lista.length, endRow * columns);
 
+      // Solo renderizar si el rango cambia
       if (startIdx === virtualScrollState.lastStart && endIdx === virtualScrollState.lastEnd) return;
 
       virtualScrollState.lastStart = startIdx;
@@ -5120,6 +5133,7 @@ function renderTablaSet(setKey) {
       wrapper.style.paddingTop = `${topPad}px`;
       wrapper.style.paddingBottom = `${bottomPad}px`;
 
+      // Reemplazar solo si cambia el rango
       const gridFrag = document.createDocumentFragment();
       for (let i = startIdx; i < endIdx; i++) {
         gridFrag.appendChild(createCartaItem(lista[i], i));
@@ -5127,10 +5141,6 @@ function renderTablaSet(setKey) {
       grid.replaceChildren(gridFrag);
 
       applyVerCartasState(grid);
-
-      requestAnimationFrame(() => {
-        updateMetrics();
-      });
     };
 
     const scheduleRenderRange = () => {
