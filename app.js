@@ -5115,6 +5115,18 @@ function renderTablaSet(setKey) {
       return { startRow, endRow, totalRows, columns, rowHeight };
     };
 
+    // --- NUEVO: Mantener todos los nodos y solo ocultar/mostrar ---
+    // Inicializar todos los nodos una vez
+    if (!grid._allCartaItems || grid._allCartaItems.length !== lista.length) {
+      grid.innerHTML = "";
+      grid._allCartaItems = [];
+      for (let i = 0; i < lista.length; i++) {
+        const item = createCartaItem(lista[i], i);
+        grid.appendChild(item);
+        grid._allCartaItems.push(item);
+      }
+    }
+
     const renderRange = () => {
       if (!virtualScrollState.active) return;
 
@@ -5122,7 +5134,7 @@ function renderTablaSet(setKey) {
       const startIdx = Math.max(0, startRow * columns);
       const endIdx = Math.min(lista.length, endRow * columns);
 
-      // Solo renderizar si el rango cambia
+      // Solo actualizar si el rango cambia
       if (startIdx === virtualScrollState.lastStart && endIdx === virtualScrollState.lastEnd) return;
 
       virtualScrollState.lastStart = startIdx;
@@ -5133,12 +5145,15 @@ function renderTablaSet(setKey) {
       wrapper.style.paddingTop = `${topPad}px`;
       wrapper.style.paddingBottom = `${bottomPad}px`;
 
-      // Reemplazar solo si cambia el rango
-      const gridFrag = document.createDocumentFragment();
-      for (let i = startIdx; i < endIdx; i++) {
-        gridFrag.appendChild(createCartaItem(lista[i], i));
+      // Mostrar solo los nodos en el rango visible, ocultar el resto
+      for (let i = 0; i < grid._allCartaItems.length; i++) {
+        const item = grid._allCartaItems[i];
+        if (i >= startIdx && i < endIdx) {
+          item.style.display = "";
+        } else {
+          item.style.display = "none";
+        }
       }
-      grid.replaceChildren(gridFrag);
 
       applyVerCartasState(grid);
     };
