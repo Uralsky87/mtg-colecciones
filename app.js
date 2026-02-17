@@ -4115,6 +4115,18 @@ function aplicarUIFiltrosColecciones() {
     selectYear.disabled = filtroYearColeccionesOptions.length === 0;
   }
 
+  // Mostrar año seleccionado junto al botón
+  const yearSpan = document.getElementById("filtroYearSeleccionado");
+  if (yearSpan) {
+    if (filtroYearColecciones && filtroYearColecciones !== "all") {
+      yearSpan.textContent = filtroYearColecciones;
+      yearSpan.style.display = "inline";
+    } else {
+      yearSpan.textContent = "";
+      yearSpan.style.display = "none";
+    }
+  }
+
   // Establecer el radio de vista correcto
   const radioVista = document.querySelector(`input[name="vistaColecciones"][value="${vistaColecciones}"]`);
   if (radioVista) radioVista.checked = true;
@@ -4442,7 +4454,7 @@ let filtroRarezasSet = new Set(["Común", "Infrecuente", "Rara", "Mítica"]);
 let ultimaListaSetRender = [];
 
 const VIRTUAL_SCROLL_MIN_ITEMS = 120;
-const VIRTUAL_SCROLL_BUFFER_ROWS = 8;
+const VIRTUAL_SCROLL_BUFFER_ROWS = 16; // Aumenta el buffer para reducir parpadeo
 const VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT = 380;
 
 const virtualScrollState = {
@@ -5151,7 +5163,12 @@ function renderTablaSet(setKey) {
     window.addEventListener("resize", virtualScrollState.onResize);
 
     updateMetrics();
+    // Forzar render inicial al entrar en el set
     renderRange();
+    // Ejecutar un renderRange extra en el siguiente frame para asegurar render correcto
+    requestAnimationFrame(() => {
+      renderRange();
+    });
   }
   
   if (DEBUG) {
