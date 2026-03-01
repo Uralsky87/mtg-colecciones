@@ -4516,6 +4516,66 @@ function aplicarUIFiltrosSet() {
   });
 }
 
+function rerenderSetConFiltros({ keepScroll = true } = {}) {
+  if (!setActualKey) return;
+  aplicarUIFiltrosSet();
+  if (keepScroll) {
+    renderTablaSetWithStableScroll(setActualKey);
+  } else {
+    renderTablaSet(setActualKey);
+  }
+}
+
+function setFiltroTextoSet(texto) {
+  filtroTextoSet = normalizarTexto((texto || "").trim());
+  rerenderSetConFiltros();
+}
+
+function setFiltroSoloFaltanSet(enabled) {
+  filtroSoloFaltanSet = !!enabled;
+  rerenderSetConFiltros();
+}
+
+function setFiltroEnPosesionSet(enabled) {
+  filtroEnPosesionSet = !!enabled;
+  rerenderSetConFiltros();
+}
+
+function setFiltroColorSetEnabled(enabled) {
+  filtroColorSetEnabled = !!enabled;
+  if (!filtroColorSetEnabled) {
+    filtroColoresSet.clear();
+  }
+  rerenderSetConFiltros();
+}
+
+function toggleColorFiltroSet(color, enabled) {
+  const normalizedColor = String(color || "").trim().toUpperCase();
+  if (!normalizedColor) return;
+
+  if (enabled) {
+    filtroColoresSet.add(normalizedColor);
+  } else {
+    filtroColoresSet.delete(normalizedColor);
+  }
+
+  filtroColorSetEnabled = filtroColoresSet.size > 0;
+  rerenderSetConFiltros();
+}
+
+function toggleRarezaFiltroSet(rareza, enabled) {
+  const normalizedRareza = String(rareza || "").trim();
+  if (!normalizedRareza) return;
+
+  if (enabled) {
+    filtroRarezasSet.add(normalizedRareza);
+  } else {
+    filtroRarezasSet.delete(normalizedRareza);
+  }
+
+  rerenderSetConFiltros();
+}
+
 function resetScrollSetList({ allowAutoScroll = false } = {}) {
   if (!allowAutoScroll) return;
   const cont = document.getElementById("listaCartasSet");
