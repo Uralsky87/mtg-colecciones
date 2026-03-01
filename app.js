@@ -5144,9 +5144,23 @@ function renderTablaSet(setKey) {
       const rowGap = parseFloat(computed.rowGap || computed.gap || "0") || 0;
 
       if (firstItem) {
+        let restoreDisplay = null;
+        let restoreVisibility = null;
+        if (firstItem.style.display === "none") {
+          restoreDisplay = firstItem.style.display;
+          restoreVisibility = firstItem.style.visibility;
+          firstItem.style.visibility = "hidden";
+          firstItem.style.display = "";
+        }
+
         const rect = firstItem.getBoundingClientRect();
         if (rect.height > 0) {
           virtualScrollState.rowHeight = rect.height + rowGap;
+        }
+
+        if (restoreDisplay !== null) {
+          firstItem.style.display = restoreDisplay;
+          firstItem.style.visibility = restoreVisibility;
         }
       } else {
         virtualScrollState.rowHeight = VIRTUAL_SCROLL_DEFAULT_ROW_HEIGHT + rowGap;
@@ -5182,10 +5196,20 @@ function renderTablaSet(setKey) {
       grid._allCartaItems = [];
       for (let i = 0; i < lista.length; i++) {
         const item = createCartaItem(lista[i], i);
+        item.style.display = "none";
         grid.appendChild(item);
         grid._allCartaItems.push(item);
       }
     }
+
+    const setItemVisible = (idx, visible) => {
+      const item = grid._allCartaItems[idx];
+      if (!item) return;
+      const nextDisplay = visible ? "" : "none";
+      if (item.style.display !== nextDisplay) {
+        item.style.display = nextDisplay;
+      }
+    };
 
     const renderRange = () => {
       if (!virtualScrollState.active) return;
@@ -5197,6 +5221,9 @@ function renderTablaSet(setKey) {
       // Solo actualizar si el rango cambia
       if (startIdx === virtualScrollState.lastStart && endIdx === virtualScrollState.lastEnd) return;
 
+      const prevStart = virtualScrollState.lastStart;
+      const prevEnd = virtualScrollState.lastEnd;
+
       virtualScrollState.lastStart = startIdx;
       virtualScrollState.lastEnd = endIdx;
 
@@ -5205,17 +5232,20 @@ function renderTablaSet(setKey) {
       wrapper.style.paddingTop = `${topPad}px`;
       wrapper.style.paddingBottom = `${bottomPad}px`;
 
-      // Mostrar solo los nodos en el rango visible, ocultar el resto
-      for (let i = 0; i < grid._allCartaItems.length; i++) {
-        const item = grid._allCartaItems[i];
-        if (i >= startIdx && i < endIdx) {
-          item.style.display = "";
-        } else {
-          item.style.display = "none";
-        }
+      // Actualización incremental: solo tocar nodos que entran/salen del rango.
+      if (prevStart < 0 || prevEnd < 0) {
+        for (let i = startIdx; i < endIdx; i++) setItemVisible(i, true);
+        return;
       }
 
-      applyVerCartasState(grid);
+      // Se ocultan los que salieron por la izquierda
+      for (let i = prevStart; i < Math.min(prevEnd, startIdx); i++) setItemVisible(i, false);
+      // Se ocultan los que salieron por la derecha
+      for (let i = Math.max(prevStart, endIdx); i < prevEnd; i++) setItemVisible(i, false);
+      // Se muestran los que entraron por la izquierda
+      for (let i = startIdx; i < Math.min(endIdx, prevStart); i++) setItemVisible(i, true);
+      // Se muestran los que entraron por la derecha
+      for (let i = Math.max(startIdx, prevEnd); i < endIdx; i++) setItemVisible(i, true);
     };
 
     const scheduleRenderRange = () => {
@@ -5247,6 +5277,7 @@ function renderTablaSet(setKey) {
     window.addEventListener("scroll", virtualScrollState.onScroll, { passive: true });
     window.addEventListener("resize", virtualScrollState.onResize);
 
+    applyVerCartasState(grid);
     updateMetrics();
     // Forzar render inicial al entrar en el set
     renderRange();
