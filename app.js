@@ -1690,6 +1690,38 @@ function setKeyFromCard(c) {
   return `${c.coleccion}__${lang}`;
 }
 
+function getEstadoKeyFromCard(card) {
+  if (card && card.id) return String(card.id);
+  if (card && card.oracle_id) return String(card.oracle_id);
+  return "";
+}
+
+function getTotalQtyEstado2(st2) {
+  return (Number(st2?.qty_en) || 0) + (Number(st2?.qty_es) || 0);
+}
+
+function getTotalQtyByOracle(oracleId) {
+  const key = String(oracleId || "").trim();
+  if (!key) return 0;
+
+  const seen = new Set();
+  let total = 0;
+
+  for (const cartas of Object.values(cacheCartasPorSetLang || {})) {
+    if (!Array.isArray(cartas)) continue;
+    for (const carta of cartas) {
+      if (!carta || carta.oracle_id !== key) continue;
+      const estadoKey = getEstadoKeyFromCard(carta);
+      if (!estadoKey || seen.has(estadoKey)) continue;
+      seen.add(estadoKey);
+      total += getTotalQtyEstado2(getEstadoCarta2(estadoKey));
+    }
+  }
+
+  if (total > 0) return total;
+  return getTotalQtyEstado2(getEstadoCarta2(key));
+}
+
 function langFlag(lang) {
   const l = (lang || "").toLowerCase();
   if (l === "es") return '<svg class="flag" width="20" height="15" viewBox="0 0 60 40"><rect width="60" height="40" fill="#c60b1e"/><rect y="10" width="60" height="20" fill="#ffc400"/></svg>';
@@ -2026,8 +2058,9 @@ function computeProgresoFromList(lista) {
   const total = Array.isArray(lista) ? lista.length : 0;
   const tengo = Array.isArray(lista)
     ? lista.filter(c => {
-        if (!c.oracle_id) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
-        const st2 = getEstadoCarta2(c.oracle_id);
+        const estadoKey = getEstadoKeyFromCard(c);
+        if (!estadoKey) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
+        const st2 = getEstadoCarta2(estadoKey);
         return (st2.qty_en + st2.qty_es) > 0;
       }).length
     : 0;
@@ -2236,13 +2269,13 @@ function setWantMore(id, value) {
 
 
 // ===============================
-// 2.5) NUEVO ESTADO v2: Por oracle_id con idiomas separados
+// 2.5) NUEVO ESTADO v2: Por clave de estado (id de print recomendado) con idiomas separados
 // ===============================
 
 const LS_KEY_V2 = "mtg_coleccion_estado_v2";
 const LS_ORACLE_CACHE = "mtg_oracle_id_cache_v1";
 
-let estado2 = {}; // oracle_id -> { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es, counters_en, counters_es, tags_en, tags_es }
+let estado2 = {}; // stateKey -> { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es, counters_en, counters_es, tags_en, tags_es }
 let estadoLegacyById = {}; // Copia temporal del estado legacy (por id) para migración
 let oracleIdCache = {}; // id -> { oracle_id, lang } - cache de resolución
 
@@ -2807,7 +2840,7 @@ function getEstadoCarta_Compat(id) {
   
   if (cached && cached.oracle_id) {
     // Usar estado2
-    const st2 = getEstadoCarta2(cached.oracle_id);
+    const st2 = getEstadoCarta2(id);
     const lang = cached.lang || "en";
     
     const qtyKey = lang === "es" ? "qty_es" : "qty_en";
@@ -3104,8 +3137,8 @@ function agruparResultadosBusqueda(cards) {
       })
       .map(v => {
         const setKey = `${v.set}__${v.lang}`;
-        // Usar estado2 con oracle_id
-        const st2 = getEstadoCarta2(v.oracle_id);
+        // Estado por impresión (id)
+        const st2 = getEstadoCarta2(v.id);
 
         return {
           id: v.id, // UUID (por si se necesita)
@@ -4079,8 +4112,9 @@ function progresoDeColeccion(setKey) {
     const total = lista.length;
     // Usar estado2: contar cartas que tienen cantidad en cualquier idioma
     const tengo = lista.filter(c => {
-      if (!c.oracle_id) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
-      const st2 = getEstadoCarta2(c.oracle_id);
+      const estadoKey = getEstadoKeyFromCard(c);
+      if (!estadoKey) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
+      const st2 = getEstadoCarta2(estadoKey);
       return (st2.qty_en + st2.qty_es) > 0;
     }).length;
     return { tengo, total };
@@ -4608,8 +4642,9 @@ function renderTablaSetWithStableScroll(setKey) {
 
 
 function getCardTotalsForSetFilter(card) {
-  if (card?.oracle_id) {
-    const st2 = getEstadoCarta2(card.oracle_id);
+  const estadoKey = getEstadoKeyFromCard(card);
+  if (estadoKey) {
+    const st2 = getEstadoCarta2(estadoKey);
     return {
       qty: (Number(st2.qty_en) || 0) + (Number(st2.qty_es) || 0),
       foil: (Number(st2.foil_en) || 0) + (Number(st2.foil_es) || 0)
@@ -4761,7 +4796,7 @@ function renderTablaSet(setKey) {
   const grid = document.createElement("div");
   grid.className = "cartas-grid";
 
-  const createStepperRow = ({ label, classMinus, classPlus, classInput, oracleId, lang, min, max, value, disabledMinus, disabledPlus, disabledInput, controlKey, controlKind }) => {
+  const createStepperRow = ({ label, classMinus, classPlus, classInput, stateKey, lang, min, max, value, disabledMinus, disabledPlus, disabledInput, controlKey, controlKind }) => {
     const row = document.createElement("div");
     row.className = "control-fila";
 
@@ -4774,7 +4809,7 @@ function renderTablaSet(setKey) {
 
     const btnMinus = document.createElement("button");
     btnMinus.className = `btn-step ${classMinus}`;
-    btnMinus.dataset.oracle = oracleId || "";
+    btnMinus.dataset.state = stateKey || "";
     btnMinus.dataset.lang = lang;
     if (controlKey) btnMinus.dataset.control = controlKey;
     if (controlKind) btnMinus.dataset.kind = controlKind;
@@ -4785,7 +4820,7 @@ function renderTablaSet(setKey) {
     const input = document.createElement("input");
     input.type = "number";
     input.className = `inp-num ${classInput}`;
-    input.dataset.oracle = oracleId || "";
+    input.dataset.state = stateKey || "";
     input.dataset.lang = lang;
     if (controlKey) input.dataset.control = controlKey;
     if (controlKind) input.dataset.kind = controlKind;
@@ -4796,7 +4831,7 @@ function renderTablaSet(setKey) {
 
     const btnPlus = document.createElement("button");
     btnPlus.className = `btn-step ${classPlus}`;
-    btnPlus.dataset.oracle = oracleId || "";
+    btnPlus.dataset.state = stateKey || "";
     btnPlus.dataset.lang = lang;
     if (controlKey) btnPlus.dataset.control = controlKey;
     if (controlKind) btnPlus.dataset.kind = controlKind;
@@ -4814,7 +4849,7 @@ function renderTablaSet(setKey) {
     return row;
   };
 
-  const createTagRow = ({ label, oracleId, lang, checked, controlKey }) => {
+  const createTagRow = ({ label, stateKey, lang, checked, controlKey }) => {
     const row = document.createElement("div");
     row.className = "control-fila";
 
@@ -4828,7 +4863,7 @@ function renderTablaSet(setKey) {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.className = "chk-tag";
-    input.dataset.oracle = oracleId || "";
+    input.dataset.state = stateKey || "";
     input.dataset.lang = lang;
     if (controlKey) input.dataset.control = controlKey;
     input.checked = !!checked;
@@ -4839,7 +4874,7 @@ function renderTablaSet(setKey) {
     return row;
   };
 
-  const createLangPanel = ({ lang, oracleId, qty, foil, ri, extraCounters = [], extraTags = [] }) => {
+  const createLangPanel = ({ lang, stateKey, qty, foil, ri, extraCounters = [], extraTags = [] }) => {
     const panel = document.createElement("div");
     panel.className = "lang-panel";
     panel.dataset.lang = lang;
@@ -4850,7 +4885,7 @@ function renderTablaSet(setKey) {
         classMinus: "btn-qty-minus",
         classPlus: "btn-qty-plus",
         classInput: "inp-qty",
-        oracleId,
+        stateKey,
         lang,
         min: 0,
         max: 999,
@@ -4869,7 +4904,7 @@ function renderTablaSet(setKey) {
         classMinus: "btn-foil-minus",
         classPlus: "btn-foil-plus",
         classInput: "inp-foil",
-        oracleId,
+        stateKey,
         lang,
         min: 0,
         max: qty,
@@ -4888,7 +4923,7 @@ function renderTablaSet(setKey) {
         classMinus: "btn-counter-minus",
         classPlus: "btn-counter-plus",
         classInput: "inp-counter",
-        oracleId,
+        stateKey,
         lang,
         min: 0,
         max: 999,
@@ -4902,7 +4937,7 @@ function renderTablaSet(setKey) {
     }
 
     for (const tag of extraTags) {
-      panel.appendChild(createTagRow({ label: tag.label, oracleId, lang, checked: tag.checked, controlKey: tag.key }));
+      panel.appendChild(createTagRow({ label: tag.label, stateKey, lang, checked: tag.checked, controlKey: tag.key }));
     }
     return panel;
   };
@@ -4912,9 +4947,10 @@ function renderTablaSet(setKey) {
     let totalQty = 0;
     let st2 = null;
     const oracleId = c.oracle_id || "";
+    const estadoKey = getEstadoKeyFromCard(c);
 
-    if (c.oracle_id) {
-      st2 = getEstadoCarta2(c.oracle_id);
+    if (estadoKey) {
+      st2 = getEstadoCarta2(estadoKey);
       totalQty = st2.qty_en + st2.qty_es;
     } else {
       // Fallback para cartas sin oracle_id (no debería pasar)
@@ -4936,6 +4972,7 @@ function renderTablaSet(setKey) {
     const item = document.createElement("div");
     item.className = `carta-item${hasQty ? " has-qty" : ""}`;
     item.dataset.oracle = oracleId;
+    item.dataset.stateKey = estadoKey;
     item.dataset.cardId = String(c.id);
 
     const header = document.createElement("div");
@@ -5055,7 +5092,7 @@ function renderTablaSet(setKey) {
     for (const lang of langsToShow) {
       track.appendChild(createLangPanel({
         lang,
-        oracleId,
+        stateKey: estadoKey,
         qty: lang === "es" ? st2.qty_es : st2.qty_en,
         foil: lang === "es" ? st2.foil_es : st2.foil_en,
         ri: lang === "es" ? st2.ri_es : st2.ri_en,
@@ -5294,14 +5331,14 @@ function renderTablaSet(setKey) {
 }
 
 // Helper: Actualizar panel de idioma específico sin re-render completo
-function actualizarPanelLang(oracleId, lang) {
-  const st2 = getEstadoCarta2(oracleId);
+function actualizarPanelLang(estadoKey, lang) {
+  const st2 = getEstadoCarta2(estadoKey);
   const qty = lang === "en" ? st2.qty_en : st2.qty_es;
   const foil = lang === "en" ? st2.foil_en : st2.foil_es;
   const cfg = getCardControlsConfig();
   
-  // Buscar el panel específico de este oracle_id y lang
-  const cartaItem = document.querySelector(`.carta-item[data-oracle="${oracleId}"]`);
+  // Buscar el panel específico de este estado y lang
+  const cartaItem = document.querySelector(`.carta-item[data-state-key="${estadoKey}"]`);
   if (!cartaItem) return;
   
   const panel = cartaItem.querySelector(`.lang-panel[data-lang="${lang}"]`);
@@ -5373,11 +5410,12 @@ function marcarTodasCartasSet() {
   
   const cartas = cartasDeSetKey(setActualKey);
   cartas.forEach(c => {
-    if (!c.oracle_id) return; // Skip si no tiene oracle_id
-    const st2 = getEstadoCarta2(c.oracle_id);
+    const estadoKey = getEstadoKeyFromCard(c);
+    if (!estadoKey) return;
+    const st2 = getEstadoCarta2(estadoKey);
     // Marcar en ambos idiomas si no tiene cantidad
     if (st2.qty_en === 0 && st2.qty_es === 0) {
-      setQtyLang(c.oracle_id, "en", 1);
+      setQtyLang(estadoKey, "en", 1);
     }
   });
   
@@ -5390,10 +5428,11 @@ function desmarcarTodasCartasSet() {
   
   const cartas = cartasDeSetKey(setActualKey);
   cartas.forEach(c => {
-    if (!c.oracle_id) return; // Skip si no tiene oracle_id
+    const estadoKey = getEstadoKeyFromCard(c);
+    if (!estadoKey) return;
     // Desmarcar ambos idiomas
-    setQtyLang(c.oracle_id, "en", 0);
-    setQtyLang(c.oracle_id, "es", 0);
+    setQtyLang(estadoKey, "en", 0);
+    setQtyLang(estadoKey, "es", 0);
   });
   
   renderTablaSet(setActualKey);
@@ -5438,10 +5477,11 @@ function aplicarRangosCartas(rangosTexto) {
     const cartaIdx = idx - 1;
     if (cartaIdx >= 0 && cartaIdx < lista.length) {
       const carta = lista[cartaIdx];
-      if (!carta.oracle_id) return;
-      const st2 = getEstadoCarta2(carta.oracle_id);
+      const estadoKey = getEstadoKeyFromCard(carta);
+      if (!estadoKey) return;
+      const st2 = getEstadoCarta2(estadoKey);
       // Por ahora solo EN
-      setQtyLang(carta.oracle_id, "en", st2.qty_en + 1);
+      setQtyLang(estadoKey, "en", st2.qty_en + 1);
     }
   });
   
@@ -5537,7 +5577,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
     for (const g of grupos) {
       for (const v of g.versiones) {
         const lang = v.lang === "es" ? "es" : "en";
-        const st2 = v.st2 || getEstadoCarta2(v.oracle_id);
+        const st2 = v.st2 || getEstadoCarta2(v.id);
         const qty = lang === "en" ? (st2.qty_en || 0) : (st2.qty_es || 0);
         const foilQty = lang === "en" ? (st2.foil_en || 0) : (st2.foil_es || 0);
         const totalQty = (st2.qty_en || 0) + (st2.qty_es || 0);
@@ -5551,9 +5591,9 @@ async function renderResultadosBuscar(texto, opts = {}) {
             <div class="control-fila">
               <span class="lbl">Cantidad</span>
               <div class="stepper">
-                <button class="btn-step btn-qty-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-qty-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" min="0" max="999" value="${qty}" />
-                <button class="btn-step btn-qty-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}">+</button>
+                <button class="btn-step btn-qty-minus-buscar" data-state="${v.id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-qty-buscar" data-state="${v.id}" data-lang="${lang}" min="0" max="999" value="${qty}" />
+                <button class="btn-step btn-qty-plus-buscar" data-state="${v.id}" data-lang="${lang}">+</button>
               </div>
             </div>
           `;
@@ -5564,9 +5604,9 @@ async function renderResultadosBuscar(texto, opts = {}) {
             <div class="control-fila">
               <span class="lbl">Foil</span>
               <div class="stepper">
-                <button class="btn-step btn-foil-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-foil-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" min="0" max="${qty}" value="${foilQty}" ${qty === 0 ? "disabled" : ""} />
-                <button class="btn-step btn-foil-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
+                <button class="btn-step btn-foil-minus-buscar" data-state="${v.id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-foil-buscar" data-state="${v.id}" data-lang="${lang}" min="0" max="${qty}" value="${foilQty}" ${qty === 0 ? "disabled" : ""} />
+                <button class="btn-step btn-foil-plus-buscar" data-state="${v.id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
               </div>
             </div>
           `;
@@ -5578,9 +5618,9 @@ async function renderResultadosBuscar(texto, opts = {}) {
             <div class="control-fila">
               <span class="lbl">${escapeHtml(c.label)}</span>
               <div class="stepper">
-                <button class="btn-step btn-counter-minus" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}" ${value <= 0 ? "disabled" : ""}>−</button>
-                <input type="number" class="inp-num inp-counter" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}" min="0" max="999" value="${value}" />
-                <button class="btn-step btn-counter-plus" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}">+</button>
+                <button class="btn-step btn-counter-minus" data-state="${v.id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}" ${value <= 0 ? "disabled" : ""}>−</button>
+                <input type="number" class="inp-num inp-counter" data-state="${v.id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}" min="0" max="999" value="${value}" />
+                <button class="btn-step btn-counter-plus" data-state="${v.id}" data-lang="${lang}" data-control="${escapeAttr(c.key)}">+</button>
               </div>
             </div>
           `;
@@ -5592,7 +5632,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
             <div class="control-fila">
               <span class="lbl">${escapeHtml(t.label)}</span>
               <label class="chkline">
-                <input type="checkbox" class="chk-tag" data-oracle="${v.oracle_id}" data-lang="${lang}" data-control="${escapeAttr(t.key)}" ${checked ? "checked" : ""} />
+                <input type="checkbox" class="chk-tag" data-state="${v.id}" data-lang="${lang}" data-control="${escapeAttr(t.key)}" ${checked ? "checked" : ""} />
               </label>
             </div>
           `;
@@ -5673,17 +5713,17 @@ async function renderResultadosBuscar(texto, opts = {}) {
                 <div class="control-fila-buscar">
                   <span class="lbl-buscar">Cantidad</span>
                   <div class="stepper stepper-buscar">
-                    <button class="btn-step btn-qty-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
+                    <button class="btn-step btn-qty-minus-buscar" data-state="${v.id}" data-lang="${lang}" ${qty <= 0 ? "disabled" : ""}>−</button>
                     <input
                       type="number"
                       class="inp-num inp-qty-buscar"
-                      data-oracle="${v.oracle_id}"
+                      data-state="${v.id}"
                       data-lang="${lang}"
                       min="0"
                       max="999"
                       value="${qty}"
                     />
-                    <button class="btn-step btn-qty-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}">+</button>
+                    <button class="btn-step btn-qty-plus-buscar" data-state="${v.id}" data-lang="${lang}">+</button>
                   </div>
                 </div>
 
@@ -5691,18 +5731,18 @@ async function renderResultadosBuscar(texto, opts = {}) {
                 <div class="control-fila-buscar">
                   <span class="lbl-buscar">Foil</span>
                   <div class="stepper stepper-buscar">
-                    <button class="btn-step btn-foil-minus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
+                    <button class="btn-step btn-foil-minus-buscar" data-state="${v.id}" data-lang="${lang}" ${foilQty <= 0 || qty === 0 ? "disabled" : ""}>−</button>
                     <input
                       type="number"
                       class="inp-num inp-foil-buscar"
-                      data-oracle="${v.oracle_id}"
+                      data-state="${v.id}"
                       data-lang="${lang}"
                       min="0"
                       max="${qty}"
                       value="${foilQty}"
                       ${qty === 0 ? "disabled" : ""}
                     />
-                    <button class="btn-step btn-foil-plus-buscar" data-oracle="${v.oracle_id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
+                    <button class="btn-step btn-foil-plus-buscar" data-state="${v.id}" data-lang="${lang}" ${qty === 0 || foilQty >= qty ? "disabled" : ""}>+</button>
                   </div>
                 </div>
               </div>
@@ -5793,74 +5833,74 @@ async function renderResultadosBuscar(texto, opts = {}) {
       }
 
       if (btn.classList.contains("btn-qty-minus-buscar")) {
-        const oracleId = btn.dataset.oracle;
+        const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
-        if (!oracleId) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-        setQtyLang(oracleId, lang, currentQty - 1);
+        setQtyLang(estadoKey, lang, currentQty - 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
         return;
       }
 
       if (btn.classList.contains("btn-qty-plus-buscar")) {
-        const oracleId = btn.dataset.oracle;
+        const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
-        if (!oracleId) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-        setQtyLang(oracleId, lang, currentQty + 1);
+        setQtyLang(estadoKey, lang, currentQty + 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
         return;
       }
 
       if (btn.classList.contains("btn-foil-minus-buscar")) {
-        const oracleId = btn.dataset.oracle;
+        const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
-        if (!oracleId) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-        setFoilLang(oracleId, lang, currentFoil - 1);
+        setFoilLang(estadoKey, lang, currentFoil - 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
         return;
       }
 
       if (btn.classList.contains("btn-foil-plus-buscar")) {
-        const oracleId = btn.dataset.oracle;
+        const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
-        if (!oracleId) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-        setFoilLang(oracleId, lang, currentFoil + 1);
+        setFoilLang(estadoKey, lang, currentFoil + 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
         return;
       }
 
       if (btn.classList.contains("btn-counter-minus")) {
-        const oracleId = btn.dataset.oracle;
+        const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
         const key = btn.dataset.control;
-        if (!oracleId || !key) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !key) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentVal = getCounterValue(st2, lang, key);
-        setCounterLang(oracleId, lang, key, currentVal - 1);
+        setCounterLang(estadoKey, lang, key, currentVal - 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
         return;
       }
 
       if (btn.classList.contains("btn-counter-plus")) {
-        const oracleId = btn.dataset.oracle;
+        const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
         const key = btn.dataset.control;
-        if (!oracleId || !key) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !key) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentVal = getCounterValue(st2, lang, key);
-        setCounterLang(oracleId, lang, key, currentVal + 1);
+        setCounterLang(estadoKey, lang, key, currentVal + 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
         return;
@@ -5890,39 +5930,39 @@ async function renderResultadosBuscar(texto, opts = {}) {
       const target = e.target;
 
       if (target.classList.contains("inp-qty-buscar")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang || "en";
-        if (!oracleId) return;
-        setQtyLang(oracleId, lang, target.value);
+        if (!estadoKey) return;
+        setQtyLang(estadoKey, lang, target.value);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
       }
 
       if (target.classList.contains("inp-foil-buscar")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang || "en";
-        if (!oracleId) return;
-        setFoilLang(oracleId, lang, target.value);
+        if (!estadoKey) return;
+        setFoilLang(estadoKey, lang, target.value);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
       }
 
       if (target.classList.contains("inp-counter")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang || "en";
         const key = target.dataset.control;
-        if (!oracleId || !key) return;
-        setCounterLang(oracleId, lang, key, target.value);
+        if (!estadoKey || !key) return;
+        setCounterLang(estadoKey, lang, key, target.value);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
       }
 
       if (target.classList.contains("chk-tag")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang || "en";
         const key = target.dataset.control;
-        if (!oracleId || !key) return;
-        setTagLang(oracleId, lang, key, target.checked);
+        if (!estadoKey || !key) return;
+        setTagLang(estadoKey, lang, key, target.checked);
       }
     });
   }
@@ -6206,9 +6246,9 @@ async function verificarCartasEnColeccion(cartas) {
     }
     
     // Si existe exacta y la tengo con la cantidad necesaria
-    if (existeExacta && existeExacta.oracle_id) {
-      const st2 = getEstadoCarta2(existeExacta.oracle_id);
-      const totalQty = st2.qty_en + st2.qty_es;
+    if (existeExacta) {
+      const estadoKeyExacta = getEstadoKeyFromCard(existeExacta);
+      const totalQty = estadoKeyExacta ? getTotalQtyEstado2(getEstadoCarta2(estadoKeyExacta)) : 0;
       if (totalQty >= carta.cantidad) {
         cartasVerificadas.push({
           ...carta,
@@ -6225,9 +6265,7 @@ async function verificarCartasEnColeccion(cartas) {
     const oracleId = existeExacta?.oracle_id;
     
     if (oracleId) {
-      // Buscar por oracle_id usando estado2 (muy rápido)
-      const st2 = getEstadoCarta2(oracleId);
-      const totalQty = st2.qty_en + st2.qty_es;
+      const totalQty = getTotalQtyByOracle(oracleId);
       if (totalQty > 0) {
         tieneEnOtraEdicion = true;
       }
@@ -6241,9 +6279,9 @@ async function verificarCartasEnColeccion(cartas) {
         let encontradaEnCache = false;
         for (const [setKeyCargado, cartasCargadas] of Object.entries(cacheCartasPorSetLang)) {
           for (const c of cartasCargadas) {
-            if (normalizarTexto(c.nombre) === nombreNorm && c.oracle_id) {
-              const st2 = getEstadoCarta2(c.oracle_id);
-              const totalQty = st2.qty_en + st2.qty_es;
+            if (normalizarTexto(c.nombre) === nombreNorm) {
+              const estadoKey = getEstadoKeyFromCard(c);
+              const totalQty = estadoKey ? getTotalQtyEstado2(getEstadoCarta2(estadoKey)) : 0;
               if (totalQty > 0) {
                 encontradaEnCache = true;
                 break;
@@ -6259,8 +6297,7 @@ async function verificarCartasEnColeccion(cartas) {
             const todasLasVersiones = await scrySearchPrintsByName(carta.nombre);
             for (const version of todasLasVersiones) {
               if (version.oracle_id) {
-                const st2 = getEstadoCarta2(version.oracle_id);
-                const totalQty = st2.qty_en + st2.qty_es;
+                const totalQty = getTotalQtyByOracle(version.oracle_id);
                 if (totalQty > 0) {
                   encontradaEnCache = true;
                   break;
@@ -6527,13 +6564,14 @@ async function renderCartaDeckImagen(carta, posicion, tipo) {
   const imagenUrl = cartaCatalogo?._img || '';
   
   // Obtener cantidad real de la colección
-  const st2 = cartaCatalogo && cartaCatalogo.oracle_id 
-    ? getEstadoCarta2(cartaCatalogo.oracle_id) 
+  const estadoKeyDeck = getEstadoKeyFromCard(cartaCatalogo);
+  const st2 = estadoKeyDeck
+    ? getEstadoCarta2(estadoKeyDeck)
     : { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0 };
   // Por ahora solo mostramos EN
   const cantidadMostrar = st2.qty_en;
   
-  const oracleId = cartaCatalogo?.oracle_id || '';
+  const estadoKey = estadoKeyDeck || '';
   
   return `
     <div class="carta-item ${cantidadMostrar > 0 ? 'has-qty' : ''}">
@@ -6565,16 +6603,16 @@ async function renderCartaDeckImagen(carta, posicion, tipo) {
         <div class="control-fila">
           <span class="lbl">Cantidad</span>
           <div class="stepper">
-            <button class="btn-step btn-qty-minus-deck" data-oracle="${oracleId}" ${cantidadMostrar <= 0 ? "disabled" : ""}>−</button>
+            <button class="btn-step btn-qty-minus-deck" data-state="${estadoKey}" ${cantidadMostrar <= 0 ? "disabled" : ""}>−</button>
             <input
               type="number"
               class="inp-num inp-qty-deck"
-              data-oracle="${oracleId}"
+              data-state="${estadoKey}"
               min="0"
               max="999"
               value="${cantidadMostrar}"
             />
-            <button class="btn-step btn-qty-plus-deck" data-oracle="${oracleId}">+</button>
+            <button class="btn-step btn-qty-plus-deck" data-state="${estadoKey}">+</button>
           </div>
         </div>
       </div>
@@ -6614,11 +6652,11 @@ function wireControlesDeckImagenes() {
   // Controles de cantidad
   cont.querySelectorAll(".btn-qty-minus-deck").forEach(btn => {
     btn.addEventListener("click", () => {
-      const oracleId = btn.dataset.oracle;
-      if (!oracleId) return;
-      const st2 = getEstadoCarta2(oracleId);
+      const estadoKey = btn.dataset.state;
+      if (!estadoKey) return;
+      const st2 = getEstadoCarta2(estadoKey);
       // Por ahora solo EN
-      setQtyLang(oracleId, "en", st2.qty_en - 1);
+      setQtyLang(estadoKey, "en", st2.qty_en - 1);
       renderDeckCartas();
       renderColecciones();
     });
@@ -6626,10 +6664,10 @@ function wireControlesDeckImagenes() {
 
   cont.querySelectorAll(".btn-qty-plus-deck").forEach(btn => {
     btn.addEventListener("click", () => {
-      const oracleId = btn.dataset.oracle;
-      if (!oracleId) return;
-      const st2 = getEstadoCarta2(oracleId);
-      setQtyLang(oracleId, "en", st2.qty_en + 1);
+      const estadoKey = btn.dataset.state;
+      if (!estadoKey) return;
+      const st2 = getEstadoCarta2(estadoKey);
+      setQtyLang(estadoKey, "en", st2.qty_en + 1);
       renderDeckCartas();
       renderColecciones();
     });
@@ -6637,9 +6675,9 @@ function wireControlesDeckImagenes() {
 
   cont.querySelectorAll(".inp-qty-deck").forEach(inp => {
     inp.addEventListener("change", () => {
-      const oracleId = inp.dataset.oracle;
-      if (!oracleId) return;
-      setQtyLang(oracleId, "en", inp.value);
+      const estadoKey = inp.dataset.state;
+      if (!estadoKey) return;
+      setQtyLang(estadoKey, "en", inp.value);
       renderDeckCartas();
       renderColecciones();
     });
@@ -6752,11 +6790,12 @@ async function marcarCartaDeck(nombre, set, numero) {
   const listaSet = cartasDeSetKey(setKey);
   const carta = listaSet.find(c => c.numero === numero);
   
-  if (carta && carta.oracle_id) {
-    const st2 = getEstadoCarta2(carta.oracle_id);
+  const estadoKey = getEstadoKeyFromCard(carta);
+  if (estadoKey) {
+    const st2 = getEstadoCarta2(estadoKey);
     if (st2.qty_en === 0) {
       // Por ahora solo EN
-      setQtyLang(carta.oracle_id, "en", 1);
+      setQtyLang(estadoKey, "en", 1);
       renderColecciones();
     }
   }
@@ -7564,77 +7603,77 @@ function wireGlobalButtons() {
       
       // Botones cantidad
       if (target.classList.contains("btn-qty-minus")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
-        if (!oracleId || !lang) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !lang) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-        setQtyLang(oracleId, lang, currentQty - 1);
-        actualizarPanelLang(oracleId, lang);
+        setQtyLang(estadoKey, lang, currentQty - 1);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
       
       if (target.classList.contains("btn-qty-plus")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
-        if (!oracleId || !lang) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !lang) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
-        setQtyLang(oracleId, lang, currentQty + 1);
-        actualizarPanelLang(oracleId, lang);
+        setQtyLang(estadoKey, lang, currentQty + 1);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
       
       // Botones foil
       if (target.classList.contains("btn-foil-minus")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
-        if (!oracleId || !lang) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !lang) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-        setFoilLang(oracleId, lang, currentFoil - 1);
-        actualizarPanelLang(oracleId, lang);
+        setFoilLang(estadoKey, lang, currentFoil - 1);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
       
       if (target.classList.contains("btn-foil-plus")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
-        if (!oracleId || !lang) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !lang) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
-        setFoilLang(oracleId, lang, currentFoil + 1);
-        actualizarPanelLang(oracleId, lang);
+        setFoilLang(estadoKey, lang, currentFoil + 1);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
 
       // Contadores personalizados
       if (target.classList.contains("btn-counter-minus")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         const key = target.dataset.control;
-        if (!oracleId || !lang || !key) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !lang || !key) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentVal = getCounterValue(st2, lang, key);
-        setCounterLang(oracleId, lang, key, currentVal - 1);
-        actualizarPanelLang(oracleId, lang);
+        setCounterLang(estadoKey, lang, key, currentVal - 1);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
 
       if (target.classList.contains("btn-counter-plus")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         const key = target.dataset.control;
-        if (!oracleId || !lang || !key) return;
-        const st2 = getEstadoCarta2(oracleId);
+        if (!estadoKey || !lang || !key) return;
+        const st2 = getEstadoCarta2(estadoKey);
         const currentVal = getCounterValue(st2, lang, key);
-        setCounterLang(oracleId, lang, key, currentVal + 1);
-        actualizarPanelLang(oracleId, lang);
+        setCounterLang(estadoKey, lang, key, currentVal + 1);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
@@ -7646,45 +7685,45 @@ function wireGlobalButtons() {
       
       // Input cantidad
       if (target.classList.contains("inp-qty")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
-        if (!oracleId || !lang) return;
-        setQtyLang(oracleId, lang, target.value);
-        actualizarPanelLang(oracleId, lang);
+        if (!estadoKey || !lang) return;
+        setQtyLang(estadoKey, lang, target.value);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
       
       // Input foil
       if (target.classList.contains("inp-foil")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
-        if (!oracleId || !lang) return;
-        setFoilLang(oracleId, lang, target.value);
-        actualizarPanelLang(oracleId, lang);
+        if (!estadoKey || !lang) return;
+        setFoilLang(estadoKey, lang, target.value);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
 
       // Inputs de contadores personalizados
       if (target.classList.contains("inp-counter")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         const key = target.dataset.control;
-        if (!oracleId || !lang || !key) return;
-        setCounterLang(oracleId, lang, key, target.value);
-        actualizarPanelLang(oracleId, lang);
+        if (!estadoKey || !lang || !key) return;
+        setCounterLang(estadoKey, lang, key, target.value);
+        actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
         return;
       }
       
       // Tags
       if (target.classList.contains("chk-tag")) {
-        const oracleId = target.dataset.oracle;
+        const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         const key = target.dataset.control;
-        if (!oracleId || !lang || !key) return;
-        setTagLang(oracleId, lang, key, target.checked);
+        if (!estadoKey || !lang || !key) return;
+        setTagLang(estadoKey, lang, key, target.checked);
         return;
       }
     });
@@ -7835,11 +7874,12 @@ function wireGlobalButtons() {
                 const listaSet = cartasDeSetKey(setKey);
                 const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
                 
-                if (cartaCatalogo && cartaCatalogo.oracle_id) {
-                  const st2 = getEstadoCarta2(cartaCatalogo.oracle_id);
+                const estadoKey = getEstadoKeyFromCard(cartaCatalogo);
+                if (estadoKey) {
+                  const st2 = getEstadoCarta2(estadoKey);
                   // Por ahora solo EN
                   if (st2.qty_en > 0) {
-                    setQtyLang(cartaCatalogo.oracle_id, "en", st2.qty_en - 1);
+                    setQtyLang(estadoKey, "en", st2.qty_en - 1);
                     cartasEliminadas++;
                   }
                 }
@@ -7877,10 +7917,11 @@ function wireGlobalButtons() {
                   const listaSet = cartasDeSetKey(setKey);
                   const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
                   
-                  if (cartaCatalogo && cartaCatalogo.oracle_id) {
-                    const st2 = getEstadoCarta2(cartaCatalogo.oracle_id);
+                  const estadoKey = getEstadoKeyFromCard(cartaCatalogo);
+                  if (estadoKey) {
+                    const st2 = getEstadoCarta2(estadoKey);
                     // Por ahora solo EN
-                    setQtyLang(cartaCatalogo.oracle_id, "en", st2.qty_en + 1);
+                    setQtyLang(estadoKey, "en", st2.qty_en + 1);
                   }
                 }
               }
