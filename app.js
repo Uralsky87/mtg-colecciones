@@ -14,7 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
-const VERSION = "0.82";
+const VERSION = "0.83";
 const DEBUG = false; // Cambiar a true para habilitar métricas de rendimiento
 const JS_URL = (typeof document !== "undefined" && document.currentScript?.src) || "app.js loaded";
 console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
@@ -2465,6 +2465,61 @@ function setTagLang(oracle_id, lang, key, value) {
   guardarEstado2();
   sbMarkDirty();
   scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+}
+
+function getPreferredLangForEstadoKey(estadoKey, fallback = "en") {
+  const cfg = getCardControlsConfig();
+  if (cfg.langMode === "en" || cfg.langMode === "es") return cfg.langMode;
+
+  const key = String(estadoKey || "").trim();
+  if (!key) return fallback === "es" ? "es" : "en";
+
+  const oracleId = uiLangByOracle[key]
+    ? key
+    : (oracleIdCache[key]?.oracle_id || "");
+
+  if (oracleId) return getUILang(oracleId);
+  return fallback === "es" ? "es" : "en";
+}
+
+function adjustTotalQty(estadoKey, delta, preferredLang = "en") {
+  const d = Math.trunc(Number(delta) || 0);
+  if (!estadoKey || d === 0) return;
+
+  const prefLang = preferredLang === "es" ? "es" : "en";
+  const otherLang = prefLang === "en" ? "es" : "en";
+
+  if (d > 0) {
+    const st2 = getEstadoCarta2(estadoKey);
+    const prefQty = prefLang === "es" ? st2.qty_es : st2.qty_en;
+    setQtyLang(estadoKey, prefLang, prefQty + d);
+    return;
+  }
+
+  let remaining = -d;
+  while (remaining > 0) {
+    const st2 = getEstadoCarta2(estadoKey);
+    const prefQty = prefLang === "es" ? st2.qty_es : st2.qty_en;
+    const otherQty = otherLang === "es" ? st2.qty_es : st2.qty_en;
+
+    if (prefQty > 0) {
+      setQtyLang(estadoKey, prefLang, prefQty - 1);
+    } else if (otherQty > 0) {
+      setQtyLang(estadoKey, otherLang, otherQty - 1);
+    } else {
+      break;
+    }
+
+    remaining -= 1;
+  }
+}
+
+function setTotalQtyWithPreferredLang(estadoKey, targetTotal, preferredLang = "en") {
+  if (!estadoKey) return;
+  const target = clampInt(Number(targetTotal), 0, 999);
+  const st2 = getEstadoCarta2(estadoKey);
+  const current = Number(st2.qty_en || 0) + Number(st2.qty_es || 0);
+  adjustTotalQty(estadoKey, target - current, preferredLang);
 }
 
 // ===== UI: Alternancia de idioma por carta =====
@@ -5026,6 +5081,7 @@ function renderTablaSet(setKey) {
     const controles = document.createElement("div");
     controles.className = "carta-controles";
     controles.dataset.activeLang = langActivo;
+    controles.dataset.langMode = langMode;
 
     const controlesHeader = document.createElement("div");
     controlesHeader.className = "controles-header";
@@ -5413,9 +5469,10 @@ function marcarTodasCartasSet() {
     const estadoKey = getEstadoKeyFromCard(c);
     if (!estadoKey) return;
     const st2 = getEstadoCarta2(estadoKey);
-    // Marcar en ambos idiomas si no tiene cantidad
+    // Marcar en el idioma preferido de la UI si no tiene cantidad
     if (st2.qty_en === 0 && st2.qty_es === 0) {
-      setQtyLang(estadoKey, "en", 1);
+      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+      setQtyLang(estadoKey, preferredLang, 1);
     }
   });
   
@@ -5479,9 +5536,8 @@ function aplicarRangosCartas(rangosTexto) {
       const carta = lista[cartaIdx];
       const estadoKey = getEstadoKeyFromCard(carta);
       if (!estadoKey) return;
-      const st2 = getEstadoCarta2(estadoKey);
-      // Por ahora solo EN
-      setQtyLang(estadoKey, "en", st2.qty_en + 1);
+      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+      adjustTotalQty(estadoKey, 1, preferredLang);
     }
   });
   
@@ -6121,7 +6177,7 @@ function renderListaDecks() {
   if (!cont) return;
   
   if (decks.length === 0) {
-    cont.innerHTML = `<div class="card"><p class="hint">No hay decks todavía. Pulsa "+ Agregar Deck" para crear uno.</p></div>`;
+    cont.innerHTML = `<div class="card"><p class="hint">No hay decks todavía.</p></div>`;
     return;
   }
   
@@ -6568,8 +6624,7 @@ async function renderCartaDeckImagen(carta, posicion, tipo) {
   const st2 = estadoKeyDeck
     ? getEstadoCarta2(estadoKeyDeck)
     : { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0 };
-  // Por ahora solo mostramos EN
-  const cantidadMostrar = st2.qty_en;
+  const cantidadMostrar = (Number(st2.qty_en) || 0) + (Number(st2.qty_es) || 0);
   
   const estadoKey = estadoKeyDeck || '';
   
@@ -6654,9 +6709,8 @@ function wireControlesDeckImagenes() {
     btn.addEventListener("click", () => {
       const estadoKey = btn.dataset.state;
       if (!estadoKey) return;
-      const st2 = getEstadoCarta2(estadoKey);
-      // Por ahora solo EN
-      setQtyLang(estadoKey, "en", st2.qty_en - 1);
+      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+      adjustTotalQty(estadoKey, -1, preferredLang);
       renderDeckCartas();
       renderColecciones();
     });
@@ -6666,8 +6720,8 @@ function wireControlesDeckImagenes() {
     btn.addEventListener("click", () => {
       const estadoKey = btn.dataset.state;
       if (!estadoKey) return;
-      const st2 = getEstadoCarta2(estadoKey);
-      setQtyLang(estadoKey, "en", st2.qty_en + 1);
+      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+      adjustTotalQty(estadoKey, 1, preferredLang);
       renderDeckCartas();
       renderColecciones();
     });
@@ -6677,7 +6731,8 @@ function wireControlesDeckImagenes() {
     inp.addEventListener("change", () => {
       const estadoKey = inp.dataset.state;
       if (!estadoKey) return;
-      setQtyLang(estadoKey, "en", inp.value);
+      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+      setTotalQtyWithPreferredLang(estadoKey, inp.value, preferredLang);
       renderDeckCartas();
       renderColecciones();
     });
@@ -6793,9 +6848,9 @@ async function marcarCartaDeck(nombre, set, numero) {
   const estadoKey = getEstadoKeyFromCard(carta);
   if (estadoKey) {
     const st2 = getEstadoCarta2(estadoKey);
-    if (st2.qty_en === 0) {
-      // Por ahora solo EN
-      setQtyLang(estadoKey, "en", 1);
+    if ((st2.qty_en + st2.qty_es) === 0) {
+      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+      setQtyLang(estadoKey, preferredLang, 1);
       renderColecciones();
     }
   }
@@ -7188,13 +7243,23 @@ function wireGlobalButtons() {
   const modalOpcionesControles = document.getElementById("modalOpcionesControles");
   const btnCerrarOpcionesControles = document.getElementById("btnCerrarOpcionesControles");
 
+  if (modalOpcionesControles) {
+    // Estado inicial robusto: oculto aunque falle alguna regla CSS.
+    modalOpcionesControles.classList.add("modal-overlay-hidden");
+    modalOpcionesControles.hidden = true;
+  }
+
   const closeOpcionesControles = () => {
-    if (modalOpcionesControles) modalOpcionesControles.classList.add("modal-overlay-hidden");
+    if (modalOpcionesControles) {
+      modalOpcionesControles.classList.add("modal-overlay-hidden");
+      modalOpcionesControles.hidden = true;
+    }
   };
 
   if (btnOpcionesControles && modalOpcionesControles) {
     btnOpcionesControles.addEventListener("click", () => {
       renderCardControlsOptionsUI();
+      modalOpcionesControles.hidden = false;
       modalOpcionesControles.classList.remove("modal-overlay-hidden");
     });
   }
@@ -7733,24 +7798,6 @@ function wireGlobalButtons() {
   const btnActualizarPrecios = document.getElementById("btnActualizarPrecios");
   if (btnActualizarPrecios) btnActualizarPrecios.addEventListener("click", refrescarPreciosSetActual);
 
-  // Decks
-  const modalAgregarDeck = document.getElementById("modalAgregarDeck");
-  const btnAgregarDeck = document.getElementById("btnAgregarDeck");
-  if (btnAgregarDeck) {
-    btnAgregarDeck.addEventListener("click", () => {
-      document.getElementById("inputNombreDeck").value = "";
-      document.getElementById("textareaListaDeck").value = "";
-      if (modalAgregarDeck) modalAgregarDeck.classList.remove("deck-modal-hidden");
-    });
-  }
-
-  const btnCancelarDeck = document.getElementById("btnCancelarDeck");
-  if (btnCancelarDeck) {
-    btnCancelarDeck.addEventListener("click", () => {
-      if (modalAgregarDeck) modalAgregarDeck.classList.add("deck-modal-hidden");
-    });
-  }
-  
   // Event listeners para cambiar modo de visualización del deck
   const radioModoDeckLista = document.getElementById("radioModoDeckLista");
   const radioModoDeckImagenes = document.getElementById("radioModoDeckImagenes");
@@ -7779,63 +7826,6 @@ function wireGlobalButtons() {
     selectorOrdenDeck.addEventListener("change", () => {
       ordenDeckActual = selectorOrdenDeck.value;
       renderDeckCartas();
-    });
-  }
-
-  const btnGuardarDeck = document.getElementById("btnGuardarDeck");
-  if (btnGuardarDeck) {
-    btnGuardarDeck.addEventListener("click", async () => {
-      const nombre = document.getElementById("inputNombreDeck").value.trim();
-      const lista = document.getElementById("textareaListaDeck").value;
-
-      if (!nombre) {
-        alert("Por favor ingresa un nombre para el deck.");
-        return;
-      }
-
-      const resultado = parsearListaDeck(lista);
-      if (resultado.cartas.length === 0 && resultado.sideboard.length === 0) {
-        alert("No se pudo parsear ninguna carta. Verifica el formato.");
-        return;
-      }
-
-      // Mostrar indicador de carga
-      const mensajeCarga = document.getElementById("mensajeCargandoDeck");
-      const btnCancelar = document.getElementById("btnCancelarDeck");
-      
-      btnGuardarDeck.disabled = true;
-      btnGuardarDeck.textContent = "Verificando...";
-      if (btnCancelar) btnCancelar.disabled = true;
-      if (mensajeCarga) mensajeCarga.style.display = "block";
-
-      try {
-        const cartasVerificadas = await verificarCartasEnColeccion(resultado.cartas);
-        const sideboardVerificado = await verificarCartasEnColeccion(resultado.sideboard);
-
-        decks.push({
-          nombre,
-          cartas: cartasVerificadas,
-          sideboard: sideboardVerificado
-        });
-
-        guardarDecks();
-        renderListaDecks();
-        if (modalAgregarDeck) modalAgregarDeck.classList.add("deck-modal-hidden");
-        mostrarPantalla("decks");
-        
-        // Resetear el formulario
-        document.getElementById("inputNombreDeck").value = "";
-        document.getElementById("textareaListaDeck").value = "";
-      } catch (error) {
-        console.error("Error al verificar cartas:", error);
-        alert("Hubo un error al verificar las cartas. Por favor intenta de nuevo.");
-      } finally {
-        // Restaurar estado de botones
-        btnGuardarDeck.disabled = false;
-        btnGuardarDeck.textContent = "Guardar";
-        if (btnCancelar) btnCancelar.disabled = false;
-        if (mensajeCarga) mensajeCarga.style.display = "none";
-      }
     });
   }
 
@@ -7878,9 +7868,9 @@ function wireGlobalButtons() {
                 const estadoKey = getEstadoKeyFromCard(cartaCatalogo);
                 if (estadoKey) {
                   const st2 = getEstadoCarta2(estadoKey);
-                  // Por ahora solo EN
-                  if (st2.qty_en > 0) {
-                    setQtyLang(estadoKey, "en", st2.qty_en - 1);
+                  if ((st2.qty_en + st2.qty_es) > 0) {
+                    const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+                    adjustTotalQty(estadoKey, -1, preferredLang);
                     cartasEliminadas++;
                   }
                 }
@@ -7920,9 +7910,8 @@ function wireGlobalButtons() {
                   
                   const estadoKey = getEstadoKeyFromCard(cartaCatalogo);
                   if (estadoKey) {
-                    const st2 = getEstadoCarta2(estadoKey);
-                    // Por ahora solo EN
-                    setQtyLang(estadoKey, "en", st2.qty_en + 1);
+                    const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
+                    adjustTotalQty(estadoKey, 1, preferredLang);
                   }
                 }
               }
@@ -8332,13 +8321,13 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     const url = new URL(window.location.href);
     const noSw = url.searchParams.get("nosw") === "1";
-    const swUrl = "./service-worker.js?v=0.76";
+    const swUrl = `./service-worker.js?v=${VERSION}`;
 
     // Limpiar SWs antiguos (incluido sw.js viejo y service-worker.js sin query)
     navigator.serviceWorker.getRegistrations().then(registrations => {
       for (const reg of registrations) {
         const script = reg.active?.scriptURL || "";
-        if (!script.includes("service-worker.js?v=0.76")) {
+        if (!script.includes(`service-worker.js?v=${VERSION}`)) {
           console.log('[SW] Unregistering old SW', script);
           reg.unregister();
         }

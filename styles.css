@@ -1113,6 +1113,9 @@ label {
 
 .modal.hidden { display: none; }
 
+/* Ensure native hidden attribute always wins over modal display rules. */
+[hidden] { display: none !important; }
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -2016,6 +2019,12 @@ label {
   display: flex;
   width: 100%;
   gap: 0;
+  transform: translateX(0%);
+  transition: transform 220ms ease;
+}
+
+.carta-controles[data-lang-mode="both"][data-active-lang="es"] .lang-track {
+  transform: translateX(-100%);
 }
 
 .lang-panel {

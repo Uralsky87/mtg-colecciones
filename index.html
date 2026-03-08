@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=0.82" />
+  <link rel="stylesheet" href="./styles.css?v=0.83" />
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#f4f6fb" />
   <link rel="icon" href="icons/icon-192.png" type="image/png" />
@@ -154,7 +154,7 @@
   </section>
 
   <!-- Modal: Opciones de controles de cartas -->
-  <div id="modalOpcionesControles" class="modal-overlay modal-overlay-hidden">
+  <div id="modalOpcionesControles" class="modal-overlay modal-overlay-hidden" hidden>
     <div class="modal-content">
       <div class="modal-topbar">
         <div class="modal-title">Opciones de cartas</div>
@@ -538,34 +538,7 @@
     </div>
 
     <div id="listaDecks"></div>
-
-    <div class="card">
-      <button id="btnAgregarDeck" class="btn-principal deck-btn-full" type="button">+ Agregar Deck</button>
-    </div>
   </section>
-
-  <!-- Modal Agregar Deck -->
-  <div id="modalAgregarDeck" class="modal-overlay deck-modal-hidden">
-    <div class="modal-content">
-      <h3>Agregar Deck</h3>
-      
-      <label for="inputNombreDeck">Nombre del Deck:</label>
-      <input id="inputNombreDeck" type="text" placeholder="Ej: Mi Mazo Commander" />
-      
-      <label for="textareaListaDeck" class="deck-label-top">Lista de cartas (formato Moxfield):</label>
-      <textarea id="textareaListaDeck" class="deck-textarea" rows="10" placeholder="1 Argonath, Pillars of the Kings (LTC) 351&#10;1 Sol Ring (C21) 263&#10;..."></textarea>
-      
-      <div id="mensajeCargandoDeck" class="deck-status-msg">
-        <strong>⏳ Verificando cartas...</strong><br>
-        <small>Esto puede tardar unos segundos</small>
-      </div>
-      
-      <div class="deck-actions-row">
-        <button id="btnGuardarDeck" class="btn-principal">Guardar</button>
-        <button id="btnCancelarDeck" class="btn-secundario">Cancelar</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Pantalla Ver Deck -->
   <section id="pantallaVerDeck" class="pantalla">
@@ -741,7 +714,7 @@
     <!-- Versión de la app -->
     <div class="cuenta-version-wrap">
       <p class="hint cuenta-version-text">
-        ManaCodex v0.82
+        ManaCodex v0.83
       </p>
     </div>
  
@@ -768,6 +741,6 @@
   <!-- Botón flotante scroll to top (único y global) -->
   <button id="btnScrollTop" aria-label="Volver arriba">↑</button>
 
-  <script src="./app.js?v=0.82"></script>
+  <script src="./app.js?v=0.83"></script>
 </body>
 </html>
