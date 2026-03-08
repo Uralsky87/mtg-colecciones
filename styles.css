@@ -27,10 +27,18 @@
 }
 /* Año seleccionado en filtro año */
 .filtro-year-seleccionado {
+  margin-left: 8px;
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
   color: #333;
+}
+
+.filtro-year-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  font-size: 14px;
 }
 /* ===== RETRO PIXEL UI - ManaCodex ===== */
 
@@ -323,6 +331,21 @@ button:disabled, .btn-principal:disabled, .btn-secundario:disabled {
 
 .btn-principal:hover { background: #8a6fff; }
 
+.btn-catalogo-actualizar {
+  width: 100%;
+  padding: 14px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  border-radius: 10px;
+  border: none;
+  font-weight: bold;
+  background: linear-gradient(180deg, rgba(122,166,255,.45), rgba(122,166,255,.18)) !important;
+  border-color: rgba(122,166,255,.45) !important;
+  box-shadow: 0 3px 8px rgba(47, 108, 255, 0.15), 0 1px 3px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+  color: var(--text) !important;
+  transition: all 0.2s ease;
+}
+
 .btn-menu {
   width: 100%;
   padding: 14px;
@@ -386,6 +409,153 @@ textarea { font-family: monospace; resize: vertical; }
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.cuenta-card-title {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
+.cuenta-acciones-top {
+  margin-top: 10px;
+}
+
+.cuenta-hint-small {
+  font-size: 0.85rem;
+}
+
+.cuenta-msg {
+  margin-top: 10px;
+}
+
+.cuenta-fecha {
+  margin-top: 5px;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.cuenta-atribucion {
+  text-align: center;
+  opacity: 0.85;
+}
+
+.cuenta-hint-zero {
+  margin: 0;
+}
+
+.cuenta-version-wrap {
+  text-align: center;
+  margin-top: 20px;
+  opacity: 0.6;
+}
+
+.cuenta-version-text {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.deck-btn-full {
+  width: 100%;
+}
+
+.deck-modal-hidden {
+  display: none;
+}
+
+.deck-label-top {
+  margin-top: 15px;
+}
+
+.deck-textarea {
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+.deck-status-msg {
+  display: none;
+  margin-top: 15px;
+  padding: 12px;
+  background: #e3f2fd;
+  border-radius: 8px;
+  text-align: center;
+  color: #1976d2;
+}
+
+.deck-actions-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.deck-refresh-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 15px;
+  flex-wrap: wrap;
+}
+
+.deck-view-row {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.deck-view-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.deck-view-label {
+  font-weight: 600;
+}
+
+.deck-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  margin-bottom: 0;
+}
+
+.deck-order-select {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+}
+
+.deck-legend-title {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.deck-legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deck-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.deck-warning-msg {
+  display: none;
+  margin-bottom: 15px;
+  padding: 12px;
+  background: #fff3cd;
+  border-radius: 8px;
+  text-align: center;
+  color: #856404;
+}
+
+.deck-delete-btn {
+  width: 100%;
+  background: #dc3545;
 }
 
 label {
@@ -955,6 +1125,14 @@ label {
   backdrop-filter: blur(4px);
 }
 
+.modal-overlay-hidden {
+  display: none;
+}
+
+.modal-overlay.modal-overlay-hidden,
+.modal-overlay.deck-modal-hidden {
+  display: none;
+}
 .modal-backdrop {
   position: absolute;
   inset: 0;
@@ -1003,6 +1181,66 @@ label {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.opciones-row-top {
+  margin-top: 8px;
+}
+
+.modal-opciones-hint {
+  margin-bottom: 12px;
+}
+
+.set-visibility-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.filtro-section-top {
+  margin-top: 12px;
+}
+
+.filtro-colores-set {
+  margin-top: 8px;
+}
+
+.filtro-rareza-hint {
+  margin-bottom: 6px;
+}
+
+.filtro-rangos-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.filtro-rangos-input {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.filtro-rangos-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.filtro-rangos-btn {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.stats-title {
+  margin-top: 0;
+}
+
+.stats-separator {
+  height: 10px;
 }
 
 .opciones-lista {

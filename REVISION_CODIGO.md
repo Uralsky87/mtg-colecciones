@@ -1,361 +1,132 @@
 # Revisión de Código - ManaCodex
 
-## ✅ OPTIMIZACIONES IMPLEMENTADAS
+## Resumen ejecutivo
+El proyecto está bien orientado para uso real y tiene buena separación visual por pantallas, pero para compartirlo con otra persona aún conviene reforzar tres aspectos: documentación, modularidad del JavaScript y consistencia de versionado PWA.
 
-### 1. **Event Delegation Completa** (IMPLEMENTADO) 🎯
-**Antes:**
-- ~1,200 event listeners por set de 200 cartas
-- Cada re-render creaba 1,200 listeners NUEVOS sin eliminar los antiguos
-- Fuga de memoria masiva (10 renders = 12,000 listeners acumulados)
-
-**Después:**
-- **2 listeners totales** (1 para clicks, 1 para changes)
-- Se crean UNA SOLA VEZ en `wireGlobalButtons()`
-- Los re-renders ya NO crean listeners nuevos
-
-**Código:**
-```javascript
-// ❌ ANTES: En renderTablaSet()
-cont.querySelectorAll(".btn-qty-minus").forEach(btn => {
-  btn.addEventListener("click", handler); // 200+ listeners
-});
-
-// ✅ AHORA: En wireGlobalButtons() - UNA SOLA VEZ
-listaCartasSet.addEventListener("click", (e) => {
-  if (e.target.classList.contains("btn-qty-minus")) {
-    // manejar el click
-  }
-});
-```
-
-**Beneficio:** 
-- Elimina completamente la fuga de memoria
-- Render ~500% más rápido
-- Uso de memoria ~95% menor
+Estado general: **apto para compartir**, con mejoras recomendadas para que un tercero lo entienda más rápido.
 
 ---
 
-### 2. **Debounce para `renderColecciones()`** (IMPLEMENTADO) ⚡
-**Problema:** Se llamaba 200+ veces al marcar/desmarcar cartas masivamente
-**Solución:** Implementada función `scheduleRenderColecciones()` que agrupa múltiples llamadas en una sola cada 50ms
-**Impacto:** **Mejora de ~300% en rendimiento** al modificar múltiples cartas
+## 1) Estructura del proyecto
+
+### Lo que está bien
+- Estructura simple y clara en raíz:
+  - `index.html` (estructura de pantallas)
+  - `styles.css` (estilos)
+  - `app.js` (lógica)
+  - `service-worker.js` y `manifest.webmanifest` (PWA)
+- El proyecto es fácil de abrir y ejecutar sin build complejo.
+
+### Riesgo actual
+- Gran parte de la lógica vive en un único archivo (`app.js`), lo que aumenta la curva de entrada para nuevos colaboradores.
+
+### Recomendación
+- Mantener el comportamiento actual, pero dividir `app.js` en módulos funcionales (por ejemplo: estado, render, búsqueda, sync, PWA helper).
 
 ---
 
-### 3. **Debounce para `guardarEstado2()`** (IMPLEMENTADO) 💾
-**Problema:** Escrituras excesivas en localStorage en cada cambio
-**Solución:** Sistema de debounce de 300ms + modo inmediato para operaciones críticas (sync, logout)
-**Impacto:** **Reducción del 95% en escrituras** a localStorage
+## 2) HTML y navegación por pantallas (`index.html`)
+
+### Lo que está bien
+- Las pantallas están marcadas por bloques y comentarios, lo cual ayuda a leer por secciones.
+- IDs y clases descriptivas en la mayoría de componentes.
+- Flujo de navegación principal entendible (Menú → Colecciones/Buscar/Comandantes/Estadísticas/Cuenta).
+
+### Riesgo actual
+- Hay estilos inline largos en algunos botones/tarjetas que dificultan rastrear el diseño en una sola fuente.
+
+### Recomendación
+- Mover estilos inline relevantes a `styles.css` para mantener HTML orientado a estructura y CSS orientado a presentación.
 
 ---
 
-### 4. **Validación de `oracle_id`** (IMPLEMENTADO) 🛡️
-**Problema:** No se validaba si `oracle_id` era válido (undefined, null, "undefined")
-**Solución:** Añadida validación estricta en `setQtyLang()`, `setFoilLang()`, `setRiLang()`
-**Impacto:** Previene corrupción de datos en `estado2`
+## 3) Estilos y sistema visual (`styles.css`)
+
+### Lo que está bien
+- Uso de variables CSS (`:root`) para paleta y tokens visuales.
+- Organización por bloques de componentes y media queries.
+- Identidad visual consistente.
+
+### Riesgo actual
+- Al coexistir estilos en CSS + estilos inline, se vuelve más difícil depurar visualmente.
+
+### Recomendación
+- Consolidar estilos en `styles.css` y reservar inline solo para casos excepcionales.
 
 ---
 
-### 5. **IndexedDB Cache Persistente** (IMPLEMENTADO) 🚀
-**Problema:** Cada vez que abres un set, descarga ~200 cartas desde Scryfall (2-5 segundos)
-**Solución:** Sistema de cache persistente en IndexedDB con:
-- Cache de 7 días
-- Limpieza automática de datos antiguos
-- Fallback transparente si IndexedDB falla
+## 4) Lógica de aplicación (`app.js`)
 
-**Antes:**
-```javascript
-async function ensureSetCardsLoaded(setKey) {
-  const cards = await scryGetCardsBySetAndLang(code, lang); // SIEMPRE descarga
-}
-```
+### Lo que está bien
+- Existen bloques comentados y funciones con nombres descriptivos.
+- Hay mejoras de rendimiento ya aplicadas (debounce, cachés, abort controllers, métricas).
+- Se cubren funcionalidades complejas (colección, búsqueda, comandantes, estadísticas, sync, backup).
 
-**Después:**
-```javascript
-async function ensureSetCardsLoaded(setKey) {
-  // 1. Buscar en IndexedDB primero (< 50ms)
-  const cached = await getSetFromDB(setKey);
-  if (cached && !isExpired(cached)) {
-    return cached.cards; // ⚡ INSTANTÁNEO
-  }
-  
-  // 2. Solo si no está, descargar
-  const cards = await scryGetCardsBySetAndLang(code, lang);
-  await saveSetToDB(setKey, cards); // Guardar para próximas veces
-}
-```
+### Riesgo actual
+- **Tamaño elevado del archivo** (mantenimiento más difícil).
+- Alta densidad de responsabilidades en un solo punto.
 
-**Beneficios:**
-- ⚡ **Primera carga:** 2-5 segundos (igual que antes)
-- ⚡ **Siguientes cargas:** < 100ms (50x más rápido)
-- 📉 **~90% menos peticiones a Scryfall** (preserva tu cuota de API)
-- 🌐 **Funciona offline** después de primera carga
-- 🧹 **Auto-limpieza** de cache antiguo
+### Recomendación
+- Modularización incremental sin romper UX:
+  1. `state.js` (estado/localStorage/normalización)
+  2. `render.js` (render de colecciones y set)
+  3. `search.js` (búsqueda y filtros)
+  4. `sync.js` (Supabase)
+  5. `cache.js` (IndexedDB + imágenes)
 
 ---
 
-### 6. **Corrección Bug "Desmarcar todas"** (IMPLEMENTADO) 🐛
-**Ubicación:** `sbPullNow()` y operaciones de guardado
+## 5) PWA y caché (`manifest.webmanifest` + `service-worker.js`)
 
-**Problema:** Si el usuario modifica datos mientras se está haciendo un pull desde la nube, puede haber conflictos:
-- `sbPullNow()` sobrescribe datos locales
-- No hay merge de conflictos
-- Posible pérdida de datos recientes del usuario
+### Lo que está bien
+- Manifiesto y Service Worker presentes y funcionales.
+- Estrategias de caché runtime implementadas.
 
-**Escenario:**
-1. Usuario marca 5 cartas
-2. Se inicia auto-pull en background
-3. Pull sobrescribe con datos antiguos de la nube
-4. Se pierden las 5 cartas marcadas
+### Riesgo actual
+- Se detecta desalineación de versión entre app y SW:
+  - `app.js`: `VERSION = "0.82"`
+  - `service-worker.js`: caches en `v0.81`
 
-**Solución:** Implementar timestamps por operación y merge inteligente.
+Esto puede provocar que un usuario reciba recursos antiguos en escenarios concretos.
 
----
-
-### 3. **Llamadas Redundantes a `renderColecciones()`** (RENDIMIENTO)
-**Ubicación:** Múltiples funciones llaman a `renderColecciones()`
-
-**Problema:** Se llama a `renderColecciones()` después de cada cambio individual:
-- Al cambiar cantidad: `renderColecciones()`
-- Al cambiar foil: `renderColecciones()`
-- Al marcar/desmarcar: `renderColecciones()`
-
-Con operaciones batch (ej: "Marcar todas"), esto se ejecuta 200+ veces innecesariamente.
-
-**Impacto:**
-- Ralentización brutal en sets grandes
-- UI congelada durante segundos
-- Mala experiencia de usuario
-
-**Solución:** Debounce o actualización única al final de operaciones batch.
+### Recomendación
+- Unificar versión en app + SW en cada release.
+- Mantener una mini-checklist de release PWA (version bump, invalidación de caché, prueba offline).
 
 ---
 
-### 4. **Construcción de HTML con Concatenación de Strings** (SEGURIDAD/RENDIMIENTO)
-**Ubicación:** `renderTablaSet()`, `renderColecciones()`
+## 6) Documentación para terceros
 
-**Problema:** 
-```javascript
-html += `<div class="carta-item">...</div>`; // ⚠️ Concatenación en loop
-```
+### Lo que está bien
+- Ya existe documentación de optimización y revisión técnica.
 
-Para sets de 200+ cartas, esto es extremadamente lento y puede causar XSS si hay datos maliciosos.
+### Riesgo actual
+- Mezcla de puntos implementados y pendientes en el mismo flujo, con repeticiones históricas.
 
-**Solución:** Document fragments o template cloning.
-
----
-
-### 5. **No se Valida `oracle_id` Antes de Usarlo** (ERROR POTENCIAL)
-**Ubicación:** Múltiples funciones
-
-**Problema:** Aunque hay checks `if (!c.oracle_id)`, en varios lugares se asume que existe:
-```javascript
-const st2 = getEstadoCarta2(c.oracle_id); // ⚠️ Si oracle_id es undefined
-```
-
-Esto puede causar datos corruptos en `estado2` con key "undefined".
+### Recomendación
+- Separar claramente en tres bloques:
+  - **Implementado**
+  - **Pendiente**
+  - **Backlog/ideas**
 
 ---
 
-## 🐛 BUGS MENORES
+## Checklist mínimo para compartir el proyecto
 
-### 6. **Doble Guardado en LocalStorage**
-En `actualizarProgresoSetActualSiSePuede()` y funciones relacionadas, se guarda múltiples veces en localStorage innecesariamente.
+Antes de pasarlo a otra persona:
 
-### 7. **Cache de Imágenes No Optimizado**
-Las imágenes se cargan con `loading="lazy"` pero no hay:
-- Preload de imágenes visibles
-- Cache de blobs en IndexedDB
-- Placeholders durante carga
-
----
-
-## ⚡ OPTIMIZACIONES PRIORITARIAS
-
-### A. **Carga de Cartas - Sistema de Caché Mejorado**
-
-**Problema Actual:**
-- Se descarga el set completo cada vez desde Scryfall
-- No hay caché persistente de cartas individuales
-- Rate limiting muy conservador (120ms entre peticiones)
-
-**Optimización:**
-```javascript
-// 1. Guardar cartas en IndexedDB en lugar de solo en memoria
-const DB_NAME = 'mtg_cards_cache';
-const STORE_NAME = 'cards_by_set';
-
-async function guardarSetEnDB(setKey, cards) {
-  const db = await abrirDB();
-  const tx = db.transaction(STORE_NAME, 'readwrite');
-  await tx.store.put({
-    setKey,
-    cards,
-    timestamp: Date.now()
-  });
-}
-
-// 2. Cargar desde IndexedDB primero
-async function ensureSetCardsLoaded(setKey) {
-  // Verificar IndexedDB primero
-  const cached = await cargarSetDesdeDB(setKey);
-  if (cached && (Date.now() - cached.timestamp < 7 * 24 * 60 * 60 * 1000)) {
-    cacheCartasPorSetLang[setKey] = cached.cards;
-    return;
-  }
-  
-  // Si no está en cache o expiró, descargar
-  const cards = await scryGetCardsBySetAndLang(code, lang);
-  cacheCartasPorSetLang[setKey] = cards;
-  await guardarSetEnDB(setKey, cards);
-}
-```
-
-**Beneficio:** 
-- Carga instantánea de sets ya visitados
-- Reduce llamadas a Scryfall en ~90%
-- Mejor experiencia offline
+- [ ] Confirmar versión única en `app.js`, `service-worker.js` y query strings de `index.html`.
+- [ ] Verificar que la app arranca desde `index.html` sin pasos ocultos.
+- [ ] Añadir un `README.md` corto con:
+  - objetivo de la app,
+  - funcionalidades principales,
+  - cómo ejecutarla,
+  - cómo actualizar versión.
+- [ ] Explicar en 1 bloque la arquitectura actual (`index.html` + `styles.css` + `app.js` + PWA).
+- [ ] Listar decisiones técnicas importantes (cache, sync, estado v2).
+- [ ] Probar una sesión básica: cargar colección, editar cartas, exportar/importar, recargar, validar persistencia.
 
 ---
 
-### B. **Event Delegation para Event Listeners**
-
-**Implementación:**
-```javascript
-function renderTablaSet(setKey) {
-  const cont = document.getElementById("listaCartasSet");
-  cont.innerHTML = html;
-  
-  // ❌ ELIMINAR todos los querySelectorAll con addEventListener
-  // ✅ USAR delegación de eventos
-  
-  // Ya no es necesario - se maneja en wireGlobalButtons() una sola vez
-}
-
-// En wireGlobalButtons() - ejecutar UNA SOLA VEZ
-function wireGlobalButtons() {
-  const cont = document.getElementById("listaCartasSet");
-  
-  // Event delegation - un solo listener para todo
-  cont.addEventListener("click", (e) => {
-    const target = e.target;
-    
-    if (target.classList.contains("btn-qty-minus")) {
-      handleQtyMinus(target);
-    } else if (target.classList.contains("btn-qty-plus")) {
-      handleQtyPlus(target);
-    }
-    // ... etc
-  });
-}
-```
-
-**Beneficio:**
-- Elimina fuga de memoria
-- ~95% menos listeners
-- Render 3-5x más rápido
-
----
-
-### C. **Batch Updates para renderColecciones()**
-
-```javascript
-let renderColeccionesScheduled = false;
-
-function scheduleRenderColecciones() {
-  if (renderColeccionesScheduled) return;
-  renderColeccionesScheduled = true;
-  
-  requestAnimationFrame(() => {
-    renderColecciones();
-    renderColeccionesScheduled = false;
-  });
-}
-
-// Reemplazar todas las llamadas directas a renderColecciones()
-// con scheduleRenderColecciones() excepto donde sea crítico
-```
-
-**Beneficio:**
-- Solo 1 render por frame en lugar de 200+
-- UI responsive durante operaciones batch
-
----
-
-### D. **Virtual Scrolling para Sets Grandes**
-
-**Problema:** Sets de 300+ cartas renderizan TODO el HTML de golpe.
-
-**Solución:**
-```javascript
-// Renderizar solo las cartas visibles + buffer
-function renderTablaSetVirtual(setKey) {
-  const ITEM_HEIGHT = 400; // altura aproximada de carta
-  const BUFFER = 5; // cartas extra arriba/abajo
-  
-  const scrollTop = container.scrollTop;
-  const startIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER);
-  const endIdx = Math.min(lista.length, startIdx + visibleCount + BUFFER * 2);
-  
-  // Solo renderizar cartas [startIdx, endIdx]
-  renderCartasSubset(lista.slice(startIdx, endIdx), startIdx);
-}
-```
-
-**Beneficio:**
-- Render ~10x más rápido en sets grandes
-- Scroll fluido
-- Menos uso de memoria
-
----
-
-### E. **Optimización de LocalStorage**
-
-**Problema:** Se guarda en localStorage en cada cambio individual.
-
-**Solución:**
-```javascript
-let saveTimeout = null;
-
-function guardarEstado2Debounced() {
-  clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    localStorage.setItem(LS_KEY_V2, JSON.stringify(estado2));
-  }, 500); // Guardar después de 500ms sin cambios
-}
-```
-
-**Beneficio:**
-- Reduce escrituras en localStorage en ~95%
-- Mejor rendimiento en operaciones batch
-
----
-
-## 📊 MÉTRICAS DE IMPACTO ESTIMADAS
-
-| Optimización | Mejora Tiempo Carga | Mejora UX | Prioridad |
-|--------------|---------------------|-----------|-----------|
-| Event Delegation | +300% | Alta | 🔴 CRÍTICA |
-| IndexedDB Cache | +500% (sets cached) | Muy Alta | 🔴 CRÍTICA |
-| Batch Renders | +200% | Alta | 🟡 Alta |
-| Virtual Scrolling | +800% (sets >200) | Media | 🟢 Media |
-| Debounced Save | +50% | Baja | 🟢 Media |
-
----
-
-## 🔧 RECOMENDACIONES INMEDIATAS
-
-1. **HOY:** Implementar Event Delegation (30 min de trabajo, máximo impacto)
-2. **ESTA SEMANA:** IndexedDB cache (2-3 horas, gran mejora percibida)
-3. **SIGUIENTE SPRINT:** Batch rendering + virtual scrolling
-
----
-
-## 📝 NOTAS ADICIONALES
-
-- El código está generalmente bien estructurado
-- Buen uso de async/await
-- La separación de estado legacy vs estado2 es correcta
-- La migración progresiva está bien pensada
-
-El problema principal es **optimización de rendimiento** más que bugs críticos de lógica.
+## Conclusión
+La base es sólida y usable. El proyecto **sí está bien encaminado para compartirlo**, y con esta organización documental + pequeñas mejoras de consistencia (especialmente versionado PWA y modularización progresiva), será mucho más fácil de entender y mantener por otra persona.

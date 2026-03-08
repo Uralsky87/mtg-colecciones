@@ -7189,13 +7189,13 @@ function wireGlobalButtons() {
   const btnCerrarOpcionesControles = document.getElementById("btnCerrarOpcionesControles");
 
   const closeOpcionesControles = () => {
-    if (modalOpcionesControles) modalOpcionesControles.style.display = "none";
+    if (modalOpcionesControles) modalOpcionesControles.classList.add("modal-overlay-hidden");
   };
 
   if (btnOpcionesControles && modalOpcionesControles) {
     btnOpcionesControles.addEventListener("click", () => {
       renderCardControlsOptionsUI();
-      modalOpcionesControles.style.display = "flex";
+      modalOpcionesControles.classList.remove("modal-overlay-hidden");
     });
   }
 
@@ -7734,19 +7734,20 @@ function wireGlobalButtons() {
   if (btnActualizarPrecios) btnActualizarPrecios.addEventListener("click", refrescarPreciosSetActual);
 
   // Decks
+  const modalAgregarDeck = document.getElementById("modalAgregarDeck");
   const btnAgregarDeck = document.getElementById("btnAgregarDeck");
   if (btnAgregarDeck) {
     btnAgregarDeck.addEventListener("click", () => {
       document.getElementById("inputNombreDeck").value = "";
       document.getElementById("textareaListaDeck").value = "";
-      document.getElementById("modalAgregarDeck").style.display = "flex";
+      if (modalAgregarDeck) modalAgregarDeck.classList.remove("deck-modal-hidden");
     });
   }
 
   const btnCancelarDeck = document.getElementById("btnCancelarDeck");
   if (btnCancelarDeck) {
     btnCancelarDeck.addEventListener("click", () => {
-      document.getElementById("modalAgregarDeck").style.display = "none";
+      if (modalAgregarDeck) modalAgregarDeck.classList.add("deck-modal-hidden");
     });
   }
   
@@ -7819,7 +7820,7 @@ function wireGlobalButtons() {
 
         guardarDecks();
         renderListaDecks();
-        document.getElementById("modalAgregarDeck").style.display = "none";
+        if (modalAgregarDeck) modalAgregarDeck.classList.add("deck-modal-hidden");
         mostrarPantalla("decks");
         
         // Resetear el formulario

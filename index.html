@@ -135,12 +135,12 @@
     <div class="filtro-desplegable-container">
       <button id="btnToggleFiltroYearColecciones" class="btn-filtro-header" type="button">
         <span>Filtrar por año</span>
-        <span id="filtroYearSeleccionado" class="filtro-year-seleccionado" style="margin-left:8px;font-size:14px;font-weight:600;"></span>
+        <span id="filtroYearSeleccionado" class="filtro-year-seleccionado"></span>
         <span class="arrow">▼</span>
       </button>
       
       <div id="filtroYearColeccionesContent" class="filtro-content hidden">
-        <label for="selectFiltroYearColecciones" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px;">
+        <label for="selectFiltroYearColecciones" class="filtro-year-label">
           Selecciona el año
         </label>
         <div class="filtro-year-row">
@@ -154,14 +154,14 @@
   </section>
 
   <!-- Modal: Opciones de controles de cartas -->
-  <div id="modalOpcionesControles" class="modal-overlay" style="display:none;">
+  <div id="modalOpcionesControles" class="modal-overlay modal-overlay-hidden">
     <div class="modal-content">
       <div class="modal-topbar">
         <div class="modal-title">Opciones de cartas</div>
         <button id="btnCerrarOpcionesControles" class="btn-secundario" type="button">Cerrar</button>
       </div>
       <div class="modal-body">
-        <div class="hint" style="margin-bottom: 12px;">Cambios globales para todos los sets.</div>
+        <div class="hint modal-opciones-hint">Cambios globales para todos los sets.</div>
 
         <div class="card opciones-section">
           <div class="subtitulo">Idioma visible</div>
@@ -198,7 +198,7 @@
         <div class="card opciones-section">
           <div class="subtitulo">Contadores extra</div>
           <div id="listaContadoresOpciones" class="opciones-lista"></div>
-          <div class="opciones-row" style="margin-top: 8px;">
+          <div class="opciones-row opciones-row-top">
             <input id="inputNuevoContador" type="text" placeholder="Nombre del contador" />
             <button id="btnAgregarContador" class="btn-secundario" type="button">Añadir</button>
           </div>
@@ -207,7 +207,7 @@
         <div class="card opciones-section">
           <div class="subtitulo">Tags</div>
           <div id="listaTagsOpciones" class="opciones-lista"></div>
-          <div class="opciones-row" style="margin-top: 8px;">
+          <div class="opciones-row opciones-row-top">
             <input id="inputNuevoTag" type="text" placeholder="Nombre del tag" />
             <button id="btnAgregarTag" class="btn-secundario" type="button">Añadir</button>
           </div>
@@ -244,7 +244,7 @@
         <button id="btnLimpiarBuscarEnSet" class="btn-secundario" type="button" title="Limpiar">✕</button>
       </div>
 
-      <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:10px;">
+      <div class="set-visibility-row">
         <label class="chkline">
           <input id="chkMostrarCartas" type="checkbox" checked />
           Mostrar cartas
@@ -275,12 +275,12 @@
           </label>
         </div>
 
-        <div style="margin-top: 12px;">
+        <div class="filtro-section-top">
           <label class="filtro-check-item">
             <input id="chkFiltroColorSet" type="checkbox" />
             <span>Filtrar por color</span>
           </label>
-          <div id="filtroColoresSet" class="filtro-checks hidden" style="margin-top: 8px;">
+          <div id="filtroColoresSet" class="filtro-checks hidden filtro-colores-set">
             <label class="filtro-check-item">
               <input type="checkbox" class="chk-color-set" value="W" />
               <span>Blanco</span>
@@ -308,8 +308,8 @@
           </div>
         </div>
 
-        <div style="margin-top: 12px;">
-          <div class="hint" style="margin-bottom: 6px;">Rareza</div>
+        <div class="filtro-section-top">
+          <div class="hint filtro-rareza-hint">Rareza</div>
           <div class="filtro-checks">
             <label class="filtro-check-item">
               <input type="checkbox" class="chk-rareza-set" value="Común" checked />
@@ -347,23 +347,23 @@
         </div>
         
         <!-- Input de rangos -->
-        <div style="margin-top: 12px;">
-          <label for="inputRangosCartas" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px;">
+        <div class="filtro-section-top">
+          <label for="inputRangosCartas" class="filtro-rangos-label">
             Indica que cartas añadir:
           </label>
           <input 
             id="inputRangosCartas" 
+            class="filtro-rangos-input"
             type="text" 
             placeholder="Ej: 1,2,4,8-12,16"
-            style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border);"
           />
-          <small class="hint" style="display: block; margin-top: 4px; font-size: 12px;">
+          <small class="hint filtro-rangos-hint">
             Puedes usar comas (1,2,3) y rangos (8-12)
           </small>
         </div>
         
         <!-- Botón Añadir -->
-        <button id="btnAplicarRangos" class="btn-principal" type="button" style="width: 100%; margin-top: 12px;">
+        <button id="btnAplicarRangos" class="btn-principal filtro-rangos-btn" type="button">
           Añadir
         </button>
       </div>
@@ -387,7 +387,7 @@
         <input id="inputBuscar" type="text" placeholder="Ej: Lightning Bolt" />
         <button id="btnBuscar" class="btn-principal" type="button">Buscar</button>
       </div>
-      <div class="opciones-row" style="margin-top: 8px;">
+      <div class="opciones-row opciones-row-top">
         <label class="chkline">
           <input id="chkBuscarExacta" type="checkbox" />
           <span>Palabra exacta</span>
@@ -540,27 +540,27 @@
     <div id="listaDecks"></div>
 
     <div class="card">
-      <button id="btnAgregarDeck" class="btn-principal" type="button" style="width: 100%;">+ Agregar Deck</button>
+      <button id="btnAgregarDeck" class="btn-principal deck-btn-full" type="button">+ Agregar Deck</button>
     </div>
   </section>
 
   <!-- Modal Agregar Deck -->
-  <div id="modalAgregarDeck" class="modal-overlay" style="display:none;">
+  <div id="modalAgregarDeck" class="modal-overlay deck-modal-hidden">
     <div class="modal-content">
       <h3>Agregar Deck</h3>
       
       <label for="inputNombreDeck">Nombre del Deck:</label>
       <input id="inputNombreDeck" type="text" placeholder="Ej: Mi Mazo Commander" />
       
-      <label for="textareaListaDeck" style="margin-top: 15px;">Lista de cartas (formato Moxfield):</label>
-      <textarea id="textareaListaDeck" rows="10" placeholder="1 Argonath, Pillars of the Kings (LTC) 351&#10;1 Sol Ring (C21) 263&#10;..." style="width: 100%; font-family: monospace; font-size: 0.9rem;"></textarea>
+      <label for="textareaListaDeck" class="deck-label-top">Lista de cartas (formato Moxfield):</label>
+      <textarea id="textareaListaDeck" class="deck-textarea" rows="10" placeholder="1 Argonath, Pillars of the Kings (LTC) 351&#10;1 Sol Ring (C21) 263&#10;..."></textarea>
       
-      <div id="mensajeCargandoDeck" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+      <div id="mensajeCargandoDeck" class="deck-status-msg">
         <strong>⏳ Verificando cartas...</strong><br>
         <small>Esto puede tardar unos segundos</small>
       </div>
       
-      <div style="display: flex; gap: 10px; margin-top: 20px;">
+      <div class="deck-actions-row">
         <button id="btnGuardarDeck" class="btn-principal">Guardar</button>
         <button id="btnCancelarDeck" class="btn-secundario">Cancelar</button>
       </div>
@@ -576,19 +576,19 @@
 
     <div class="card">
       <div id="resumenDeck" class="hint"></div>
-      <div style="display: flex; gap: 10px; align-items: center; margin-top: 15px; flex-wrap: wrap;">
+      <div class="deck-refresh-row">
         <button id="btnActualizarDeck" class="btn-secundario" type="button">Revisar colección</button>
         <button id="btnCompletarMazo" class="btn-secundario" type="button">Completar mazo ❗</button>
       </div>
-      <div id="mensajeCargandoDeck" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+      <div id="mensajeCargandoDeck" class="deck-status-msg">
         <strong>⏳ Cargando información del deck...</strong><br>
         <small>Esto puede tardar unos segundos</small>
       </div>
-      <div id="mensajeCompletandoMazo" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+      <div id="mensajeCompletandoMazo" class="deck-status-msg">
         <strong>⏳ Agregando cartas a la colección...</strong><br>
         <small>Esto puede tardar unos segundos</small>
       </div>
-      <div id="mensajeCargandoImagenesDeck" style="display: none; margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 8px; text-align: center; color: #1976d2;">
+      <div id="mensajeCargandoImagenesDeck" class="deck-status-msg">
         <strong>⏳ Cargando imágenes...</strong><br>
         <small>Esto puede tardar unos segundos</small>
       </div>
@@ -596,21 +596,21 @@
 
     <!-- Modo de visualización -->
     <div class="card">
-      <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <span style="font-weight: 600;">Vista:</span>
-          <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+      <div class="deck-view-row">
+        <div class="deck-view-group">
+          <span class="deck-view-label">Vista:</span>
+          <label class="deck-radio-label">
             <input type="radio" name="modoDeck" value="lista" id="radioModoDeckLista" checked>
             <span>Lista</span>
           </label>
-          <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+          <label class="deck-radio-label">
             <input type="radio" name="modoDeck" value="imagenes" id="radioModoDeckImagenes">
             <span>Imágenes</span>
           </label>
         </div>
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <span style="font-weight: 600;">Ordenar:</span>
-          <select id="selectorOrdenDeck" style="padding: 5px 10px; border-radius: 6px; border: 1px solid #ccc;">
+        <div class="deck-view-group">
+          <span class="deck-view-label">Ordenar:</span>
+          <select id="selectorOrdenDeck" class="deck-order-select">
             <option value="default">Por defecto</option>
             <option value="tipo">Por tipo</option>
             <option value="cmc">Por coste (CMC)</option>
@@ -623,17 +623,17 @@
 
     <!-- Leyenda de LEDs -->
     <div class="card">
-      <h4 style="margin-top: 0; margin-bottom: 10px;">Leyenda</h4>
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-        <div style="display: flex; align-items: center; gap: 10px;">
+      <h4 class="deck-legend-title">Leyenda</h4>
+      <div class="deck-legend-list">
+        <div class="deck-legend-item">
           <img src="icons/Ledazul.png" alt="" width="24" height="24">
           <span>En posesión</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
+        <div class="deck-legend-item">
           <img src="icons/Ledrojo.png" alt="" width="24" height="24">
           <span>Falta</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
+        <div class="deck-legend-item">
           <img src="icons/Ledvioleta.png" alt="" width="24" height="24">
           <span>En posesión en otro set</span>
         </div>
@@ -645,11 +645,11 @@
     </div>
 
     <div class="card">
-      <div id="mensajeEliminandoCartas" style="display: none; margin-bottom: 15px; padding: 12px; background: #fff3cd; border-radius: 8px; text-align: center; color: #856404;">
+      <div id="mensajeEliminandoCartas" class="deck-warning-msg">
         <strong>⏳ Verificando cartas para eliminar...</strong><br>
         <small>Esto puede tardar unos segundos</small>
       </div>
-      <button id="btnEliminarDeck" class="btn-secundario" type="button" style="width: 100%; background: #dc3545;">Eliminar Deck</button>
+      <button id="btnEliminarDeck" class="btn-secundario deck-delete-btn" type="button">Eliminar Deck</button>
     </div>
   </section>
 
@@ -663,14 +663,14 @@
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0;">Resumen</h3>
+      <h3 class="stats-title">Resumen</h3>
       <div id="statsResumen" class="hint">—</div>
-      <div style="height:10px;"></div>
+      <div class="stats-separator"></div>
       <button id="btnStatsRecalcular" class="btn-secundario" type="button">Recalcular</button>
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0;">Sets</h3>
+      <h3 class="stats-title">Sets</h3>
       <div id="statsSets" class="hint">—</div>
     </div>
   </section>
@@ -688,60 +688,60 @@
 
     <!-- Login + Sync (ÚNICO, sin duplicados) -->
     <div class="card card-small">
-      <h3 style="margin-top:0; font-size:1rem;">Cuenta y sincronización</h3>
+      <h3 class="cuenta-card-title">Cuenta y sincronización</h3>
 
       <div class="fila">
         <input id="inputEmail" type="text" placeholder="tu@email.com" />
         <button id="btnLogin" class="btn-principal" type="button">Entrar</button>
       </div>
 
-      <div class="acciones-verticales" style="margin-top:10px;">
+      <div class="acciones-verticales cuenta-acciones-top">
         <button id="btnPushNow" class="btn-secundario" type="button">Guardar</button>
         <button id="btnLogout" class="btn-secundario" type="button">Salir</button>
       </div>
 
-      <p id="syncStatus" class="hint" style="margin-top:10px;"></p>
+      <p id="syncStatus" class="hint cuenta-msg"></p>
     </div>
 
     <!-- Backup JSON (ÚNICO, sin duplicados) -->
     <div class="card card-small">
-      <h3 style="margin-top:0; font-size:1rem;">Copia de seguridad</h3>
-      <p class="hint" style="font-size:0.85rem;">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
+      <h3 class="cuenta-card-title">Copia de seguridad</h3>
+      <p class="hint cuenta-hint-small">Exporta tu colección a un archivo JSON o impórtala desde uno.</p>
 
       <div class="acciones-verticales">
         <button id="btnExportarEstado" class="btn-principal" type="button">Exportar</button>
-        <input id="inputImportarEstado" type="file" accept="application/json" style="display:none;" />
+        <input id="inputImportarEstado" class="hidden" type="file" accept="application/json" />
         <button id="btnImportarEstado" class="btn-secundario" type="button">Importar</button>
       </div>
 
-      <p id="msgBackup" class="hint" style="margin-top:10px;"></p>
+      <p id="msgBackup" class="hint cuenta-msg"></p>
     </div>
 
     <!-- Catálogo de sets -->
     <div class="card card-small">
-      <h3 style="margin-top:0; font-size:1rem;">Catálogo de sets</h3>
-      <p class="hint" style="font-size:0.85rem;">Actualiza la lista de colecciones disponibles desde Scryfall.</p>
+      <h3 class="cuenta-card-title">Catálogo de sets</h3>
+      <p class="hint cuenta-hint-small">Actualiza la lista de colecciones disponibles desde Scryfall.</p>
 
       <div class="acciones-verticales">
-        <button id="btnActualizarCatalogo" class="btn-principal" type="button" style="width: 100%; padding: 14px; font-size: 1.1rem; cursor: pointer; border-radius: 10px; border: none; font-weight: bold; background: linear-gradient(180deg, rgba(122,166,255,.45), rgba(122,166,255,.18)) !important; border-color: rgba(122,166,255,.45) !important; box-shadow: 0 3px 8px rgba(47, 108, 255, 0.15), 0 1px 3px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important; color: var(--text) !important; transition: all 0.2s ease;">Actualizar catálogo</button>
+        <button id="btnActualizarCatalogo" class="btn-principal btn-catalogo-actualizar" type="button">Actualizar catálogo</button>
       </div>
 
-      <p id="msgCatalogo" class="hint" style="margin-top:10px;"></p>
-      <p id="fechaCatalogo" class="hint" style="margin-top:5px; font-size:0.8rem; opacity:0.7;"></p>
+      <p id="msgCatalogo" class="hint cuenta-msg"></p>
+      <p id="fechaCatalogo" class="hint cuenta-fecha"></p>
     </div>
 
     <!-- Atribución Scryfall -->
-    <div class="card" style="text-align:center; opacity:0.85;">
-      <p class="hint" style="margin:0;">
+    <div class="card cuenta-atribucion">
+      <p class="hint cuenta-hint-zero">
         Datos de cartas proporcionados por Scryfall.<br>
         © Scryfall, LLC · <a href="https://scryfall.com" target="_blank" rel="noopener">scryfall.com</a>
       </p>
     </div>
 
     <!-- Versión de la app -->
-    <div style="text-align:center; margin-top:20px; opacity:0.6;">
-      <p class="hint" style="margin:0; font-size:0.75rem;">
-        ManaCodex v0.8
+    <div class="cuenta-version-wrap">
+      <p class="hint cuenta-version-text">
+        ManaCodex v0.82
       </p>
     </div>
  
