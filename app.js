@@ -3309,10 +3309,9 @@ function reconstruirCatalogoColecciones() {
 
   for (const s of (catalogoSets || [])) {
     const code = String(s.code || "").toLowerCase();
-    const codeLower = code;
-
-    const nombreES = setNameEsByCode[codeLower] || null;
-    const nombreMostrar = nombreES ? `${s.name} / ${nombreES}` : s.name;
+    const availableLangs = getSetAvailableLangs(code);
+    const nombreES = setNameEsByCode[code] || null;
+    const nombreMostrar = (nombreES && availableLangs.includes("es")) ? `${s.name} / ${nombreES}` : s.name;
 
     const entry = {
       key: code,               // base key = code
@@ -3320,6 +3319,7 @@ function reconstruirCatalogoColecciones() {
       nombre: nombreMostrar,
       name_en: s.name,
       name_es: nombreES,
+      availableLangs,
       released_at: s.released_at || "",
       set_type: s.set_type || "",
       digital: !!s.digital,
@@ -3328,9 +3328,9 @@ function reconstruirCatalogoColecciones() {
 
     catalogoColecciones.push(entry);
 
-    // Meta para los 2 idiomas (abrirSet usa `${code}__en/es`)
-    setMetaByKey.set(`${code}__en`, entry);
-    setMetaByKey.set(`${code}__es`, entry);
+    for (const lang of availableLangs) {
+      setMetaByKey.set(`${code}__${lang}`, { ...entry, lang });
+    }
   }
 
   // Orden: más recientes primero; si empatan, por nombre
@@ -3802,34 +3802,103 @@ function formatPrecioEUR(prices) {
 }
 
 // ===============================
-// MTGJSON (solo traducciones de sets)
+// MTGJSON (traducciones + idiomas por set)
 // ===============================
 
 const MTGJSON_SETLIST_URL = "https://mtgjson.com/api/v5/SetList.json";
-const LS_SETNAME_ES_BY_CODE = "mtg_setname_es_by_code_v1";
+const LS_SET_METADATA_BY_CODE = "mtg_set_metadata_by_code_v1";
+const SUPPORTED_SET_LANGS = ["en", "es"];
+const MTGJSON_LANGUAGE_TO_APP_LANG = {
+  english: "en",
+  spanish: "es"
+};
 
 let setNameEsByCode = {}; // { "ons": "Embestida", ... }
+let setLangsByCode = {};  // { "ons": ["en", "es"], ... }
 
-function cargarSetNameEsDesdeLocalStorage() {
-  const raw = safeLocalStorageGet(LS_SETNAME_ES_BY_CODE);
+const SET_LANGUAGE_OVERRIDES = {
+  forceInclude: {},
+  forceExclude: {}
+};
+
+function normalizeSetLangs(langs) {
+  const normalized = new Set();
+  const source = Array.isArray(langs) ? langs : [];
+
+  for (const lang of source) {
+    const key = String(lang || "").trim().toLowerCase();
+    const mapped = MTGJSON_LANGUAGE_TO_APP_LANG[key] || key;
+    if (SUPPORTED_SET_LANGS.includes(mapped)) normalized.add(mapped);
+  }
+
+  if (normalized.size === 0) normalized.add("en");
+  return [...normalized].sort();
+}
+
+function applySetLanguageOverrides(code, langs) {
+  const langSet = new Set(normalizeSetLangs(langs));
+  const add = SET_LANGUAGE_OVERRIDES.forceInclude?.[code] || [];
+  const remove = SET_LANGUAGE_OVERRIDES.forceExclude?.[code] || [];
+
+  add.forEach(lang => {
+    if (SUPPORTED_SET_LANGS.includes(lang)) langSet.add(lang);
+  });
+
+  remove.forEach(lang => {
+    langSet.delete(lang);
+  });
+
+  if (langSet.size === 0) langSet.add("en");
+  return [...langSet].sort();
+}
+
+function getSetAvailableLangs(code) {
+  const codeLower = String(code || "").toLowerCase();
+  return applySetLanguageOverrides(codeLower, setLangsByCode[codeLower] || ["en"]);
+}
+
+function setHasLang(code, lang) {
+  return getSetAvailableLangs(code).includes(String(lang || "en").toLowerCase());
+}
+
+function getPreferredSetLang(code, preferredLang = "en") {
+  const langs = getSetAvailableLangs(code);
+  const preferred = String(preferredLang || "en").toLowerCase();
+  if (langs.includes(preferred)) return preferred;
+  if (langs.includes("en")) return "en";
+  if (langs.includes("es")) return "es";
+  return langs[0] || "en";
+}
+
+function getPreferredSetKey(code, preferredLang = "en") {
+  const codeLower = String(code || "").toLowerCase();
+  return `${codeLower}__${getPreferredSetLang(codeLower, preferredLang)}`;
+}
+
+function cargarSetMetadataDesdeLocalStorage() {
+  const raw = safeLocalStorageGet(LS_SET_METADATA_BY_CODE);
   if (!raw) return false;
   try {
     const obj = JSON.parse(raw);
     if (obj && typeof obj === "object") {
-      setNameEsByCode = obj;
+      setNameEsByCode = (obj.names && typeof obj.names === "object") ? obj.names : {};
+      setLangsByCode = (obj.langs && typeof obj.langs === "object") ? obj.langs : {};
       return true;
     }
   } catch {}
   return false;
 }
 
-function guardarSetNameEsEnLocalStorage() {
-  safeLocalStorageSet(LS_SETNAME_ES_BY_CODE, JSON.stringify(setNameEsByCode));
+function guardarSetMetadataEnLocalStorage() {
+  safeLocalStorageSet(LS_SET_METADATA_BY_CODE, JSON.stringify({
+    names: setNameEsByCode,
+    langs: setLangsByCode
+  }));
 }
 
-async function cargarSetNameEsDesdeMTGJSON() {
+async function cargarSetMetadataDesdeMTGJSON() {
   // Si ya tenemos cache, no descargamos
-  if (cargarSetNameEsDesdeLocalStorage()) return;
+  if (cargarSetMetadataDesdeLocalStorage()) return;
 
   const data = await fetch(MTGJSON_SETLIST_URL, { headers: { "Accept": "application/json" } })
     .then(r => {
@@ -3838,16 +3907,22 @@ async function cargarSetNameEsDesdeMTGJSON() {
     });
 
   const sets = data?.data || [];
-  const map = {};
+  const names = {};
+  const langs = {};
 
   for (const s of sets) {
     const code = String(s.code || "").toLowerCase();
-    const esName = s?.translations?.Spanish; // clave: "Spanish"
-    if (code && esName) map[code] = esName;
+    if (!code) continue;
+
+    const esName = s?.translations?.Spanish;
+    if (esName) names[code] = esName;
+
+    langs[code] = applySetLanguageOverrides(code, Array.isArray(s?.languages) ? s.languages : []);
   }
 
-  setNameEsByCode = map;
-  guardarSetNameEsEnLocalStorage();
+  setNameEsByCode = names;
+  setLangsByCode = langs;
+  guardarSetMetadataEnLocalStorage();
 }
 
 // ===============================
@@ -4319,12 +4394,17 @@ function renderColecciones() {
     });
   }
 
-  // ocultar sets vacíos (si ambos idiomas están marcados vacíos)
+  // ocultar sets vacíos (si todos los idiomas disponibles están marcados vacíos)
   sets = sets.filter(s => {
-    const enKey = `${s.code}__en`;
-    const esKey = `${s.code}__es`;
-    return !(hiddenEmptySetKeys.has(enKey) && hiddenEmptySetKeys.has(esKey));
+    const availableLangs = Array.isArray(s.availableLangs) && s.availableLangs.length > 0
+      ? s.availableLangs
+      : ["en"];
+    return !availableLangs.every(lang => hiddenEmptySetKeys.has(`${s.code}__${lang}`));
   });
+
+  if (filtroIdiomaColecciones !== "all") {
+    sets = sets.filter(s => Array.isArray(s.availableLangs) && s.availableLangs.includes(filtroIdiomaColecciones));
+  }
 
   // filtro texto
   if (filtroTextoColecciones) {
@@ -4346,11 +4426,13 @@ function renderColecciones() {
 
   let html = "";
   for (const s of sets) {
-    const pEn = progresoDeColeccion(`${s.code}__en`);
-    const pEs = progresoDeColeccion(`${s.code}__es`);
+    const hasEn = setHasLang(s.code, "en");
+    const hasEs = setHasLang(s.code, "es");
+    const pEn = hasEn ? progresoDeColeccion(`${s.code}__en`) : { tengo: 0, total: null };
+    const pEs = hasEs ? progresoDeColeccion(`${s.code}__es`) : { tengo: 0, total: null };
 
-    const totalEnTxt = (pEn.total === null ? "?" : pEn.total);
-    const totalEsTxt = (pEs.total === null ? "?" : pEs.total);
+    const totalEnTxt = !hasEn ? "-" : (pEn.total === null ? "?" : pEn.total);
+    const totalEsTxt = !hasEs ? "-" : (pEs.total === null ? "?" : pEs.total);
 
     // Calcular porcentajes
     let pctEn = "-%";
@@ -4358,21 +4440,21 @@ function renderColecciones() {
     let pctEnNum = 0;
     let pctEsNum = 0;
     
-    if (pEn.total && pEn.total > 0) {
+    if (hasEn && pEn.total && pEn.total > 0) {
       pctEnNum = Math.floor((pEn.tengo / pEn.total) * 100);
       pctEn = pctEnNum + "%";
     }
     
-    if (pEs.total && pEs.total > 0) {
+    if (hasEs && pEs.total && pEs.total > 0) {
       pctEsNum = Math.floor((pEs.tengo / pEs.total) * 100);
       pctEs = pctEsNum + "%";
     }
 
     // Calcular progreso para la barra visual (solo idioma inglés, o español si inglés no disponible)
     let progresoPromedio = 0;
-    if (pEn.total && pEn.total > 0) {
+    if (hasEn && pEn.total && pEn.total > 0) {
       progresoPromedio = pctEnNum;
-    } else if (pEs.total && pEs.total > 0) {
+    } else if (hasEs && pEs.total && pEs.total > 0) {
       progresoPromedio = pctEsNum;
     }
     if (!Number.isFinite(progresoPromedio)) progresoPromedio = 0;
@@ -4393,6 +4475,8 @@ function renderColecciones() {
     const completeClass = progresoPromedio >= 100 ? " is-complete" : "";
 
     if (vistaColecciones === "lista") {
+      const pctPrincipal = hasEn ? pctEn : (hasEs ? pctEs : "-%");
+
       // Vista lista: un item por línea
       html += `
   <div class="coleccion-item-lista${completeClass}" data-code="${s.code}" data-progress="${progresoPromedio}">
@@ -4404,11 +4488,16 @@ function renderColecciones() {
       ${fechaTxt ? `<div class="coleccion-lista-fecha">${fechaTxt}</div>` : ""}
     </div>
     <div class="coleccion-lista-progress">
-      <span class="coleccion-lista-pct">${pctEn}</span>
+      <span class="coleccion-lista-pct">${pctPrincipal}</span>
     </div>
   </div>
 `;
     } else {
+      const langStats = [
+        hasEn ? `<span class="pct-lang">${pctEn}</span> EN ${pEn.tengo}/${totalEnTxt}` : "",
+        hasEs ? `ES ${pEs.tengo}/${totalEsTxt} <span class="pct-lang">${pctEs}</span>` : ""
+      ].filter(Boolean).join(" · ");
+
       // Vista símbolo: la original
       html += `
   <div class="coleccion-item${completeClass}" data-code="${s.code}" data-progress="${progresoPromedio}">
@@ -4417,7 +4506,7 @@ function renderColecciones() {
       ${iconHtml}
       <div class="coleccion-nombre">${escapeHtml(s.nombre)}</div>
     </div>
-    <div class="badge"><span class="pct-lang">${pctEn}</span> EN ${pEn.tengo}/${totalEnTxt} · ES ${pEs.tengo}/${totalEsTxt} <span class="pct-lang">${pctEs}</span></div>
+    <div class="badge">${langStats}</div>
   </div>
 `;
     }
@@ -4443,7 +4532,8 @@ function renderColecciones() {
       if (!item || !cont.contains(item)) return;
       const code = item.dataset.code;
       if (!code) return;
-      abrirSet(`${code}__en`);
+      const preferredLang = filtroIdiomaColecciones === "all" ? "en" : filtroIdiomaColecciones;
+      abrirSet(getPreferredSetKey(code, preferredLang));
     });
   }
 }
@@ -4788,11 +4878,14 @@ if (ft) {
 }
 
 async function abrirSet(setKey) {
-  setActualKey = setKey;
+  const [codeRaw, langRaw] = String(setKey || "").split("__");
+  const code = String(codeRaw || "").toLowerCase();
+  const lang = getPreferredSetLang(code, langRaw || "en");
+  const resolvedSetKey = `${code}__${lang}`;
 
-  const [code, lang] = setKey.split("__");
+  setActualKey = resolvedSetKey;
   setActualCode = code;
-  // setActualLang ya no se usa - siempre cargamos EN
+  setActualLang = lang;
 
   // Actualizar checkbox de ocultar colección
   const chkOcultarColeccion = document.getElementById("chkOcultarColeccion");
@@ -4800,8 +4893,9 @@ async function abrirSet(setKey) {
     chkOcultarColeccion.checked = hiddenCollections.has(code);
   }
 
-  const info = setMetaByKey.get(setKey) || { nombre: "Set", lang: "en" };
+  const info = setMetaByKey.get(resolvedSetKey) || { nombre: "Set", lang };
   document.getElementById("tituloSet").textContent = info.nombre; // Sin mostrar idioma
+  aplicarUILangSet();
 
   // UI rápida de “cargando”
   document.getElementById("progresoSet").textContent = "Cargando cartas...";
@@ -4809,11 +4903,11 @@ async function abrirSet(setKey) {
   mostrarPantalla("set");
 
   try {
-    await ensureSetCardsLoaded(setKey);
-    actualizarProgresoGuardado(setKey);
+    await ensureSetCardsLoaded(resolvedSetKey);
+    actualizarProgresoGuardado(resolvedSetKey);
     renderColecciones();
-    if (cartasDeSetKey(setKey).length === 0) {
-      hiddenEmptySetKeys.add(setKey);
+    if (cartasDeSetKey(resolvedSetKey).length === 0) {
+      hiddenEmptySetKeys.add(resolvedSetKey);
 guardarHiddenEmptySets();
 renderColecciones(); // para que al volver ya no salga
 
@@ -4831,11 +4925,11 @@ renderColecciones(); // para que al volver ya no salga
   }
 
   // Ya cargado: progreso real + tabla
-  const { tengo, total } = progresoDeColeccion(setKey);
+  const { tengo, total } = progresoDeColeccion(resolvedSetKey);
   document.getElementById("progresoSet").textContent = `Progreso: ${tengo} / ${total}`;
 
   aplicarUIFiltrosSet();
-  renderTablaSet(setKey);
+  renderTablaSet(resolvedSetKey);
 }
 
 
@@ -8250,12 +8344,12 @@ async function init() {
     if (tieneCacheLocal) {
       console.log("Catálogo cargado desde cache, mostrando UI...");
       
-      // 2) Traducciones ES (MTGJSON) - opcional
+      // 2) Metadatos de idiomas y traducciones (MTGJSON) - opcional
       try {
-        await cargarSetNameEsDesdeMTGJSON();
-        console.log("Traducciones ES cargadas:", Object.keys(setNameEsByCode).length);
+        await cargarSetMetadataDesdeMTGJSON();
+        console.log("Metadatos MTGJSON cargados:", Object.keys(setNameEsByCode).length, "traducciones ES y", Object.keys(setLangsByCode).length, "sets con idiomas");
       } catch (err) {
-        console.warn("No se pudieron cargar traducciones de MTGJSON:", err);
+        console.warn("No se pudieron cargar metadatos de MTGJSON:", err);
       }
       
       // 3) Reconstruir catálogo para la UI
@@ -8273,12 +8367,12 @@ async function init() {
       console.log("Sin cache local, descargando catálogo...");
       await actualizarCatalogo({ silent: true });
       
-      // 2) Traducciones ES (MTGJSON) - opcional
+      // 2) Metadatos de idiomas y traducciones (MTGJSON) - opcional
       try {
-        await cargarSetNameEsDesdeMTGJSON();
-        console.log("Traducciones ES cargadas:", Object.keys(setNameEsByCode).length);
+        await cargarSetMetadataDesdeMTGJSON();
+        console.log("Metadatos MTGJSON cargados:", Object.keys(setNameEsByCode).length, "traducciones ES y", Object.keys(setLangsByCode).length, "sets con idiomas");
       } catch (err) {
-        console.warn("No se pudieron cargar traducciones de MTGJSON:", err);
+        console.warn("No se pudieron cargar metadatos de MTGJSON:", err);
       }
       
       // 3) Reconstruir catálogo para la UI

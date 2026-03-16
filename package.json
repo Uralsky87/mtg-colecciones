@@ -1,0 +1,65 @@
+{
+  "name": "mtg-colecciones",
+  "version": "1.0.0",
+  "description": "ManaCodex desktop app (Electron)",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --dir --config.directories.output=release-dev",
+    "dist:portable": "electron-builder --win portable --config.directories.output=release-portable",
+    "dist:installer": "electron-builder --win nsis --config.directories.output=release-installer",
+    "dist:all": "npm run dist:portable && npm run dist:installer",
+    "test": "echo \"No tests configured\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Uralsky87/mtg-colecciones.git"
+  },
+  "keywords": [
+    "electron",
+    "mtg",
+    "manacodex"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Uralsky87/mtg-colecciones/issues"
+  },
+  "homepage": "https://github.com/Uralsky87/mtg-colecciones#readme",
+  "devDependencies": {
+    "electron": "^40.8.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.manacodex.app",
+    "productName": "ManaCodex",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron-main.js",
+      "index.html",
+      "styles.css",
+      "app.js",
+      "service-worker.js",
+      "manifest.webmanifest",
+      "icons/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

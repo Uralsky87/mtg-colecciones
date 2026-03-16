@@ -2039,11 +2039,11 @@ label {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .control-fila .lbl {
-  font-size: 11px;
+  font-size: 12px;
   min-width: 60px;
   font-weight: 600;
 }
@@ -2076,8 +2076,8 @@ label {
 }
 
 .chkline input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
+  width: 28px;
+  height: 28px;
   margin: 0;
 }
 
