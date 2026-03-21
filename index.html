@@ -736,6 +736,24 @@
     </div>
   </div>
 
+  <div id="modalConfirmacion" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalConfirmacionTitulo" aria-describedby="modalConfirmacionMensaje">
+    <div class="modal-backdrop" data-action="cancelarConfirmacion"></div>
+
+    <div class="modal-content modal-confirmacion-content">
+      <div class="modal-topbar">
+        <div id="modalConfirmacionTitulo" class="modal-title">Confirmar acción</div>
+      </div>
+
+      <div class="modal-body modal-confirmacion-body">
+        <p id="modalConfirmacionMensaje" class="modal-confirmacion-mensaje"></p>
+        <div class="modal-confirmacion-actions">
+          <button id="btnCancelarConfirmacion" class="btn-secundario" type="button">Cancelar</button>
+          <button id="btnAceptarConfirmacion" class="btn-actualizar" type="button">Aceptar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
   <!-- Botón flotante scroll to top (único y global) -->

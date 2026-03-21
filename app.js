@@ -7526,8 +7526,75 @@ function wireGlobalButtons() {
 
   // Marcar todas las cartas del set
   const btnMarcarTodasSet = document.getElementById("btnMarcarTodasSet");
+  const modalConfirmacion = document.getElementById("modalConfirmacion");
+  const modalConfirmacionTitulo = document.getElementById("modalConfirmacionTitulo");
+  const modalConfirmacionMensaje = document.getElementById("modalConfirmacionMensaje");
+  const btnAceptarConfirmacion = document.getElementById("btnAceptarConfirmacion");
+  const btnCancelarConfirmacion = document.getElementById("btnCancelarConfirmacion");
+  let resolverConfirmacionActual = null;
+
+  function cerrarModalConfirmacion(confirmado = false) {
+    if (!modalConfirmacion || modalConfirmacion.classList.contains("hidden")) return;
+
+    modalConfirmacion.classList.add("hidden");
+
+    const resolver = resolverConfirmacionActual;
+    resolverConfirmacionActual = null;
+    if (resolver) resolver(confirmado);
+  }
+
+  function mostrarModalConfirmacion({
+    titulo = "Confirmar acción",
+    mensaje = "¿Deseas continuar?",
+    textoAceptar = "Aceptar",
+    textoCancelar = "Cancelar"
+  } = {}) {
+    if (!modalConfirmacion || !modalConfirmacionTitulo || !modalConfirmacionMensaje || !btnAceptarConfirmacion || !btnCancelarConfirmacion) {
+      return Promise.resolve(confirm(mensaje));
+    }
+
+    if (resolverConfirmacionActual) {
+      cerrarModalConfirmacion(false);
+    }
+
+    modalConfirmacionTitulo.textContent = titulo;
+    modalConfirmacionMensaje.textContent = mensaje;
+    btnAceptarConfirmacion.textContent = textoAceptar;
+    btnCancelarConfirmacion.textContent = textoCancelar;
+    modalConfirmacion.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+      resolverConfirmacionActual = resolve;
+      requestAnimationFrame(() => btnCancelarConfirmacion.focus());
+    });
+  }
+
+  if (btnAceptarConfirmacion) {
+    btnAceptarConfirmacion.addEventListener("click", () => cerrarModalConfirmacion(true));
+  }
+
+  if (btnCancelarConfirmacion) {
+    btnCancelarConfirmacion.addEventListener("click", () => cerrarModalConfirmacion(false));
+  }
+
+  if (modalConfirmacion) {
+    modalConfirmacion.addEventListener("click", (e) => {
+      if (e.target && e.target.dataset && e.target.dataset.action === "cancelarConfirmacion") {
+        cerrarModalConfirmacion(false);
+      }
+    });
+  }
+
   if (btnMarcarTodasSet) {
-    btnMarcarTodasSet.addEventListener("click", () => {
+    btnMarcarTodasSet.addEventListener("click", async () => {
+      const confirmarMarcarTodas = await mostrarModalConfirmacion({
+        titulo: "Marcar todas",
+        mensaje: "¿Seguro que quieres marcar todas las cartas de este set?",
+        textoAceptar: "Aceptar",
+        textoCancelar: "Cancelar"
+      });
+      if (!confirmarMarcarTodas) return;
+
       marcarTodasCartasSet();
     });
   }
@@ -7535,7 +7602,15 @@ function wireGlobalButtons() {
   // Desmarcar todas las cartas del set
   const btnDesmarcarTodasSet = document.getElementById("btnDesmarcarTodasSet");
   if (btnDesmarcarTodasSet) {
-    btnDesmarcarTodasSet.addEventListener("click", () => {
+    btnDesmarcarTodasSet.addEventListener("click", async () => {
+      const confirmarDesmarcarTodas = await mostrarModalConfirmacion({
+        titulo: "Desmarcar todas",
+        mensaje: "¿Seguro que quieres desmarcar todas las cartas de este set?",
+        textoAceptar: "Aceptar",
+        textoCancelar: "Cancelar"
+      });
+      if (!confirmarDesmarcarTodas) return;
+
       desmarcarTodasCartasSet();
     });
   }
@@ -7659,7 +7734,14 @@ function wireGlobalButtons() {
   }
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") cerrarModalCarta();
+    if (e.key !== "Escape") return;
+
+    if (modalConfirmacion && !modalConfirmacion.classList.contains("hidden")) {
+      cerrarModalConfirmacion(false);
+      return;
+    }
+
+    cerrarModalCarta();
   });
 
   // ===============================
@@ -7930,7 +8012,12 @@ function wireGlobalButtons() {
       
       // Verificar si se completó el mazo previamente
       if (deckActual.completado) {
-        const eliminarCartas = confirm(`¿Deseas eliminar las cartas de este mazo de tu colección?`);
+        const eliminarCartas = await mostrarModalConfirmacion({
+          titulo: "Eliminar deck",
+          mensaje: `¿Deseas eliminar las cartas de este mazo de tu colección?`,
+          textoAceptar: "Aceptar",
+          textoCancelar: "Cancelar"
+        });
         
         if (eliminarCartas) {
           // Mostrar indicador de carga
@@ -7981,9 +8068,12 @@ function wireGlobalButtons() {
             if (mensajeCarga) mensajeCarga.style.display = "none";
             
             // Segunda confirmación
-            const confirmarFinal = confirm(
-              `El mazo y ${cartasEliminadas} cartas van a ser eliminadas de la colección. ¿Está seguro?`
-            );
+            const confirmarFinal = await mostrarModalConfirmacion({
+              titulo: "Confirmar eliminación",
+              mensaje: `El mazo y ${cartasEliminadas} cartas van a ser eliminadas de la colección. ¿Está seguro?`,
+              textoAceptar: "Aceptar",
+              textoCancelar: "Cancelar"
+            });
             
             if (confirmarFinal) {
               const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
@@ -8023,9 +8113,12 @@ function wireGlobalButtons() {
           }
         } else {
           // No eliminar cartas, solo mazo
-          const confirmarSoloMazo = confirm(
-            `Se eliminará el mazo, pero las cartas se quedarán en la colección. ¿Está seguro?`
-          );
+          const confirmarSoloMazo = await mostrarModalConfirmacion({
+            titulo: "Eliminar solo deck",
+            mensaje: `Se eliminará el mazo, pero las cartas se quedarán en la colección. ¿Está seguro?`,
+            textoAceptar: "Aceptar",
+            textoCancelar: "Cancelar"
+          });
           
           if (confirmarSoloMazo) {
             const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
@@ -8039,7 +8132,14 @@ function wireGlobalButtons() {
         }
       } else {
         // Si no se completó el mazo, solo preguntar una vez
-        if (confirm(`¿Eliminar el deck "${deckActual.nombre}"?`)) {
+        const confirmarEliminarDeck = await mostrarModalConfirmacion({
+          titulo: "Eliminar deck",
+          mensaje: `¿Eliminar el deck "${deckActual.nombre}"?`,
+          textoAceptar: "Aceptar",
+          textoCancelar: "Cancelar"
+        });
+
+        if (confirmarEliminarDeck) {
           const idx = decks.findIndex(d => d.nombre === deckActual.nombre);
           if (idx >= 0) {
             decks.splice(idx, 1);
@@ -8062,12 +8162,18 @@ function wireGlobalButtons() {
   const btnCompletarMazo = document.getElementById("btnCompletarMazo");
   if (btnCompletarMazo) {
     btnCompletarMazo.addEventListener("click", async () => {
-      if (confirm(
-        "El botón 'Completar mazo' añadirá automáticamente 1 unidad en la colección de todas las cartas que actualmente estén marcadas como 'Falta' (LED rojo).\n\n" +
-        "Cada carta se agregará en el set específico que aparece en la descripción (código y número de colector).\n\n" +
-        "Nota: Las cartas que ya posees (LED azul) o que tienes en otro set (LED violeta) no se verán afectadas.\n\n" +
-        "¿Deseas continuar?"
-      )) {
+      const confirmarCompletarMazo = await mostrarModalConfirmacion({
+        titulo: "Completar mazo",
+        mensaje:
+          "El botón 'Completar mazo' añadirá automáticamente 1 unidad en la colección de todas las cartas que actualmente estén marcadas como 'Falta' (LED rojo).\n\n" +
+          "Cada carta se agregará en el set específico que aparece en la descripción (código y número de colector).\n\n" +
+          "Nota: Las cartas que ya posees (LED azul) o que tienes en otro set (LED violeta) no se verán afectadas.\n\n" +
+          "¿Deseas continuar?",
+        textoAceptar: "Aceptar",
+        textoCancelar: "Cancelar"
+      });
+
+      if (confirmarCompletarMazo) {
         // Mostrar indicador de carga
         const mensajeCarga = document.getElementById("mensajeCompletandoMazo");
         const btnActualizar = document.getElementById("btnActualizarDeck");
@@ -8192,16 +8298,20 @@ async function buscarActualizacionesManualmente() {
     // Esperar un momento para que se procese
     await new Promise(resolve => setTimeout(resolve, 1500));
     
-    const promptUpdate = (worker) => {
+    const promptUpdate = async (worker) => {
       // Hay una actualización disponible
       btn.textContent = textoOriginal;
       btn.disabled = false;
 
-      const actualizar = confirm(
-        "✅ ¡Nueva versión disponible!\n\n" +
-        "Se recargará la aplicación para aplicar la actualización.\n\n" +
-        "¿Actualizar ahora?"
-      );
+      const actualizar = await mostrarModalConfirmacion({
+        titulo: "Nueva versión disponible",
+        mensaje:
+          "✅ ¡Nueva versión disponible!\n\n" +
+          "Se recargará la aplicación para aplicar la actualización.\n\n" +
+          "¿Actualizar ahora?",
+        textoAceptar: "Actualizar",
+        textoCancelar: "Cancelar"
+      });
 
       if (actualizar) {
         // Enviar mensaje para activar inmediatamente
@@ -8224,7 +8334,7 @@ async function buscarActualizacionesManualmente() {
     const installing = swRegistration.installing;
 
     if (waiting) {
-      promptUpdate(waiting);
+      await promptUpdate(waiting);
     } else if (installing) {
       // Esperar a que termine la instalación para evitar falsos positivos
       await new Promise(resolve => {
@@ -8249,7 +8359,7 @@ async function buscarActualizacionesManualmente() {
 
       const waitingAfter = swRegistration.waiting;
       if (waitingAfter) {
-        promptUpdate(waitingAfter);
+        await promptUpdate(waitingAfter);
       } else {
         // No hay actualizaciones
         btn.textContent = "✅ Actualizado";

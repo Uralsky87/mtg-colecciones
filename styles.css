@@ -1177,6 +1177,35 @@ label {
 
 .modal-body { padding: 16px; }
 
+.modal-confirmacion-content {
+  max-width: 460px;
+}
+
+.modal-confirmacion-body {
+  display: grid;
+  gap: 18px;
+}
+
+.modal-confirmacion-mensaje {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-line;
+}
+
+.modal-confirmacion-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modal-confirmacion-actions .btn-secundario,
+.modal-confirmacion-actions .btn-actualizar {
+  min-width: 120px;
+}
+
 .opciones-section { margin-bottom: 12px; }
 
 .opciones-row {
