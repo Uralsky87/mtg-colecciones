@@ -1,0 +1,10 @@
+node_modules/
+release/
+release-installer/
+release-portable/
+release-dev/
+dist/
+coverage/
+*.log
+Thumbs.db
+.DS_Store

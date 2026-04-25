@@ -14,7 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // 1) Datos de ejemplo (AHORA con lang: "en" / "es")
 // ===============================
 
-const VERSION = "0.83";
+const VERSION = "1.11";
 const DEBUG = false; // Cambiar a true para habilitar métricas de rendimiento
 const JS_URL = (typeof document !== "undefined" && document.currentScript?.src) || "app.js loaded";
 console.log("ManaCodex VERSION", VERSION, "JS URL", JS_URL);
@@ -50,12 +50,12 @@ function formatCommanderCmcLabel(value, open) {
 }
 
 function getCommanderSelectedColors() {
-  const order = ["w", "u", "b", "r", "g"];
-  const selected = new Set();
+  const colors = [];
   document.querySelectorAll(".chk-commander-color:checked").forEach(chk => {
-    if (chk?.value) selected.add(chk.value);
+    const value = String(chk.value || "").trim().toLowerCase();
+    if (value) colors.push(value);
   });
-  return order.filter(c => selected.has(c));
+  return [...new Set(colors)].sort();
 }
 
 function isCommanderColorlessSelected() {
@@ -64,7 +64,7 @@ function isCommanderColorlessSelected() {
 }
 
 function isCommanderExactColorsSelected() {
-  const chk = document.getElementById("chkCommanderExacto");
+  const chk = document.getElementById("chkCommanderExactColors");
   return chk ? !!chk.checked : false;
 }
 
@@ -75,61 +75,45 @@ function buildCommanderQueryFromUI() {
   const rulingRaw = document.getElementById("inputRulingCommander")?.value || "";
   const ruling = String(rulingRaw).replace(/"/g, "").trim();
 
-  const clauses = ["game:paper", "(lang:en or lang:es)", "is:commander", "order:cmc"];
+    const clauses = ["game:paper", "(lang:en or lang:es)", "is:commander", "order:cmc"];
 
-  if (colors.length > 0) {
-    clauses.push(`${exactColors ? "id=" : "id:"}${colors.join("")}`);
-  } else if (colorless) {
-    clauses.push("id:c");
-  }
-
-  if (Number.isFinite(commanderCmcMin)) {
-    clauses.push(`cmc>=${commanderCmcMin}`);
-  }
-
-  if (Number.isFinite(commanderCmcMax) && !commanderCmcMaxOpen) {
-    clauses.push(`cmc<=${commanderCmcMax}`);
+  if (colorless && colors.length === 0) {
+    clauses.push("id=0");
+  } else if (colors.length > 0) {
+    const joinedColors = colors.join("");
+    clauses.push(exactColors ? `id=${joinedColors}` : `id>=${joinedColors}`);
   }
 
   if (ruling) {
-    clauses.push(`o:"${ruling}"`);
+    clauses.push(`oracle:/.*${ruling}.*/i`);
   }
 
-  return clauses.join(" ").trim();
+  if (commanderCmcMin !== null && commanderCmcMax === null) {
+    clauses.push(`cmc>=${commanderCmcMin}`);
+  } else if (commanderCmcMin !== null && commanderCmcMax !== null) {
+    clauses.push(`cmc>=${commanderCmcMin}`);
+    if (!commanderCmcMaxOpen) clauses.push(`cmc<=${commanderCmcMax}`);
+  }
+
+  return clauses.join(" ");
 }
 
 function updateCommanderCmcUI() {
-  const bar = document.getElementById("manaRangoBar");
-  if (!bar) return;
+  const texto = document.getElementById("textoFiltroManaCommander") || document.getElementById("textoFiltroCmcCommander");
+  const min = commanderCmcMin;
+  const max = commanderCmcMax;
 
-  const min = Number.isFinite(commanderCmcMin) ? commanderCmcMin : null;
-  const max = Number.isFinite(commanderCmcMax) ? commanderCmcMax : null;
-
-  bar.querySelectorAll(".mana-step").forEach(btn => {
-    const parsed = parseCommanderCmcValue(btn.dataset.cmc || "");
+  document.querySelectorAll("[data-cmc]").forEach(btn => {
+    const parsed = parseCommanderCmcValue(btn.dataset.cmc);
     if (!parsed) return;
-
-    const val = parsed.value;
-    const active = (min !== null && max === null && val === min) || (min !== null && max !== null && (val === min || val === max));
-    let inRange = false;
-
-    if (min !== null && max !== null) {
-      if (commanderCmcMaxOpen) {
-        inRange = val >= min;
-      } else {
-        inRange = val >= min && val <= max;
-      }
-    }
-
-    btn.classList.toggle("active", active);
-    btn.classList.toggle("in-range", inRange);
+    const isSelected = min !== null && max === null && parsed.value === min && parsed.open === commanderCmcMaxOpen;
+    btn.classList.toggle("is-active", isSelected);
   });
 
-  const texto = document.getElementById("manaRangoTexto");
   if (!texto) return;
 
-  if (min === null && max === null) {
-    texto.textContent = "Sin rango de coste.";
+  if (min === null) {
+    texto.textContent = "Sin filtro de coste.";
   } else if (min !== null && max === null) {
     texto.textContent = min === 10 ? "Coste 10+." : `Coste desde ${formatCommanderCmcLabel(min, false)}.`;
   } else if (min !== null && max !== null) {
@@ -242,7 +226,7 @@ async function renderResultadosComandantes(opts = {}) {
 
   html += `<div class="cartas-grid cartas-grid-comandantes">`;
 
-  for (const g of grupos) {
+    for (const g of grupos) {
     const versiones = g.versiones || [];
     if (versiones.length === 0) continue;
 
@@ -405,6 +389,58 @@ function safeLocalStorageRemove(key) {
     if (DEBUG) console.warn("[STORAGE] removeItem falló:", key, err);
     return false;
   }
+}
+
+function classifyStorageError(err) {
+  if (!err) return "storage-unknown-error";
+
+  const errorName = String(err.name || "").trim();
+  if (errorName === "QuotaExceededError") return "storage-quota-exceeded";
+  if (errorName === "SecurityError") return "storage-security-blocked";
+  return "storage-unknown-error";
+}
+
+function getApproxStorageBytes(value) {
+  if (typeof value !== "string") return 0;
+  try {
+    return new Blob([value]).size;
+  } catch {
+    return value.length * 2;
+  }
+}
+
+function createStorageResult(partial = {}) {
+  return {
+    ok: partial.ok !== undefined ? !!partial.ok : true,
+    reason: String(partial.reason || "success").trim() || "success",
+    operation: String(partial.operation || "storage-op").trim() || "storage-op",
+    key: partial.key == null ? null : String(partial.key),
+    wroteMainState: !!partial.wroteMainState,
+    wroteSnapshot: !!partial.wroteSnapshot,
+    bytes: Math.max(0, Number(partial.bytes) || 0),
+    error: partial.error || null,
+    details: partial.details || null
+  };
+}
+
+function createStorageSuccessResult(partial = {}) {
+  return createStorageResult({
+    ...partial,
+    ok: true,
+    reason: String(partial.reason || "success").trim() || "success",
+    error: partial.error || null
+  });
+}
+
+function createStorageFailureResult(partial = {}) {
+  const error = partial.error || null;
+  const classifiedReason = partial.reason || classifyStorageError(error);
+  return createStorageResult({
+    ...partial,
+    ok: false,
+    reason: String(classifiedReason || "storage-unknown-error").trim() || "storage-unknown-error",
+    error
+  });
 }
 
 // ===============================
@@ -772,6 +808,19 @@ async function loadImageWithCache(imgEl, url) {
     setImageSrc(imgEl, key);
     imgEl.dataset.imgCacheState = 'loaded';
 
+    // En navegador web no intentamos cachear con fetch si la imagen es cross-origin,
+    // porque Scryfall no expone CORS para este caso y el <img> ya puede cargarla directa.
+    try {
+      const pageUrl = typeof window !== 'undefined' ? window.location.href : '';
+      const page = pageUrl ? new URL(pageUrl) : null;
+      const target = new URL(key, pageUrl || undefined);
+      const isHttpPage = !!page && /^https?:$/i.test(page.protocol);
+      const isCrossOrigin = !!page && target.origin !== page.origin;
+      if (isHttpPage && isCrossOrigin) {
+        return;
+      }
+    } catch (_) {}
+
     // Guardar en background (si CORS permite)
     const res = await fetch(key, { cache: 'force-cache' });
     if (res && res.ok) {
@@ -789,6 +838,11 @@ async function loadImageWithCache(imgEl, url) {
 // Guardar cartas de un set en IndexedDB
 async function saveSetToDB(setKey, cards) {
   try {
+    if (!Array.isArray(cards) || cards.length === 0) {
+      await deleteSetFromDB(setKey);
+      return;
+    }
+
     const db = await openCardsDB();
     const tx = db.transaction(STORE_SETS, 'readwrite');
     const store = tx.objectStore(STORE_SETS);
@@ -810,6 +864,21 @@ async function saveSetToDB(setKey, cards) {
   }
 }
 
+async function deleteSetFromDB(setKey) {
+  const safeSetKey = String(setKey || '').trim();
+  if (!safeSetKey) return;
+
+  try {
+    const db = await openCardsDB();
+    const tx = db.transaction(STORE_SETS, 'readwrite');
+    const store = tx.objectStore(STORE_SETS);
+    await store.delete(safeSetKey);
+    await tx.complete;
+  } catch (err) {
+    console.warn('Error borrando set de IndexedDB:', err);
+  }
+}
+
 // Obtener cartas de un set desde IndexedDB
 async function getSetFromDB(setKey) {
   try {
@@ -824,6 +893,12 @@ async function getSetFromDB(setKey) {
         const data = request.result;
         
         if (!data) {
+          resolve(null);
+          return;
+        }
+
+        if (!Array.isArray(data.cards) || data.cards.length === 0) {
+          deleteSetFromDB(setKey).catch(() => {});
           resolve(null);
           return;
         }
@@ -999,10 +1074,18 @@ let sbExchangeInFlight = false;
 let sbJustExchanged = false;
 let sbPushInFlight = false;
 let sbApplyingCloudData = false; // Bandera para prevenir marcar como dirty durante sincronización
+let bootRecoveryPendingConfirmation = false;
 
-function uiSetSyncStatus(msg) {
+function uiSetSyncStatus(msg, options = {}) {
   const el = document.getElementById("syncStatus");
-  if (el) el.textContent = msg || "";
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.remove("is-info", "is-warning", "is-error");
+
+  const tone = String(options.tone || "").trim().toLowerCase();
+  if (tone === "info" || tone === "warning" || tone === "error") {
+    el.classList.add(`is-${tone}`);
+  }
 }
 
 function sbUpdateAuthUI() {
@@ -1041,11 +1124,13 @@ function sbUpdateAuthUI() {
 }
 
 function sbBuildCloudPayload() {
+  const hasEstado3 = hasEstado3Data();
   return {
-    version: 2,
+    version: hasEstado3 ? 3 : 2,
     savedAt: new Date().toISOString(),
     estado: estado || {},              // Legacy v1 (mantener para compatibilidad)
     estado2: estado2 || {},            // Nuevo v2 por oracle_id
+    estado3: estado3 || createEmptyEstado3(),
     oracleIdCache: oracleIdCache || {}, // Cache de resolución
     progresoPorSet: progresoPorSet || {},
     hiddenEmptySetKeys: [...(hiddenEmptySetKeys || new Set())],
@@ -1063,8 +1148,12 @@ function sbBuildCloudPayload() {
   };
 }
 
-function sbApplyCloudPayload(payload) {
-  if (!payload || typeof payload !== "object") return;
+function sbApplyCloudPayload(payload, options = {}) {
+  if (!payload || typeof payload !== "object") return false;
+  if (bootRecoveryPendingConfirmation && !options.allowRecoveredLocalOverwrite) {
+    if (DEBUG) console.warn("sbApplyCloudPayload: aplicación bloqueada por recovery local pendiente");
+    return false;
+  }
 
   const version = payload.version || 1;
   console.log(`sbApplyCloudPayload: aplicando datos desde la nube (version ${version})...`);
@@ -1073,6 +1162,12 @@ function sbApplyCloudPayload(payload) {
   sbApplyingCloudData = true;
   
   try {
+    if (version >= 3 && payload.estado3 && typeof payload.estado3 === "object") {
+      estado3 = normalizeEstado3(payload.estado3);
+      guardarEstado3();
+      console.log(`Estado v3 aplicado: ${Object.keys(estado3.inventoryByPrintId || {}).length} prints`);
+    }
+
     // Aplicar estado v2 si existe
     if (version >= 2 && payload.estado2 && typeof payload.estado2 === "object") {
       estado2 = payload.estado2;
@@ -1145,6 +1240,7 @@ function sbApplyCloudPayload(payload) {
     } catch {}
     
     console.log("sbApplyCloudPayload: datos aplicados correctamente");
+    return true;
   } finally {
     // Desactivar bandera
     sbApplyingCloudData = false;
@@ -1230,7 +1326,29 @@ async function sbPullNow() {
     }
 
     sbKnownCloudUpdatedAt = data.updated_at || null;
-    sbApplyCloudPayload(data.data || {});
+    if (bootRecoveryPendingConfirmation) {
+      const confirmarCloudSobreRecovery = await mostrarModalConfirmacion({
+        titulo: "Recuperación local detectada",
+        mensaje:
+          "La app ha arrancado usando una copia local recuperada.\n\n" +
+          "Si descargas ahora desde la nube, sustituirás ese estado local recuperado por el estado cloud.\n\n" +
+          "¿Quieres aplicar igualmente los datos de la nube?",
+        textoAceptar: "Aplicar nube",
+        textoCancelar: "Mantener local"
+      });
+
+      if (!confirmarCloudSobreRecovery) {
+        uiSetSyncStatus("Se mantiene la colección local recuperada. La nube no se ha aplicado.", { tone: "warning" });
+        return;
+      }
+    }
+
+    const applied = sbApplyCloudPayload(data.data || {}, { allowRecoveredLocalOverwrite: true });
+    if (!applied) {
+      uiSetSyncStatus("La nube no se ha aplicado sobre la colección recuperada localmente.", { tone: "warning" });
+      return;
+    }
+    bootRecoveryPendingConfirmation = false;
     
     // Asegurar que no quede marcado como dirty después de descargar
     sbDirty = false;
@@ -1247,7 +1365,8 @@ async function sbPullNow() {
   }
 }
 
-async function sbPushNow() {
+async function sbPushNow(options = {}) {
+  const source = String(options.source || "manual").trim() || "manual";
   if (DEBUG) console.log("sbPushNow: iniciando...", { userId: sbUser?.id, isDirty: sbDirty });
 
   if (sbPushInFlight) return;
@@ -1279,6 +1398,30 @@ async function sbPushNow() {
     return;
   }
 
+  if (bootRecoveryPendingConfirmation) {
+    if (source !== "manual") {
+      uiSetSyncStatus("La colección local recuperada sigue pendiente de confirmar. El guardado automático en la nube se ha pausado.", { tone: "warning" });
+      sbPushInFlight = false;
+      return;
+    }
+
+    const confirmarPushSobreRecovery = await mostrarModalConfirmacion({
+      titulo: "Recuperación local pendiente",
+      mensaje:
+        "La app ha arrancado usando una copia local recuperada.\n\n" +
+        "Si guardas ahora en la nube, ese estado local recuperado sustituirá el estado cloud actual.\n\n" +
+        "¿Quieres subir igualmente la colección local a la nube?",
+      textoAceptar: "Subir a la nube",
+      textoCancelar: "Cancelar"
+    });
+
+    if (!confirmarPushSobreRecovery) {
+      uiSetSyncStatus("No se ha subido el estado local recuperado a la nube.", { tone: "warning" });
+      sbPushInFlight = false;
+      return;
+    }
+  }
+
   uiSetSyncStatus("Subiendo a la nube…");
   if (DEBUG) console.log("sbPushNow: subiendo datos...");
 
@@ -1295,6 +1438,7 @@ async function sbPushNow() {
   }
 
   sbDirty = false;
+  bootRecoveryPendingConfirmation = false;
   if (DEBUG) console.log("sbPushNow: datos guardados exitosamente");
 
   // refrescar meta
@@ -1309,7 +1453,7 @@ function sbStartAutoSave() {
   sbAutoSaveTimer = setInterval(async () => {
     if (!sbUser?.id) return;
     if (!sbDirty) return;
-    await sbPushNow();
+    await sbPushNow({ source: "auto" });
   }, 30000);
 }
 
@@ -1411,7 +1555,7 @@ function sbEnsureButtonsWired() {
   
   onClickOnce(btnPushNow, async () => {
     try {
-      await sbPushNow();
+      await sbPushNow({ source: "manual" });
     } catch (err) {
       console.error("Error en btnPushNow:", err);
       uiSetSyncStatus("Error al guardar");
@@ -1697,12 +1841,167 @@ function getEstadoKeyFromCard(card) {
 }
 
 function getTotalQtyEstado2(st2) {
-  return (Number(st2?.qty_en) || 0) + (Number(st2?.qty_es) || 0);
+  return buildLegacyPossessionAdapter(st2).totals.qty;
+}
+
+function getTotalQtyEstado3(entry) {
+  return Number(entry?.qty || 0);
+}
+
+function getEstado3InventoryMap() {
+  return estado3?.inventoryByPrintId || {};
+}
+
+function getEstado3ManualInventoryMap() {
+  return estado3?.manualInventoryByCardLang || {};
+}
+
+function hasEstado3Data() {
+  return hasEstado3InventoryData() || hasEstado3ManualInventoryData() || !!estado3?.migrationMeta;
+}
+
+function hasEstado3InventoryData() {
+  return Object.keys(getEstado3InventoryMap()).length > 0;
+}
+
+function hasEstado3ManualInventoryData() {
+  return Object.keys(getEstado3ManualInventoryMap()).length > 0;
+}
+
+function getInventoryEntryV3(printId) {
+  const key = String(printId || "").trim();
+  if (!key) return normalizeInventoryEntryV3({});
+
+  const entry = getEstado3InventoryMap()[key];
+  if (!entry) return normalizeInventoryEntryV3({});
+
+  const norm = normalizeInventoryEntryV3(entry);
+  if (JSON.stringify(norm) !== JSON.stringify(entry)) {
+    estado3.inventoryByPrintId[key] = norm;
+  }
+  return norm;
+}
+
+function getManualInventoryLangMapBySelectionKey(selectionKey) {
+  const key = normalizeVisibleVariantSelectionKey(selectionKey);
+  if (!key) return {};
+
+  const entry = getEstado3ManualInventoryMap()[key];
+  if (!entry || typeof entry !== "object") return {};
+
+  const normalized = normalizeManualInventoryLangMap(entry);
+  if (JSON.stringify(normalized) !== JSON.stringify(entry)) {
+    if (!estado3 || typeof estado3 !== "object") estado3 = createEmptyEstado3();
+    if (!estado3.manualInventoryByCardLang || typeof estado3.manualInventoryByCardLang !== "object") {
+      estado3.manualInventoryByCardLang = {};
+    }
+    if (Object.keys(normalized).length === 0) {
+      delete estado3.manualInventoryByCardLang[key];
+    } else {
+      estado3.manualInventoryByCardLang[key] = normalized;
+    }
+  }
+
+  return normalized;
+}
+
+function getManualInventoryEntryBySelectionKey(selectionKey, lang) {
+  const key = normalizeVisibleVariantSelectionKey(selectionKey);
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!key || !safeLang) return normalizeInventoryEntryV3({});
+
+  return getManualInventoryLangMapBySelectionKey(key)[safeLang] || normalizeInventoryEntryV3({});
+}
+
+function setManualInventoryEntryBySelectionKey(selectionKey, lang, entry, { persist = true } = {}) {
+  const key = normalizeVisibleVariantSelectionKey(selectionKey);
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!key || !safeLang) return normalizeInventoryEntryV3({});
+
+  if (!estado3 || typeof estado3 !== "object") estado3 = createEmptyEstado3();
+  if (!estado3.manualInventoryByCardLang || typeof estado3.manualInventoryByCardLang !== "object") {
+    estado3.manualInventoryByCardLang = {};
+  }
+
+  const current = getManualInventoryLangMapBySelectionKey(key);
+  const normalized = normalizeInventoryEntryV3({
+    ...entry,
+    updatedAt: entry?.updatedAt ?? Date.now()
+  });
+
+  if (isEmptyInventoryEntryV3(normalized)) {
+    if (current[safeLang] !== undefined) {
+      delete current[safeLang];
+      if (Object.keys(current).length === 0) {
+        delete estado3.manualInventoryByCardLang[key];
+      } else {
+        estado3.manualInventoryByCardLang[key] = current;
+      }
+      if (persist) guardarEstado3();
+    }
+    return normalized;
+  }
+
+  if (JSON.stringify(current[safeLang] || {}) === JSON.stringify(normalized)) {
+    return normalizeInventoryEntryV3(current[safeLang]);
+  }
+
+  estado3.manualInventoryByCardLang[key] = {
+    ...current,
+    [safeLang]: normalized
+  };
+  if (persist) guardarEstado3();
+  return normalized;
+}
+
+function getInventoryQtyV3(printId) {
+  return getTotalQtyEstado3(getInventoryEntryV3(printId));
+}
+
+function getInventoryAggregateQtyByOracleV3(oracleId) {
+  const key = String(oracleId || "").trim();
+  if (!key) return 0;
+
+  const seen = new Set();
+  let total = 0;
+
+  for (const printId of catalogPrintsByOracleId[key] || []) {
+    if (seen.has(printId)) continue;
+    seen.add(printId);
+    total += getInventoryQtyV3(printId);
+  }
+
+  if (total > 0) return total;
+
+  for (const [printId, entry] of Object.entries(getEstado3InventoryMap())) {
+    if (seen.has(printId)) continue;
+    const entryOracleId = catalogPrintMetaById[printId]?.oracleId || oracleIdCache[printId]?.oracle_id || "";
+    if (entryOracleId !== key) continue;
+    total += getTotalQtyEstado3(entry);
+  }
+
+  return total;
 }
 
 function getTotalQtyByOracle(oracleId) {
   const key = String(oracleId || "").trim();
   if (!key) return 0;
+
+  if (hasEstado3InventoryData()) {
+    let total = getInventoryAggregateQtyByOracleV3(key);
+
+    for (const [estadoKey, st2Raw] of Object.entries(estado2 || {})) {
+      const st2 = getEstadoCarta2(estadoKey);
+      if (hasResolvedInventoryMirrorV3ForEstadoKey(estadoKey, st2)) continue;
+
+      const meta = getCatalogPrintMetaForIntegrity(estadoKey);
+      const entryOracleId = String(meta?.oracleId || oracleIdCache[estadoKey]?.oracle_id || estadoKey || "").trim();
+      if (entryOracleId !== key) continue;
+      total += getTotalQtyEstado2(st2Raw || st2);
+    }
+
+    return total;
+  }
 
   const seen = new Set();
   let total = 0;
@@ -1812,6 +2111,88 @@ function cartasDeSetKey(setKey) {
   return cacheCartasPorSetLang[setKey] || [];
 }
 
+let setExactVariantsByCollectorKey = {};
+
+function buildSetExactCollectorCacheKey(setCode, collectorNumber = "") {
+  return `${String(setCode || "").trim().toLowerCase()}::${normalizeCollectorNumberKey(collectorNumber)}`;
+}
+
+function getCachedSetExactVariants(setCode, collectorNumber = "") {
+  return setExactVariantsByCollectorKey[buildSetExactCollectorCacheKey(setCode, collectorNumber)] || null;
+}
+
+function clearCachedSetExactVariants(setCode = "") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) {
+    setExactVariantsByCollectorKey = {};
+    return;
+  }
+  const prefix = `${safeSetCode}::`;
+  for (const key of Object.keys(setExactVariantsByCollectorKey || {})) {
+    if (String(key || "").startsWith(prefix)) {
+      delete setExactVariantsByCollectorKey[key];
+    }
+  }
+}
+
+function getMergedSetExactCards(setKey) {
+  const { code, lang } = parseSetKeyParts(setKey);
+  const safeSetCode = String(code || "").trim().toLowerCase();
+  if (!safeSetCode) return [];
+
+  clearCachedSetExactVariants(safeSetCode);
+
+  const runtimeLangs = getSetRuntimeUiLangs(safeSetCode, lang);
+  const collectorMap = new Map();
+
+  for (const runtimeLang of runtimeLangs) {
+    const cards = cartasDeSetKey(`${safeSetCode}__${runtimeLang}`);
+    if (!Array.isArray(cards) || cards.length === 0) continue;
+
+    for (const rawCard of cards) {
+      const card = normalizeVisibleVariantCard(rawCard, rawCard);
+      const normalizedCollector = normalizeCollectorNumberKey(card.collector_number || card.numero || "");
+      if (!normalizedCollector) continue;
+
+      const entry = collectorMap.get(normalizedCollector) || {
+        collectorNumber: String(card.collector_number || card.numero || ""),
+        variants: {}
+      };
+
+      if (!entry.variants[card.lang]) {
+        entry.variants[card.lang] = card;
+      }
+
+      if (!entry.collectorNumber) {
+        entry.collectorNumber = String(card.collector_number || card.numero || "");
+      }
+
+      collectorMap.set(normalizedCollector, entry);
+    }
+  }
+
+  const preferredLang = safeSetCode === String(setActualCode || "").trim().toLowerCase()
+    ? (normalizeLanguagePreferenceCode(setActualLang, lang) || lang || "en")
+    : (normalizeLanguagePreferenceCode(getActiveVisibleLang(safeSetCode), lang) || lang || "en");
+  const rows = [];
+
+  for (const [normalizedCollector, entry] of collectorMap.entries()) {
+    const variants = entry.variants || {};
+    const displayCard = variants[preferredLang] || variants[lang] || variants.en || variants.es || Object.values(variants)[0];
+    if (!displayCard) continue;
+
+    setExactVariantsByCollectorKey[buildSetExactCollectorCacheKey(safeSetCode, normalizedCollector)] = variants;
+    rows.push({
+      ...displayCard,
+      numero: String(displayCard.numero || entry.collectorNumber || ""),
+      collector_number: String(displayCard.collector_number || entry.collectorNumber || ""),
+      _setExactAvailableLangs: Object.keys(variants)
+    });
+  }
+
+  return rows.sort((a, b) => compareCollectorNumbers(a.numero, b.numero));
+}
+
 const LS_SET_PROGRESS = "mtg_set_progress_v1";
 let progresoPorSet = {}; // { "khm__en": { total: 286, tengo: 12 }, ... }
 
@@ -1879,51 +2260,111 @@ function calcularStatsDesdeEstado() {
   countersCfg.forEach(c => { counterTotals[c.key] = 0; });
   tagsCfg.forEach(t => { tagTotals[t.key] = 0; });
 
-  const estado2Keys = Object.keys(estado2 || {});
-  if (estado2Keys.length > 0) {
-    for (const oracleId of estado2Keys) {
-      const st2 = getEstadoCarta2(oracleId);
-      const q = Number(st2.qty_en || 0) + Number(st2.qty_es || 0);
+  if (hasEstado3InventoryData()) {
+    for (const [printId, entryRaw] of Object.entries(getEstado3InventoryMap())) {
+      const entry = getInventoryEntryV3(printId);
+      const q = Number(entry.qty || 0);
       if (q > 0) distinct++;
       totalQty += q;
-      foilQty += Number(st2.foil_en || 0) + Number(st2.foil_es || 0);
-      if (st2.ri_en || st2.ri_es) riCount++;
+      foilQty += Number(entry.foil || 0);
+      if (entry.ri) riCount++;
 
       for (const c of countersCfg) {
         if (c.key === "qty") {
           counterTotals[c.key] += q;
         } else if (c.key === "foil") {
-          counterTotals[c.key] += Number(st2.foil_en || 0) + Number(st2.foil_es || 0);
+          counterTotals[c.key] += Number(entry.foil || 0);
         } else {
-          counterTotals[c.key] += Number(st2.counters_en?.[c.key] || 0) + Number(st2.counters_es?.[c.key] || 0);
+          counterTotals[c.key] += Number(entry.counters?.[c.key] || 0);
         }
       }
 
       for (const t of tagsCfg) {
         if (t.key === "ri") {
-          if (st2.ri_en || st2.ri_es) tagTotals[t.key] += 1;
+          if (entry.ri) tagTotals[t.key] += 1;
         } else {
-          if (st2.tags_en?.[t.key] || st2.tags_es?.[t.key]) tagTotals[t.key] += 1;
+          if (entry.tags?.[t.key]) tagTotals[t.key] += 1;
+        }
+      }
+    }
+
+    for (const [estadoKey, st2Raw] of Object.entries(estado2 || {})) {
+      const st2 = getEstadoCarta2(estadoKey);
+      if (hasResolvedInventoryMirrorV3ForEstadoKey(estadoKey, st2)) continue;
+      const adapter = buildLegacyPossessionAdapter(st2);
+
+      const q = adapter.totals.qty;
+      if (q > 0) distinct++;
+      totalQty += q;
+      foilQty += adapter.totals.foil;
+      if (adapter.totals.ri) riCount++;
+
+      for (const c of countersCfg) {
+        if (c.key === "qty") {
+          counterTotals[c.key] += q;
+        } else if (c.key === "foil") {
+          counterTotals[c.key] += adapter.totals.foil;
+        } else {
+          counterTotals[c.key] += Number(adapter.langs.en.counters?.[c.key] || 0) + Number(adapter.langs.es.counters?.[c.key] || 0);
+        }
+      }
+
+      for (const t of tagsCfg) {
+        if (t.key === "ri") {
+          if (adapter.totals.ri) tagTotals[t.key] += 1;
+        } else {
+          if (adapter.langs.en.tags?.[t.key] || adapter.langs.es.tags?.[t.key]) tagTotals[t.key] += 1;
         }
       }
     }
   } else {
-    // Fallback legacy
-    for (const id of Object.keys(estado || {})) {
-      const st = getEstadoCarta(id); // normaliza
-      const q = Number(st.qty || 0);
+    const estado2Keys = Object.keys(estado2 || {});
+    if (estado2Keys.length > 0) {
+    for (const oracleId of estado2Keys) {
+      const st2 = getEstadoCarta2(oracleId);
+      const adapter = buildLegacyPossessionAdapter(st2);
+      const q = adapter.totals.qty;
       if (q > 0) distinct++;
       totalQty += q;
-      foilQty += Number(st.foilQty || 0);
-      if (st.wantMore) riCount++;
+      foilQty += adapter.totals.foil;
+      if (adapter.totals.ri) riCount++;
 
       for (const c of countersCfg) {
-        if (c.key === "qty") counterTotals[c.key] += q;
-        if (c.key === "foil") counterTotals[c.key] += Number(st.foilQty || 0);
+        if (c.key === "qty") {
+          counterTotals[c.key] += q;
+        } else if (c.key === "foil") {
+          counterTotals[c.key] += adapter.totals.foil;
+        } else {
+          counterTotals[c.key] += Number(adapter.langs.en.counters?.[c.key] || 0) + Number(adapter.langs.es.counters?.[c.key] || 0);
+        }
       }
 
       for (const t of tagsCfg) {
-        if (t.key === "ri" && st.wantMore) tagTotals[t.key] += 1;
+        if (t.key === "ri") {
+          if (adapter.totals.ri) tagTotals[t.key] += 1;
+        } else {
+          if (adapter.langs.en.tags?.[t.key] || adapter.langs.es.tags?.[t.key]) tagTotals[t.key] += 1;
+        }
+      }
+    }
+    } else {
+      // Fallback legacy
+      for (const id of Object.keys(estado || {})) {
+        const st = getEstadoCarta(id); // normaliza
+        const q = Number(st.qty || 0);
+        if (q > 0) distinct++;
+        totalQty += q;
+        foilQty += Number(st.foilQty || 0);
+        if (st.wantMore) riCount++;
+
+        for (const c of countersCfg) {
+          if (c.key === "qty") counterTotals[c.key] += q;
+          if (c.key === "foil") counterTotals[c.key] += Number(st.foilQty || 0);
+        }
+
+        for (const t of tagsCfg) {
+          if (t.key === "ri" && st.wantMore) tagTotals[t.key] += 1;
+        }
       }
     }
   }
@@ -2059,9 +2500,11 @@ function computeProgresoFromList(lista) {
   const tengo = Array.isArray(lista)
     ? lista.filter(c => {
         const estadoKey = getEstadoKeyFromCard(c);
+        if (hasEstado3InventoryData()) {
+          return getCoexistingTotalQtyForEstadoKey(estadoKey) > 0;
+        }
         if (!estadoKey) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
-        const st2 = getEstadoCarta2(estadoKey);
-        return (st2.qty_en + st2.qty_es) > 0;
+        return getLegacyPossessionAdapterForState(estadoKey).totals.qty > 0;
       }).length
     : 0;
   return { total, tengo };
@@ -2273,18 +2716,1180 @@ function setWantMore(id, value) {
 // ===============================
 
 const LS_KEY_V2 = "mtg_coleccion_estado_v2";
+const LS_KEY_V3 = "mtg_coleccion_estado_v3";
+const LS_KEY_V3_BACKUP_V2 = "mtg_coleccion_estado_v3_backup_v2";
+const LS_KEY_V3_SNAPSHOT_PREV = "mtg_coleccion_estado_v3_snapshot_prev";
+const LS_KEY_V3_SNAPSHOT_META = "mtg_coleccion_estado_v3_snapshot_meta";
 const LS_ORACLE_CACHE = "mtg_oracle_id_cache_v1";
 
 let estado2 = {}; // stateKey -> { qty_en, qty_es, foil_en, foil_es, ri_en, ri_es, counters_en, counters_es, tags_en, tags_es }
+let estado3 = createEmptyEstado3();
 let estadoLegacyById = {}; // Copia temporal del estado legacy (por id) para migración
 let oracleIdCache = {}; // id -> { oracle_id, lang } - cache de resolución
+let bootStateHealth = null;
 
 // Índice para búsqueda rápida: oracle_id -> { en: "id-en", es: "id-es" }
 let oracleToIds = {};
 
+// Índices v3 reconstruibles desde catálogo cargado
+let catalogPrintMetaById = {};
+let catalogPrintsByOracleId = {};
+let catalogPrintsBySetCode = {};
+let catalogVariantPrintsBySetCard = {};
+let catalogPrintsByOracleIdAndLang = {};
+let catalogPrintsBySetCollectorLang = {};
+let catalogPrintsByOracleSetCollectorLang = {};
+let canonicalPrintByOracleLang = {};
+
 // Cola de IDs legacy pendientes de resolver
 let pendingLegacyIds = new Set();
 let resolvingLegacyIds = false;
+
+function createEmptyEstado3() {
+  return {
+    version: 3,
+    inventoryByPrintId: {},
+    manualInventoryByCardLang: {},
+    uiPreferences: {
+      globalFallbackLang: "en",
+      preferredSetLang: {},
+      selectedVariantByCard: {},
+      visibleLangsBySet: {},
+      visibleLangsByCard: {},
+      activeLangBySet: {},
+      manualSetLangOverrides: {},
+      manualCardLangOverrides: {}
+    },
+    migrationMeta: null
+  };
+}
+
+const APP_SUPPORTED_LANGS = new Set(["en", "es"]);
+
+function normalizeSupportedLangCode(lang) {
+  const value = String(lang || "").trim().toLowerCase();
+  return APP_SUPPORTED_LANGS.has(value) ? value : "";
+}
+
+function normalizeLanguagePreferenceCode(lang, fallback = "") {
+  const value = normalizeSupportedLangCode(lang);
+  if (value) return value;
+  return normalizeSupportedLangCode(fallback);
+}
+
+function normalizeLanguagePreferenceList(list, { fallbackToEnglish = false } = {}) {
+  const normalized = [];
+  const seen = new Set();
+  const source = Array.isArray(list) ? list : [];
+
+  for (const rawLang of source) {
+    const lang = normalizeLanguagePreferenceCode(rawLang);
+    if (!lang || seen.has(lang)) continue;
+    seen.add(lang);
+    normalized.push(lang);
+  }
+
+  if (fallbackToEnglish && normalized.length === 0) {
+    normalized.push("en");
+  }
+
+  return normalized;
+}
+
+const PHASE1_SUPPORTED_MANUAL_LANGS = new Set(["en", "es"]);
+
+function normalizePhase1ManualLangCode(lang, fallback = "") {
+  const normalized = normalizeLanguagePreferenceCode(lang, fallback);
+  if (!normalized) return "";
+  return PHASE1_SUPPORTED_MANUAL_LANGS.has(normalized) ? normalized : "";
+}
+
+function normalizeManualLangOverrideMap(input) {
+  const out = {};
+  if (!input || typeof input !== "object") return out;
+
+  for (const [langRaw, enabledRaw] of Object.entries(input)) {
+    const lang = normalizePhase1ManualLangCode(langRaw);
+    if (!lang || !enabledRaw) continue;
+    out[lang] = true;
+  }
+
+  return out;
+}
+
+function normalizeManualInventoryLangMap(input) {
+  const out = {};
+  if (!input || typeof input !== "object") return out;
+
+  for (const [langRaw, entryRaw] of Object.entries(input)) {
+    const lang = normalizePhase1ManualLangCode(langRaw);
+    if (!lang) continue;
+    const entry = normalizeInventoryEntryV3(entryRaw);
+    if (isEmptyInventoryEntryV3(entry)) continue;
+    out[lang] = entry;
+  }
+
+  return out;
+}
+
+function normalizeInventoryEntryV3(entry) {
+  const qty = clampInt(Number(entry?.qty ?? 0), 0, 999);
+  const foil = clampInt(Number(entry?.foil ?? 0), 0, qty);
+  const ri = !!entry?.ri;
+  const counters = normalizeCounterMap(entry?.counters);
+  const tags = normalizeTagMap(entry?.tags);
+  const updatedAt = Number(entry?.updatedAt);
+
+  return {
+    qty,
+    foil,
+    ri,
+    counters,
+    tags,
+    updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? Math.trunc(updatedAt) : 0
+  };
+}
+
+function isEmptyInventoryEntryV3(entry) {
+  return !entry.qty && !entry.foil && !entry.ri && Object.keys(entry.counters || {}).length === 0 && Object.keys(entry.tags || {}).length === 0;
+}
+
+function mergeCounterMapsV3(baseMap, incomingMap) {
+  const out = {};
+  const left = normalizeCounterMap(baseMap);
+  const right = normalizeCounterMap(incomingMap);
+
+  for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    const value = clampInt(Number(left[key] || 0) + Number(right[key] || 0), 0, 999);
+    if (value > 0) out[key] = value;
+  }
+
+  return out;
+}
+
+function mergeTagMapsV3(baseMap, incomingMap) {
+  const out = {};
+  const left = normalizeTagMap(baseMap);
+  const right = normalizeTagMap(incomingMap);
+
+  for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    const value = !!left[key] || !!right[key];
+    if (value) out[key] = true;
+  }
+
+  return out;
+}
+
+function mergeInventoryEntriesV3(baseEntry, incomingEntry, updatedAt = Date.now()) {
+  const left = normalizeInventoryEntryV3(baseEntry);
+  const right = normalizeInventoryEntryV3(incomingEntry);
+
+  return normalizeInventoryEntryV3({
+    qty: Number(left.qty || 0) + Number(right.qty || 0),
+    foil: Number(left.foil || 0) + Number(right.foil || 0),
+    ri: !!left.ri || !!right.ri,
+    counters: mergeCounterMapsV3(left.counters, right.counters),
+    tags: mergeTagMapsV3(left.tags, right.tags),
+    updatedAt: Number.isFinite(Number(updatedAt)) && Number(updatedAt) > 0
+      ? Math.trunc(Number(updatedAt))
+      : Math.max(Number(left.updatedAt || 0), Number(right.updatedAt || 0), Date.now())
+  });
+}
+
+function setInventoryEntryV3(printId, entry, { persist = true } = {}) {
+  const key = String(printId || "").trim();
+  if (!key) return normalizeInventoryEntryV3({});
+
+  if (!estado3 || typeof estado3 !== "object") estado3 = createEmptyEstado3();
+  if (!estado3.inventoryByPrintId || typeof estado3.inventoryByPrintId !== "object") {
+    estado3.inventoryByPrintId = {};
+  }
+
+  const normalized = normalizeInventoryEntryV3({
+    ...entry,
+    updatedAt: entry?.updatedAt ?? Date.now()
+  });
+  const existing = estado3.inventoryByPrintId[key];
+  const existingNormalized = existing ? normalizeInventoryEntryV3(existing) : null;
+
+  if (isEmptyInventoryEntryV3(normalized)) {
+    if (existing !== undefined) {
+      delete estado3.inventoryByPrintId[key];
+      if (persist) guardarEstado3();
+    }
+    return normalized;
+  }
+
+  if (existingNormalized && JSON.stringify(existingNormalized) === JSON.stringify(normalized)) {
+    return existingNormalized;
+  }
+
+  estado3.inventoryByPrintId[key] = normalized;
+  if (persist) guardarEstado3();
+  return normalized;
+}
+
+function mergeInventoryEntryV3(printId, entry, { persist = true, updatedAt = Date.now() } = {}) {
+  const key = String(printId || "").trim();
+  if (!key) return normalizeInventoryEntryV3({});
+  const current = getInventoryEntryV3(key);
+  const merged = mergeInventoryEntriesV3(current, entry, updatedAt);
+  return setInventoryEntryV3(key, merged, { persist });
+}
+
+function getSelectionKeyFromCatalogMeta(meta) {
+  if (!meta?.setCode || !meta?.oracleId) return "";
+  return buildVisibleVariantSelectionKey(meta.setCode, meta.oracleId, meta.collectorNumber || "");
+}
+
+function deriveStableSelectionKeyFromEstadoKey(estadoKey) {
+  const raw = String(estadoKey || "").trim();
+  if (!raw) return "";
+
+  if (raw.includes("::")) {
+    return normalizeVisibleVariantSelectionKey(raw);
+  }
+
+  const meta = getCatalogPrintMetaForIntegrity(raw);
+  if (meta) return getSelectionKeyFromCatalogMeta(meta);
+
+  // Phase 1 safeguard: oracle-only keys are ambiguous because they don't encode
+  // set or collector number, so we refuse to derive a manual selection key.
+  return "";
+}
+
+function getCatalogPrintMetaForIntegrity(printId) {
+  const key = String(printId || "").trim();
+  if (!key) return null;
+  if (catalogPrintMetaById[key]) return catalogPrintMetaById[key];
+
+  const knownCard = typeof getKnownCardById === "function" ? getKnownCardById(key) : null;
+  return knownCard ? extractCatalogPrintMeta(knownCard, knownCard.setKey || "") : null;
+}
+
+function parseVisibleVariantSelectionKey(key) {
+  const raw = String(key || "").trim();
+  if (!raw) return { setCode: "", oracleId: "", collectorNumber: "" };
+  const [setCode = "", oracleId = "", collectorNumber = ""] = raw.split("::");
+  return {
+    setCode: String(setCode || "").trim().toLowerCase(),
+    oracleId: String(oracleId || "").trim(),
+    collectorNumber: normalizeCollectorNumberKey(collectorNumber)
+  };
+}
+
+function normalizeVisibleVariantSelectionKey(key) {
+  const parsed = parseVisibleVariantSelectionKey(key);
+  if (!parsed.setCode || !parsed.oracleId) return "";
+  return `${parsed.setCode}::${parsed.oracleId}::${parsed.collectorNumber}`;
+}
+
+function normalizeManualSetLangOverrides(input) {
+  const out = {};
+  if (!input || typeof input !== "object") return out;
+
+  for (const [setCodeRaw, valueRaw] of Object.entries(input)) {
+    const setCode = String(setCodeRaw || "").trim().toLowerCase();
+    if (!setCode) continue;
+    const normalized = normalizeManualLangOverrideMap(valueRaw);
+    if (Object.keys(normalized).length === 0) continue;
+    out[setCode] = normalized;
+  }
+
+  return out;
+}
+
+function normalizeManualCardLangOverrides(input) {
+  const out = {};
+  if (!input || typeof input !== "object") return out;
+
+  for (const [selectionKeyRaw, valueRaw] of Object.entries(input)) {
+    const selectionKey = normalizeVisibleVariantSelectionKey(selectionKeyRaw);
+    if (!selectionKey) continue;
+    const normalized = normalizeManualLangOverrideMap(valueRaw);
+    if (Object.keys(normalized).length === 0) continue;
+    out[selectionKey] = normalized;
+  }
+
+  return out;
+}
+
+function normalizeManualInventoryByCardLang(input) {
+  const out = {};
+  if (!input || typeof input !== "object") return out;
+
+  for (const [selectionKeyRaw, valueRaw] of Object.entries(input)) {
+    const selectionKey = normalizeVisibleVariantSelectionKey(selectionKeyRaw);
+    if (!selectionKey) continue;
+    const normalized = normalizeManualInventoryLangMap(valueRaw);
+    if (Object.keys(normalized).length === 0) continue;
+    out[selectionKey] = normalized;
+  }
+
+  return out;
+}
+
+function isSelectedVariantPrintIdValid(setCode, oracleId, collectorNumber, printId) {
+  const safePrintId = String(printId || "").trim();
+  if (!safePrintId) return false;
+
+  const meta = getCatalogPrintMetaForIntegrity(safePrintId);
+  if (!meta) return true;
+
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeOracleId = String(oracleId || "").trim();
+  const safeCollectorNumber = normalizeCollectorNumberKey(collectorNumber);
+
+  if (safeOracleId && meta.oracleId && meta.oracleId !== safeOracleId) return false;
+  if (safeSetCode && meta.setCode && meta.setCode !== safeSetCode) return false;
+  if (safeCollectorNumber && meta.collectorNumber && normalizeCollectorNumberKey(meta.collectorNumber) !== safeCollectorNumber) return false;
+  return true;
+}
+
+function enforceUiPreferencesIntegrityV3(input) {
+  const normalized = normalizeUiPreferencesV3(input);
+  const selectedVariantByCard = {};
+  const visibleLangsBySet = {};
+  const visibleLangsByCard = {};
+  const activeLangBySet = {};
+  const manualSetLangOverrides = normalizeManualSetLangOverrides(normalized.manualSetLangOverrides);
+  const manualCardLangOverrides = normalizeManualCardLangOverrides(normalized.manualCardLangOverrides);
+
+  for (const [selectionKey, printId] of Object.entries(normalized.selectedVariantByCard || {})) {
+    const parsed = parseVisibleVariantSelectionKey(selectionKey);
+    if (!parsed.setCode || !parsed.oracleId) continue;
+    if (!isSelectedVariantPrintIdValid(parsed.setCode, parsed.oracleId, parsed.collectorNumber, printId)) continue;
+    selectedVariantByCard[selectionKey] = String(printId || "").trim();
+  }
+
+  for (const [setCodeRaw, langsRaw] of Object.entries(normalized.visibleLangsBySet || {})) {
+    const setCode = String(setCodeRaw || "").trim().toLowerCase();
+    if (!setCode) continue;
+    visibleLangsBySet[setCode] = normalizeLanguagePreferenceList(langsRaw, { fallbackToEnglish: true });
+  }
+
+  for (const [cardKeyRaw, langsRaw] of Object.entries(normalized.visibleLangsByCard || {})) {
+    const cardKey = String(cardKeyRaw || "").trim();
+    if (!cardKey) continue;
+    const parsed = parseVisibleVariantSelectionKey(cardKey);
+    if (!parsed.setCode || !parsed.oracleId) continue;
+    visibleLangsByCard[cardKey] = normalizeLanguagePreferenceList(langsRaw, { fallbackToEnglish: true });
+  }
+
+  for (const [setCodeRaw, langRaw] of Object.entries(normalized.activeLangBySet || {})) {
+    const setCode = String(setCodeRaw || "").trim().toLowerCase();
+    const lang = normalizeLanguagePreferenceCode(langRaw);
+    if (!setCode || !lang) continue;
+    activeLangBySet[setCode] = lang;
+    if (!visibleLangsBySet[setCode]) {
+      visibleLangsBySet[setCode] = [lang];
+    } else if (!visibleLangsBySet[setCode].includes(lang)) {
+      visibleLangsBySet[setCode] = [...visibleLangsBySet[setCode], lang];
+    }
+  }
+
+  return {
+    globalFallbackLang: normalized.globalFallbackLang,
+    preferredSetLang: { ...(normalized.preferredSetLang || {}) },
+    selectedVariantByCard,
+    visibleLangsBySet,
+    visibleLangsByCard,
+    activeLangBySet,
+    manualSetLangOverrides,
+    manualCardLangOverrides
+  };
+}
+
+function normalizeUiPreferencesV3(input) {
+  const raw = input && typeof input === "object" ? input : {};
+  const preferredSetLang = {};
+  const selectedVariantByCard = {};
+  const visibleLangsBySet = {};
+  const visibleLangsByCard = {};
+  const activeLangBySet = {};
+  const manualSetLangOverrides = normalizeManualSetLangOverrides(raw.manualSetLangOverrides);
+  const manualCardLangOverrides = normalizeManualCardLangOverrides(raw.manualCardLangOverrides);
+
+  for (const [key, value] of Object.entries(raw.preferredSetLang || {})) {
+    const setCode = String(key || "").trim().toLowerCase();
+    const lang = normalizeLanguagePreferenceCode(value);
+    if (!setCode) continue;
+    if (!lang) continue;
+    preferredSetLang[setCode] = lang;
+  }
+
+  for (const [key, value] of Object.entries(raw.selectedVariantByCard || {})) {
+    const cardKey = String(key || "").trim();
+    const printId = String(value || "").trim();
+    if (!cardKey || !printId) continue;
+    selectedVariantByCard[cardKey] = printId;
+  }
+
+  for (const [key, value] of Object.entries(raw.visibleLangsBySet || {})) {
+    const setCode = String(key || "").trim().toLowerCase();
+    if (!setCode) continue;
+    visibleLangsBySet[setCode] = normalizeLanguagePreferenceList(value, { fallbackToEnglish: true });
+  }
+
+  for (const [key, value] of Object.entries(raw.visibleLangsByCard || {})) {
+    const cardKey = String(key || "").trim();
+    if (!cardKey) continue;
+    visibleLangsByCard[cardKey] = normalizeLanguagePreferenceList(value, { fallbackToEnglish: true });
+  }
+
+  for (const [key, value] of Object.entries(raw.activeLangBySet || {})) {
+    const setCode = String(key || "").trim().toLowerCase();
+    const lang = normalizeLanguagePreferenceCode(value);
+    if (!setCode || !lang) continue;
+    activeLangBySet[setCode] = lang;
+  }
+
+  const fallbackLang = normalizeLanguagePreferenceCode(raw.globalFallbackLang, "en");
+
+  return {
+    globalFallbackLang: fallbackLang || "en",
+    preferredSetLang,
+    selectedVariantByCard,
+    visibleLangsBySet,
+    visibleLangsByCard,
+    activeLangBySet,
+    manualSetLangOverrides,
+    manualCardLangOverrides
+  };
+}
+
+function normalizeEstado3(input) {
+  const raw = input && typeof input === "object" ? input : {};
+  const out = createEmptyEstado3();
+  out.uiPreferences = normalizeUiPreferencesV3(raw.uiPreferences);
+  out.manualInventoryByCardLang = normalizeManualInventoryByCardLang(raw.manualInventoryByCardLang);
+
+  if (raw.migrationMeta && typeof raw.migrationMeta === "object") {
+    const unresolvedBuckets = Array.isArray(raw.migrationMeta.unresolvedBuckets)
+      ? raw.migrationMeta.unresolvedBuckets
+          .filter(item => item && typeof item === "object")
+          .map(item => ({ ...item }))
+      : [];
+
+    out.migrationMeta = {
+      migratedFromVersion: clampInt(Number(raw.migrationMeta.migratedFromVersion ?? 0), 0, 999),
+      migratedAt: String(raw.migrationMeta.migratedAt || "").trim(),
+      unresolvedBuckets,
+      sourceStateKeys: clampInt(Number(raw.migrationMeta.sourceStateKeys ?? 0), 0, 999999)
+    };
+  }
+
+  for (const [printIdRaw, entryRaw] of Object.entries(raw.inventoryByPrintId || {})) {
+    const printId = String(printIdRaw || "").trim();
+    if (!printId) continue;
+    const entry = normalizeInventoryEntryV3(entryRaw);
+    if (isEmptyInventoryEntryV3(entry)) continue;
+    out.inventoryByPrintId[printId] = entry;
+  }
+
+  return out;
+}
+
+function cargarEstado3() {
+  const raw3 = safeLocalStorageGet(LS_KEY_V3);
+  if (!raw3) {
+    estado3 = createEmptyEstado3();
+    return;
+  }
+
+  try {
+    estado3 = normalizeEstado3(JSON.parse(raw3) || {});
+  } catch (e) {
+    console.warn("Estado v3 corrupto en localStorage, se reinicia:", e);
+    estado3 = createEmptyEstado3();
+  }
+}
+
+function isValidEstado3PayloadMinimo(value) {
+  return !!value
+    && value.version === 3
+    && value.inventoryByPrintId && typeof value.inventoryByPrintId === "object"
+    && value.manualInventoryByCardLang && typeof value.manualInventoryByCardLang === "object"
+    && value.uiPreferences && typeof value.uiPreferences === "object";
+}
+
+function buildEstado3Snapshot(estado3Value, options = {}) {
+  const normalizedEstado3 = normalizeEstado3(estado3Value);
+  if (!isValidEstado3PayloadMinimo(normalizedEstado3)) return null;
+
+  return {
+    schemaVersion: 3,
+    snapshotVersion: 1,
+    savedAt: new Date().toISOString(),
+    source: String(options.source || "pre-main-write").trim() || "pre-main-write",
+    inventoryEntries: Object.keys(normalizedEstado3.inventoryByPrintId || {}).length,
+    manualInventoryEntries: Object.keys(normalizedEstado3.manualInventoryByCardLang || {}).length,
+    uiPreferenceSets: Object.keys(normalizedEstado3.uiPreferences?.preferredSetLang || {}).length,
+    estado3: normalizedEstado3
+  };
+}
+
+function validarEstado3Snapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return false;
+  if (Number(snapshot.schemaVersion) !== 3) return false;
+  if (!snapshot.savedAt || Number.isNaN(Date.parse(snapshot.savedAt))) return false;
+  return isValidEstado3PayloadMinimo(snapshot.estado3);
+}
+
+function cargarEstado3SnapshotPrev() {
+  const raw = safeLocalStorageGet(LS_KEY_V3_SNAPSHOT_PREV);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return validarEstado3Snapshot(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function cargarEstado3SnapshotMeta() {
+  const raw = safeLocalStorageGet(LS_KEY_V3_SNAPSHOT_META);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function guardarEstado3SnapshotMeta(meta = {}) {
+  const currentMeta = cargarEstado3SnapshotMeta() || {};
+  const payload = {
+    lastSnapshotAt: meta.lastSnapshotAt ?? currentMeta.lastSnapshotAt ?? null,
+    lastSnapshotReason: String(meta.lastSnapshotReason ?? currentMeta.lastSnapshotReason ?? "unknown").trim() || "unknown",
+    lastRestoreAt: meta.lastRestoreAt ?? currentMeta.lastRestoreAt ?? null,
+    lastRestoreSource: meta.lastRestoreSource ?? currentMeta.lastRestoreSource ?? null
+  };
+  return safeLocalStorageSet(LS_KEY_V3_SNAPSHOT_META, JSON.stringify(payload));
+}
+
+function guardarEstado3SnapshotPrev(snapshot, options = {}) {
+  if (!validarEstado3Snapshot(snapshot)) {
+    return createStorageFailureResult({
+      operation: "storage-set",
+      key: LS_KEY_V3_SNAPSHOT_PREV,
+      reason: "storage-invalid-state",
+      details: { reason: options.reason || "snapshot-write" }
+    });
+  }
+
+  let json;
+  try {
+    json = JSON.stringify(snapshot);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-set",
+      key: LS_KEY_V3_SNAPSHOT_PREV,
+      reason: "storage-serialize-failed",
+      error,
+      details: { reason: options.reason || "snapshot-write" }
+    });
+  }
+
+  const bytes = getApproxStorageBytes(json);
+
+  try {
+    localStorage.setItem(LS_KEY_V3_SNAPSHOT_PREV, json);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-set",
+      key: LS_KEY_V3_SNAPSHOT_PREV,
+      reason: classifyStorageError(error),
+      error,
+      bytes,
+      details: { reason: options.reason || "snapshot-write" }
+    });
+  }
+
+  guardarEstado3SnapshotMeta({
+    lastSnapshotAt: snapshot.savedAt,
+    lastSnapshotReason: options.reason || "snapshot-write"
+  });
+
+  return createStorageSuccessResult({
+    operation: "storage-set",
+    key: LS_KEY_V3_SNAPSHOT_PREV,
+    wroteSnapshot: true,
+    bytes,
+    details: { reason: options.reason || "snapshot-write" }
+  });
+}
+
+function restaurarEstado3DesdeSnapshotPrev(options = {}) {
+  const {
+    markDirty = false,
+    reason = "snapshot-restore",
+    snapshot = null
+  } = options;
+
+  const sourceSnapshot = snapshot || cargarEstado3SnapshotPrev();
+  if (!sourceSnapshot) {
+    return createStorageFailureResult({
+      operation: "storage-restore",
+      key: LS_KEY_V3,
+      reason: "storage-snapshot-missing",
+      details: { reason }
+    });
+  }
+
+  if (!validarEstado3Snapshot(sourceSnapshot)) {
+    return createStorageFailureResult({
+      operation: "storage-restore",
+      key: LS_KEY_V3,
+      reason: "storage-snapshot-invalid",
+      details: {
+        reason,
+        snapshotSource: sourceSnapshot.source || null,
+        snapshotSavedAt: sourceSnapshot.savedAt || null
+      }
+    });
+  }
+
+  let restoredEstado3;
+  try {
+    restoredEstado3 = normalizeEstado3(sourceSnapshot.estado3);
+    restoredEstado3.uiPreferences = enforceUiPreferencesIntegrityV3(restoredEstado3.uiPreferences);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-restore",
+      key: LS_KEY_V3,
+      reason: "storage-invalid-state",
+      error,
+      details: {
+        reason,
+        snapshotSource: sourceSnapshot.source || null,
+        snapshotSavedAt: sourceSnapshot.savedAt || null
+      }
+    });
+  }
+
+  if (!isValidEstado3PayloadMinimo(restoredEstado3)) {
+    return createStorageFailureResult({
+      operation: "storage-restore",
+      key: LS_KEY_V3,
+      reason: "storage-invalid-state",
+      details: {
+        reason,
+        snapshotSource: sourceSnapshot.source || null,
+        snapshotSavedAt: sourceSnapshot.savedAt || null
+      }
+    });
+  }
+
+  let json;
+  try {
+    json = JSON.stringify(restoredEstado3);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-restore",
+      key: LS_KEY_V3,
+      reason: "storage-serialize-failed",
+      error,
+      details: {
+        reason,
+        snapshotSource: sourceSnapshot.source || null,
+        snapshotSavedAt: sourceSnapshot.savedAt || null
+      }
+    });
+  }
+
+  const bytes = getApproxStorageBytes(json);
+
+  try {
+    localStorage.setItem(LS_KEY_V3, json);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-restore",
+      key: LS_KEY_V3,
+      reason: classifyStorageError(error),
+      error,
+      bytes,
+      details: {
+        reason,
+        snapshotSource: sourceSnapshot.source || null,
+        snapshotSavedAt: sourceSnapshot.savedAt || null
+      }
+    });
+  }
+
+  estado3 = restoredEstado3;
+
+  guardarEstado3SnapshotMeta({
+    lastRestoreAt: new Date().toISOString(),
+    lastRestoreSource: sourceSnapshot.source || "snapshot-prev"
+  });
+
+  if (markDirty) {
+    markLocalDirty(reason);
+  }
+
+  return createStorageSuccessResult({
+    operation: "storage-restore",
+    key: LS_KEY_V3,
+    wroteMainState: true,
+    bytes,
+    details: {
+      reason,
+      snapshotSource: sourceSnapshot.source || null,
+      snapshotSavedAt: sourceSnapshot.savedAt || null,
+      restoredFromSnapshot: true
+    }
+  });
+}
+
+function guardarEstado3Seguro(options = {}) {
+  const {
+    markDirty = true,
+    reason = "estado3-write",
+    persistSnapshot = true
+  } = options;
+
+  let normalizedEstado3;
+  try {
+    normalizedEstado3 = normalizeEstado3(estado3);
+    normalizedEstado3.uiPreferences = enforceUiPreferencesIntegrityV3(normalizedEstado3.uiPreferences);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-set",
+      key: LS_KEY_V3,
+      reason: "storage-invalid-state",
+      error,
+      details: { reason }
+    });
+  }
+
+  if (!isValidEstado3PayloadMinimo(normalizedEstado3)) {
+    return createStorageFailureResult({
+      operation: "storage-set",
+      key: LS_KEY_V3,
+      reason: "storage-invalid-state",
+      details: { reason }
+    });
+  }
+
+  let json;
+  try {
+    json = JSON.stringify(normalizedEstado3);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-set",
+      key: LS_KEY_V3,
+      reason: "storage-serialize-failed",
+      error,
+      details: { reason }
+    });
+  }
+
+  const bytes = getApproxStorageBytes(json);
+  let wroteSnapshot = false;
+
+  if (persistSnapshot) {
+    const currentSnapshotSource = cargarEstado3SnapshotPrev();
+    let currentRawEstado3 = safeLocalStorageGet(LS_KEY_V3);
+    if (currentRawEstado3) {
+      try {
+        const currentParsedEstado3 = JSON.parse(currentRawEstado3);
+        const snapshot = buildEstado3Snapshot(currentParsedEstado3, { source: "pre-main-write" });
+        if (snapshot) {
+          const snapshotResult = guardarEstado3SnapshotPrev(snapshot, { reason });
+          wroteSnapshot = !!snapshotResult.ok;
+        }
+      } catch {
+        wroteSnapshot = false;
+      }
+    } else if (currentSnapshotSource) {
+      wroteSnapshot = true;
+    }
+  }
+
+  try {
+    localStorage.setItem(LS_KEY_V3, json);
+  } catch (error) {
+    return createStorageFailureResult({
+      operation: "storage-set",
+      key: LS_KEY_V3,
+      reason: classifyStorageError(error),
+      error,
+      wroteSnapshot,
+      bytes,
+      details: { reason }
+    });
+  }
+
+  estado3 = normalizedEstado3;
+  if (markDirty && typeof sbMarkDirty === "function") sbMarkDirty();
+
+  return createStorageSuccessResult({
+    operation: "storage-set",
+    key: LS_KEY_V3,
+    wroteMainState: true,
+    wroteSnapshot,
+    bytes,
+    details: { reason }
+  });
+}
+
+function guardarEstado3() {
+  return guardarEstado3Seguro({
+    markDirty: true,
+    reason: "estado3-write"
+  });
+}
+
+function createBootStateHealth(partial = {}) {
+  return {
+    ok: partial.ok !== undefined ? !!partial.ok : true,
+    bootMode: String(partial.bootMode || "normal").trim() || "normal",
+    source: String(partial.source || "estado3").trim() || "estado3",
+    recovered: !!partial.recovered,
+    degradedBlocks: Array.isArray(partial.degradedBlocks) ? partial.degradedBlocks.slice() : [],
+    notices: Array.isArray(partial.notices) ? partial.notices.slice() : [],
+    error: partial.error || null
+  };
+}
+
+function syncBootRecoverySessionFlag(health = bootStateHealth) {
+  bootRecoveryPendingConfirmation = !!(health && health.bootMode === "recovered-local");
+}
+
+function getBootStateHealthNotice(health = bootStateHealth) {
+  if (!health || typeof health !== "object") return null;
+
+  if (health.bootMode === "recovered-local" && bootRecoveryPendingConfirmation) {
+    return {
+      level: "info",
+      message: "Se ha recuperado la coleccion desde una copia local reciente."
+    };
+  }
+
+  if (health.bootMode === "degraded") {
+    if (health.source === "estado2-partial") {
+      return {
+        level: "warning",
+        message: "Arranque degradado: se ha usado compatibilidad parcial desde estado2."
+      };
+    }
+
+    return {
+      level: "warning",
+      message: "Arranque degradado: no se encontro un inventario local v3 totalmente recuperable."
+    };
+  }
+
+  return null;
+}
+
+function applyBootStateHealth(health = bootStateHealth) {
+  const notice = getBootStateHealthNotice(health);
+  if (!notice) return false;
+  uiSetSyncStatus(notice.message, { tone: notice.level });
+  return true;
+}
+
+function hasUsableEstado2ForBoot(value = estado2) {
+  return !!value && typeof value === "object" && Object.keys(value).length > 0;
+}
+
+function cargarEstado3ConSalud() {
+  const raw3 = safeLocalStorageGet(LS_KEY_V3);
+  if (!raw3) {
+    estado3 = createEmptyEstado3();
+    return createBootStateHealth({
+      ok: false,
+      bootMode: "degraded",
+      source: "empty-default",
+      degradedBlocks: ["estado3"],
+      notices: [{
+        level: "warning",
+        code: "estado3-missing",
+        message: "No se encontro inventario v3 local; se usara arranque degradado."
+      }]
+    });
+  }
+
+  try {
+    const parsed = JSON.parse(raw3);
+    const normalized = normalizeEstado3(parsed || {});
+    normalized.uiPreferences = enforceUiPreferencesIntegrityV3(normalized.uiPreferences);
+
+    if (!isValidEstado3PayloadMinimo(normalized)) {
+      throw new Error("estado3-invalid-min-structure");
+    }
+
+    estado3 = normalized;
+    return createBootStateHealth({
+      ok: true,
+      bootMode: "normal",
+      source: "estado3"
+    });
+  } catch (error) {
+    const restoreResult = restaurarEstado3DesdeSnapshotPrev({
+      markDirty: false,
+      reason: "boot-recovery"
+    });
+
+    if (restoreResult.ok) {
+      return createBootStateHealth({
+        ok: true,
+        bootMode: "recovered-local",
+        source: "snapshot-prev",
+        recovered: true,
+        notices: [{
+          level: "info",
+          code: "snapshot-restored",
+          message: "Se ha recuperado la coleccion desde una copia local reciente."
+        }]
+      });
+    }
+
+    estado3 = createEmptyEstado3();
+    return createBootStateHealth({
+      ok: false,
+      bootMode: "degraded",
+      source: "empty-default",
+      degradedBlocks: ["estado3"],
+      notices: [{
+        level: "warning",
+        code: "estado3-unavailable",
+        message: "El inventario v3 local no era usable y no se pudo restaurar desde snapshot."
+      }],
+      error
+    });
+  }
+}
+
+function cargarPersistenciaSecundariaConSalud() {
+  const degradedBlocks = [];
+
+  try {
+    cargarEstado2();
+  } catch (error) {
+    estado2 = {};
+    degradedBlocks.push("estado2");
+    if (DEBUG) console.warn("Error cargando estado2 en arranque:", error);
+  }
+
+  try {
+    cargarEstado();
+  } catch (error) {
+    estado = {};
+    degradedBlocks.push("estado");
+    if (DEBUG) console.warn("Error cargando estado legacy en arranque:", error);
+  }
+
+  try {
+    cargarUILangByOracle();
+  } catch (error) {
+    degradedBlocks.push("uiLangByOracle");
+    if (DEBUG) console.warn("Error cargando preferencias UI por carta:", error);
+  }
+
+  try {
+    cargarProgresoPorSet();
+  } catch (error) {
+    degradedBlocks.push("setProgress");
+    if (DEBUG) console.warn("Error cargando progreso por set:", error);
+  }
+
+  try {
+    cargarCardControlsConfig();
+  } catch (error) {
+    degradedBlocks.push("cardControls");
+    if (DEBUG) console.warn("Error cargando configuracion de controles:", error);
+  }
+
+  try {
+    cargarFiltrosColecciones();
+  } catch (error) {
+    degradedBlocks.push("collectionFilters");
+    if (DEBUG) console.warn("Error cargando filtros de colecciones:", error);
+  }
+
+  try {
+    cargarHiddenEmptySets();
+  } catch (error) {
+    degradedBlocks.push("hiddenEmptySets");
+    if (DEBUG) console.warn("Error cargando sets ocultos vacios:", error);
+  }
+
+  try {
+    cargarHiddenCollections();
+  } catch (error) {
+    degradedBlocks.push("hiddenCollections");
+    if (DEBUG) console.warn("Error cargando colecciones ocultas:", error);
+  }
+
+  try {
+    cargarStatsSnapshot();
+  } catch (error) {
+    statsSnapshot = null;
+    degradedBlocks.push("statsSnapshot");
+    if (DEBUG) console.warn("Error cargando snapshot de estadisticas:", error);
+  }
+
+  try {
+    cargarDecks();
+  } catch (error) {
+    degradedBlocks.push("decks");
+    if (DEBUG) console.warn("Error cargando mazos:", error);
+  }
+
+  scheduleStatsSnapshotUpdate({ renderIfVisible: false });
+
+  return createBootStateHealth({
+    ok: degradedBlocks.length === 0,
+    bootMode: degradedBlocks.length === 0 ? "normal" : "degraded",
+    source: "secondary-persistence",
+    degradedBlocks
+  });
+}
+
+function bootLoadPersistentState() {
+  const coreHealth = cargarEstado3ConSalud();
+  const secondaryHealth = cargarPersistenciaSecundariaConSalud();
+
+  if (coreHealth.bootMode === "degraded" && hasUsableEstado2ForBoot()) {
+    coreHealth.source = "estado2-partial";
+    coreHealth.notices = coreHealth.notices.concat({
+      level: "warning",
+      code: "estado2-partial-available",
+      message: "Se ha encontrado soporte de compatibilidad desde estado2 para un arranque degradado."
+    });
+  }
+
+  return createBootStateHealth({
+    ok: coreHealth.ok,
+    bootMode: coreHealth.bootMode,
+    source: coreHealth.source,
+    recovered: coreHealth.recovered,
+    degradedBlocks: [...new Set([...(coreHealth.degradedBlocks || []), ...(secondaryHealth.degradedBlocks || [])])],
+    notices: [...(coreHealth.notices || []), ...(secondaryHealth.notices || [])],
+    error: coreHealth.error || secondaryHealth.error || null
+  });
+}
+
+function guardarEstado3BackupDesdeV2(sourceEstado2 = estado2) {
+  safeLocalStorageSet(LS_KEY_V3_BACKUP_V2, JSON.stringify(sourceEstado2 || {}));
+}
+
+function parseSetKeyParts(setKey) {
+  const raw = String(setKey || "").trim().toLowerCase();
+  if (!raw) return { code: "", lang: "en" };
+  const [codePart, langPart] = raw.split("__");
+  return {
+    code: String(codePart || "").trim().toLowerCase(),
+    lang: String(langPart || "en").trim().toLowerCase() || "en"
+  };
+}
+
+function normalizeCollectorNumberKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function pushUniqueValue(target, key, value) {
+  if (!key || !value) return;
+  if (!target[key]) target[key] = [];
+  if (!target[key].includes(value)) target[key].push(value);
+}
+
+function compareCatalogPrintIds(leftId, rightId) {
+  const left = catalogPrintMetaById[leftId];
+  const right = catalogPrintMetaById[rightId];
+  if (!left || !right) return String(leftId).localeCompare(String(rightId), "en", { sensitivity: "base" });
+
+  const dateCompare = String(left.releasedAt || "").localeCompare(String(right.releasedAt || ""), "en", { sensitivity: "base" });
+  if (dateCompare !== 0) return dateCompare;
+
+  const setCompare = String(left.setCode || "").localeCompare(String(right.setCode || ""), "en", { sensitivity: "base" });
+  if (setCompare !== 0) return setCompare;
+
+  const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+  const collectorCompare = collator.compare(String(left.collectorNumber || ""), String(right.collectorNumber || ""));
+  if (collectorCompare !== 0) return collectorCompare;
+
+  return String(left.printId || leftId).localeCompare(String(right.printId || rightId), "en", { sensitivity: "base" });
+}
+
+function extractCatalogPrintMeta(card, setKeyFallback = "") {
+  if (!card || !card.id) return null;
+
+  const printId = String(card.id || "").trim();
+  const oracleId = String(card.oracle_id || oracleIdCache[printId]?.oracle_id || "").trim();
+  if (!printId || !oracleId) return null;
+
+  const setKey = String(card.setKey || setKeyFallback || "").trim().toLowerCase();
+  const parsedSetKey = parseSetKeyParts(setKey);
+  const setCode = String(card.setCode || card.set || card._raw?.set || parsedSetKey.code || "").trim().toLowerCase();
+  const lang = String(card.lang || parsedSetKey.lang || oracleIdCache[printId]?.lang || card._raw?.lang || "en").trim().toLowerCase() || "en";
+  const collectorNumber = String(card.collector_number || card.collectorNumber || card.numero || card._raw?.collector_number || "").trim();
+
+  return {
+    printId,
+    oracleId,
+    setCode,
+    setKey: setKey || (setCode ? `${setCode}__${lang}` : ""),
+    collectorNumber,
+    lang,
+    name: String(card.nombre || card.name || card._raw?.name || "").trim(),
+    nameEn: String(card.nameEn || card._raw?.printed_name || card._raw?.name || card.nombre || "").trim(),
+    imageUrl: card._img || card.imageUrl || card._raw?.image_uris?.normal || card._raw?.card_faces?.[0]?.image_uris?.normal || null,
+    releasedAt: String(card.releasedAt || card._raw?.released_at || "").trim(),
+    setName: String(card.set_name || card._raw?.set_name || "").trim()
+  };
+}
+
+function rebuildCatalogIndexesV3() {
+  catalogPrintMetaById = {};
+  catalogPrintsByOracleId = {};
+  catalogPrintsBySetCode = {};
+  catalogVariantPrintsBySetCard = {};
+  catalogPrintsByOracleIdAndLang = {};
+  catalogPrintsBySetCollectorLang = {};
+  catalogPrintsByOracleSetCollectorLang = {};
+  canonicalPrintByOracleLang = {};
+
+  for (const [setKey, cartas] of Object.entries(cacheCartasPorSetLang || {})) {
+    if (!Array.isArray(cartas)) continue;
+
+    for (const carta of cartas) {
+      const meta = extractCatalogPrintMeta(carta, setKey);
+      if (!meta) continue;
+
+      catalogPrintMetaById[meta.printId] = meta;
+      pushUniqueValue(catalogPrintsByOracleId, meta.oracleId, meta.printId);
+      pushUniqueValue(catalogPrintsBySetCode, meta.setCode, meta.printId);
+      pushUniqueValue(catalogVariantPrintsBySetCard, `${meta.setCode}::${meta.oracleId}::${normalizeCollectorNumberKey(meta.collectorNumber)}`, meta.printId);
+      pushUniqueValue(catalogPrintsByOracleIdAndLang, `${meta.oracleId}::${meta.lang}`, meta.printId);
+      pushUniqueValue(catalogPrintsBySetCollectorLang, `${meta.setCode}::${normalizeCollectorNumberKey(meta.collectorNumber)}::${meta.lang}`, meta.printId);
+      pushUniqueValue(catalogPrintsByOracleSetCollectorLang, `${meta.oracleId}::${meta.setCode}::${normalizeCollectorNumberKey(meta.collectorNumber)}::${meta.lang}`, meta.printId);
+
+      if (!oracleIdCache[meta.printId]) {
+        oracleIdCache[meta.printId] = { oracle_id: meta.oracleId, lang: meta.lang };
+      }
+    }
+  }
+
+  oracleToIds = {};
+  for (const [key, printIds] of Object.entries(catalogPrintsByOracleIdAndLang)) {
+    const sorted = [...printIds].sort(compareCatalogPrintIds);
+    if (sorted.length === 0) continue;
+    canonicalPrintByOracleLang[key] = sorted[0];
+
+    const [oracleId, lang] = key.split("::");
+    if (!oracleToIds[oracleId]) oracleToIds[oracleId] = {};
+    if (lang === "en" || lang === "es") {
+      oracleToIds[oracleId][lang] = sorted[0];
+    }
+  }
+}
 
 // ===== Validación y normalización =====
 
@@ -2352,6 +3957,371 @@ function getEstadoCarta2(oracle_id) {
   return norm;
 }
 
+function getEstadoCartaCompatV3(estadoKey, fallbackSt2 = null) {
+  const empty = { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0, ri_en: false, ri_es: false, counters_en: {}, counters_es: {}, tags_en: {}, tags_es: {} };
+  const safeKey = String(estadoKey || "").trim();
+  if (!safeKey) return fallbackSt2 ? normalizarEstadoCarta2(fallbackSt2) : empty;
+
+  const base = fallbackSt2 ? normalizarEstadoCarta2(fallbackSt2) : getEstadoCarta2(safeKey);
+  if (!hasEstado3InventoryData() && !hasEstado3ManualInventoryData()) return base;
+
+  const next = { ...base };
+  const selectionKey = deriveStableSelectionKeyFromEstadoKey(safeKey);
+  const hasMirror = hasResolvedInventoryMirrorV3ForEstadoKey(safeKey, base) || hasManualInventoryMirrorV3ForEstadoKey(safeKey);
+
+  for (const lang of ["en", "es"]) {
+    const target = resolveInventoryTargetPrintV3(safeKey, lang);
+    let entry = normalizeInventoryEntryV3({});
+    if (target.printId) {
+      entry = getInventoryEntryV3(target.printId);
+    } else if (selectionKey) {
+      entry = getManualInventoryEntryBySelectionKey(selectionKey, lang);
+    }
+
+    if (isEmptyInventoryEntryV3(entry) && !hasMirror) continue;
+
+    if (lang === "en") {
+      next.qty_en = Number(entry.qty || 0);
+      next.foil_en = Number(entry.foil || 0);
+      next.ri_en = !!entry.ri;
+      next.counters_en = normalizeCounterMap(entry.counters);
+      next.tags_en = normalizeTagMap(entry.tags);
+    } else {
+      next.qty_es = Number(entry.qty || 0);
+      next.foil_es = Number(entry.foil || 0);
+      next.ri_es = !!entry.ri;
+      next.counters_es = normalizeCounterMap(entry.counters);
+      next.tags_es = normalizeTagMap(entry.tags);
+    }
+  }
+
+  return normalizarEstadoCarta2(next);
+}
+
+function normalizeLegacyPossessionLang(lang, fallback = "en") {
+  const safeLang = normalizeLanguagePreferenceCode(lang, fallback) || fallback || "en";
+  return safeLang === "es" ? "es" : "en";
+}
+
+function createEmptyLegacyPossessionLangEntry() {
+  return {
+    qty: 0,
+    foil: 0,
+    ri: false,
+    counters: {},
+    tags: {}
+  };
+}
+
+function getLegacyPossessionLangEntry(st2, lang) {
+  const normalized = normalizarEstadoCarta2(st2);
+  const safeLang = normalizeLegacyPossessionLang(lang);
+  if (safeLang === "es") {
+    return {
+      qty: Number(normalized.qty_es || 0),
+      foil: Number(normalized.foil_es || 0),
+      ri: !!normalized.ri_es,
+      counters: normalizeCounterMap(normalized.counters_es),
+      tags: normalizeTagMap(normalized.tags_es)
+    };
+  }
+
+  return {
+    qty: Number(normalized.qty_en || 0),
+    foil: Number(normalized.foil_en || 0),
+    ri: !!normalized.ri_en,
+    counters: normalizeCounterMap(normalized.counters_en),
+    tags: normalizeTagMap(normalized.tags_en)
+  };
+}
+
+function buildLegacyPossessionAdapter(st2) {
+  const normalized = normalizarEstadoCarta2(st2);
+  const langs = {
+    en: getLegacyPossessionLangEntry(normalized, "en"),
+    es: getLegacyPossessionLangEntry(normalized, "es")
+  };
+
+  return {
+    raw: normalized,
+    langs,
+    totals: {
+      qty: langs.en.qty + langs.es.qty,
+      foil: langs.en.foil + langs.es.foil,
+      ri: langs.en.ri || langs.es.ri
+    }
+  };
+}
+
+function getLegacyPossessionAdapterForState(estadoKey, fallbackSt2 = null) {
+  const safeKey = String(estadoKey || "").trim();
+  if (!safeKey) {
+    return buildLegacyPossessionAdapter(fallbackSt2 || {});
+  }
+  return buildLegacyPossessionAdapter(getEstadoCartaCompatV3(safeKey, fallbackSt2));
+}
+
+function buildInventoryEntryV3FromEstado2Lang(st2, lang, updatedAt = Date.now()) {
+  const safeLang = normalizeLegacyPossessionLang(lang);
+  const langEntry = getLegacyPossessionLangEntry(st2, safeLang);
+  return normalizeInventoryEntryV3({
+    qty: langEntry.qty,
+    foil: langEntry.foil,
+    ri: langEntry.ri,
+    counters: langEntry.counters,
+    tags: langEntry.tags,
+    updatedAt
+  });
+}
+
+function resolveInventoryTargetPrintV3(estadoKey, lang) {
+  const safeKey = String(estadoKey || "").trim();
+  const safeLang = normalizePhase1ManualLangCode(lang, "en") || "en";
+  if (!safeKey) return { printId: "", reason: "empty-state-key" };
+
+  const meta = getCatalogPrintMetaForIntegrity(safeKey);
+  if (meta) {
+    if (meta.lang === safeLang) {
+      return { printId: meta.printId, reason: "direct-print-match" };
+    }
+
+    const siblingKey = `${meta.oracleId}::${meta.setCode}::${normalizeCollectorNumberKey(meta.collectorNumber)}::${safeLang}`;
+    const siblingCandidates = [...(catalogPrintsByOracleSetCollectorLang[siblingKey] || [])].sort(compareCatalogPrintIds);
+    if (siblingCandidates.length > 0) {
+      return { printId: siblingCandidates[0], reason: "same-set-same-collector-sibling-lang" };
+    }
+
+    const canonical = canonicalPrintByOracleLang[`${meta.oracleId}::${safeLang}`];
+    if (canonical) {
+      return { printId: canonical, reason: "canonical-oracle-lang-fallback" };
+    }
+
+    return { printId: "", reason: "missing-language-variant" };
+  }
+
+  const cached = oracleIdCache[safeKey];
+  if (cached?.oracle_id) {
+    if (cached.lang === safeLang) {
+      return { printId: safeKey, reason: "cached-print-match" };
+    }
+
+    const canonical = canonicalPrintByOracleLang[`${cached.oracle_id}::${safeLang}`];
+    if (canonical) {
+      return { printId: canonical, reason: "cached-oracle-lang-fallback" };
+    }
+
+    return { printId: "", reason: "missing-language-variant" };
+  }
+
+  const canonical = canonicalPrintByOracleLang[`${safeKey}::${safeLang}`];
+  if (canonical) {
+    return { printId: canonical, reason: "oracle-level-legacy-fallback" };
+  }
+
+  return { printId: "", reason: "missing-language-variant" };
+}
+
+function buildDesiredInventoryEntriesFromEstado2Key(estadoKey, st2, updatedAt = Date.now()) {
+  const desiredEntries = {};
+  const desiredManualEntriesBySelectionKey = {};
+  const unresolvedBuckets = [];
+  const selectionKey = deriveStableSelectionKeyFromEstadoKey(estadoKey);
+
+  for (const lang of ["en", "es"]) {
+    const entry = buildInventoryEntryV3FromEstado2Lang(st2, lang, updatedAt);
+    if (isEmptyInventoryEntryV3(entry)) continue;
+
+    const target = resolveInventoryTargetPrintV3(estadoKey, lang);
+    if (!target.printId) {
+      if (selectionKey) {
+        const parsed = parseVisibleVariantSelectionKey(selectionKey);
+        if (isManualLangAllowedForCard(parsed.setCode, parsed.oracleId, parsed.collectorNumber, lang)) {
+          if (!desiredManualEntriesBySelectionKey[selectionKey]) desiredManualEntriesBySelectionKey[selectionKey] = {};
+          desiredManualEntriesBySelectionKey[selectionKey][lang] = normalizeInventoryEntryV3(entry);
+          continue;
+        }
+      }
+
+      unresolvedBuckets.push({
+        stateKey: String(estadoKey || "").trim(),
+        sourceLang: lang,
+        reason: target.reason,
+        entry
+      });
+      continue;
+    }
+
+    if (desiredEntries[target.printId]) {
+      desiredEntries[target.printId] = mergeInventoryEntriesV3(desiredEntries[target.printId], entry, updatedAt);
+    } else {
+      desiredEntries[target.printId] = normalizeInventoryEntryV3(entry);
+    }
+  }
+
+  return { desiredEntries, desiredManualEntriesBySelectionKey, unresolvedBuckets };
+}
+
+function getRelatedSelectionKeysForEstadoKeyV3(estadoKey) {
+  const key = deriveStableSelectionKeyFromEstadoKey(estadoKey);
+  return key ? new Set([key]) : new Set();
+}
+
+function getRelatedPrintIdsForEstadoKeyV3(estadoKey) {
+  const related = new Set();
+  const safeKey = String(estadoKey || "").trim();
+  if (!safeKey) return related;
+
+  const meta = getCatalogPrintMetaForIntegrity(safeKey);
+  if (meta) {
+    related.add(meta.printId);
+    if (meta.oracleId) {
+      const canonicalEn = canonicalPrintByOracleLang[`${meta.oracleId}::en`];
+      const canonicalEs = canonicalPrintByOracleLang[`${meta.oracleId}::es`];
+      if (canonicalEn) related.add(canonicalEn);
+      if (canonicalEs) related.add(canonicalEs);
+    }
+
+    const variantKey = `${meta.setCode}::${meta.oracleId}::${normalizeCollectorNumberKey(meta.collectorNumber)}`;
+    for (const printId of catalogVariantPrintsBySetCard[variantKey] || []) {
+      related.add(printId);
+    }
+
+    return related;
+  }
+
+  const cached = oracleIdCache[safeKey];
+  const oracleId = String(cached?.oracle_id || safeKey).trim();
+  const canonicalEn = canonicalPrintByOracleLang[`${oracleId}::en`];
+  const canonicalEs = canonicalPrintByOracleLang[`${oracleId}::es`];
+  if (cached) related.add(safeKey);
+  if (canonicalEn) related.add(canonicalEn);
+  if (canonicalEs) related.add(canonicalEs);
+  return related;
+}
+
+function rebuildEstado3FromEstado2({ persist = true } = {}) {
+  const stateKeys = Object.keys(estado2 || {});
+  if (stateKeys.length === 0) return false;
+
+  const migratedAt = new Date().toISOString();
+  const updatedAt = Date.now();
+  const next = createEmptyEstado3();
+  next.uiPreferences = enforceUiPreferencesIntegrityV3(estado3?.uiPreferences);
+
+  const unresolvedBuckets = [];
+  for (const estadoKey of stateKeys) {
+    const st2 = getEstadoCarta2(estadoKey);
+    const { desiredEntries, desiredManualEntriesBySelectionKey, unresolvedBuckets: unresolvedForKey } = buildDesiredInventoryEntriesFromEstado2Key(estadoKey, st2, updatedAt);
+    unresolvedBuckets.push(...unresolvedForKey);
+
+    for (const [printId, entry] of Object.entries(desiredEntries)) {
+      next.inventoryByPrintId[printId] = next.inventoryByPrintId[printId]
+        ? mergeInventoryEntriesV3(next.inventoryByPrintId[printId], entry, updatedAt)
+        : normalizeInventoryEntryV3(entry);
+    }
+
+    for (const [selectionKey, entryByLang] of Object.entries(desiredManualEntriesBySelectionKey)) {
+      const normalized = normalizeManualInventoryLangMap(entryByLang);
+      if (Object.keys(normalized).length === 0) continue;
+      next.manualInventoryByCardLang[selectionKey] = normalized;
+    }
+  }
+
+  next.migrationMeta = {
+    migratedFromVersion: 2,
+    migratedAt,
+    unresolvedBuckets,
+    sourceStateKeys: stateKeys.length
+  };
+
+  estado3 = next;
+  if (persist) {
+    guardarEstado3BackupDesdeV2();
+    guardarEstado3();
+  }
+  return true;
+}
+
+function syncEstado3FromEstado2Key(estadoKey, { persist = true } = {}) {
+  const safeKey = String(estadoKey || "").trim();
+  if (!safeKey) return false;
+
+  if (!hasEstado3InventoryData() && !hasEstado3ManualInventoryData()) {
+    return rebuildEstado3FromEstado2({ persist });
+  }
+
+  const st2 = getEstadoCarta2(safeKey);
+  const updatedAt = Date.now();
+  const { desiredEntries, desiredManualEntriesBySelectionKey } = buildDesiredInventoryEntriesFromEstado2Key(safeKey, st2, updatedAt);
+  const relatedPrintIds = getRelatedPrintIdsForEstadoKeyV3(safeKey);
+  const relatedSelectionKeys = getRelatedSelectionKeysForEstadoKeyV3(safeKey);
+  for (const printId of Object.keys(desiredEntries)) relatedPrintIds.add(printId);
+
+  for (const selectionKey of Object.keys(desiredManualEntriesBySelectionKey)) {
+    relatedSelectionKeys.add(selectionKey);
+  }
+
+  if (relatedPrintIds.size === 0 && relatedSelectionKeys.size === 0) return false;
+
+  for (const printId of relatedPrintIds) {
+    setInventoryEntryV3(printId, desiredEntries[printId] || {}, { persist: false });
+  }
+
+  for (const selectionKey of relatedSelectionKeys) {
+    const desiredByLang = normalizeManualInventoryLangMap(desiredManualEntriesBySelectionKey[selectionKey] || {});
+    for (const lang of PHASE1_SUPPORTED_MANUAL_LANGS) {
+      setManualInventoryEntryBySelectionKey(selectionKey, lang, desiredByLang[lang] || {}, { persist: false });
+    }
+  }
+
+  if (persist) guardarEstado3();
+  return true;
+}
+
+function hasResolvedInventoryMirrorV3ForEstadoKey(estadoKey, st2 = null) {
+  const safeKey = String(estadoKey || "").trim();
+  if (!safeKey) return false;
+  const source = st2 || getEstadoCarta2(safeKey);
+  const { desiredEntries, desiredManualEntriesBySelectionKey } = buildDesiredInventoryEntriesFromEstado2Key(safeKey, source, Date.now());
+  return Object.keys(desiredEntries).length > 0 || Object.keys(desiredManualEntriesBySelectionKey).length > 0;
+}
+
+function hasManualInventoryMirrorV3ForEstadoKey(estadoKey) {
+  const selectionKey = deriveStableSelectionKeyFromEstadoKey(estadoKey);
+  if (!selectionKey) return false;
+  return Object.keys(getManualInventoryLangMapBySelectionKey(selectionKey)).length > 0;
+}
+
+function getCoexistingTotalQtyForEstadoKey(estadoKey) {
+  const safeKey = String(estadoKey || "").trim();
+  if (!safeKey) return 0;
+
+  const st2 = getEstadoCarta2(safeKey);
+  if (!hasEstado3InventoryData()) {
+    return getTotalQtyEstado2(st2);
+  }
+
+  const { desiredEntries } = buildDesiredInventoryEntriesFromEstado2Key(safeKey, st2, Date.now());
+  const targetPrintIds = Object.keys(desiredEntries);
+  if (targetPrintIds.length === 0) {
+    return getTotalQtyEstado2(st2);
+  }
+
+  let total = 0;
+  for (const printId of targetPrintIds) {
+    total += getInventoryQtyV3(printId);
+  }
+  return total;
+}
+
+function commitEstado2Write(estadoKey, { refreshProgress = false } = {}) {
+  syncEstado3FromEstado2Key(estadoKey, { persist: true });
+  guardarEstado2();
+  sbMarkDirty();
+  if (refreshProgress) actualizarProgresoSetActualSiSePuede();
+  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+}
+
 function setQtyLang(oracle_id, lang, value) {
   if (!oracle_id || oracle_id === 'undefined' || oracle_id === 'null') {
     console.warn('setQtyLang: oracle_id inválido', oracle_id);
@@ -2360,8 +4330,9 @@ function setQtyLang(oracle_id, lang, value) {
   
   const st = ensureEstadoCarta2(oracle_id);
   const qty = clampInt(Number(value), 0, 999);
-  const langKey = lang === "es" ? "qty_es" : "qty_en";
-  const foilKey = lang === "es" ? "foil_es" : "foil_en";
+  const safeLang = normalizeLegacyPossessionLang(lang);
+  const langKey = safeLang === "es" ? "qty_es" : "qty_en";
+  const foilKey = safeLang === "es" ? "foil_es" : "foil_en";
   
   st[langKey] = qty;
   
@@ -2370,11 +4341,8 @@ function setQtyLang(oracle_id, lang, value) {
   
   // Si qty llega a 0, limpiar foil
   if (qty === 0) st[foilKey] = 0;
-  
-  guardarEstado2();
-  sbMarkDirty();
-  actualizarProgresoSetActualSiSePuede();
-  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+
+  commitEstado2Write(oracle_id, { refreshProgress: true });
 }
 
 function setFoilLang(oracle_id, lang, value) {
@@ -2384,14 +4352,13 @@ function setFoilLang(oracle_id, lang, value) {
   }
   
   const st = ensureEstadoCarta2(oracle_id);
-  const qtyKey = lang === "es" ? "qty_es" : "qty_en";
-  const foilKey = lang === "es" ? "foil_es" : "foil_en";
+  const safeLang = normalizeLegacyPossessionLang(lang);
+  const qtyKey = safeLang === "es" ? "qty_es" : "qty_en";
+  const foilKey = safeLang === "es" ? "foil_es" : "foil_en";
   
   st[foilKey] = clampInt(Number(value), 0, st[qtyKey]);
   
-  guardarEstado2();
-  sbMarkDirty();
-  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+  commitEstado2Write(oracle_id);
 }
 
 function setRiLang(oracle_id, lang, value) {
@@ -2401,19 +4368,19 @@ function setRiLang(oracle_id, lang, value) {
   }
   
   const st = ensureEstadoCarta2(oracle_id);
-  const riKey = lang === "es" ? "ri_es" : "ri_en";
+  const safeLang = normalizeLegacyPossessionLang(lang);
+  const riKey = safeLang === "es" ? "ri_es" : "ri_en";
   
   st[riKey] = !!value;
   
-  guardarEstado2();
-  sbMarkDirty();
-  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+  commitEstado2Write(oracle_id);
 }
 
 function getCounterValue(st2, lang, key) {
-  if (key === "qty") return lang === "es" ? st2.qty_es : st2.qty_en;
-  if (key === "foil") return lang === "es" ? st2.foil_es : st2.foil_en;
-  const map = lang === "es" ? (st2.counters_es || {}) : (st2.counters_en || {});
+  const langState = buildLegacyPossessionAdapter(st2).langs[normalizeLegacyPossessionLang(lang)];
+  if (key === "qty") return langState.qty;
+  if (key === "foil") return langState.foil;
+  const map = langState.counters || {};
   return Number(map[key] ?? 0);
 }
 
@@ -2432,18 +4399,18 @@ function setCounterLang(oracle_id, lang, key, value) {
   }
 
   const st = ensureEstadoCarta2(oracle_id);
-  const mapKey = lang === "es" ? "counters_es" : "counters_en";
+  const safeLang = normalizeLegacyPossessionLang(lang);
+  const mapKey = safeLang === "es" ? "counters_es" : "counters_en";
   if (!st[mapKey] || typeof st[mapKey] !== "object") st[mapKey] = {};
   st[mapKey][key] = clampInt(Number(value ?? 0), 0, 999);
 
-  guardarEstado2();
-  sbMarkDirty();
-  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+  commitEstado2Write(oracle_id);
 }
 
 function getTagValue(st2, lang, key) {
-  if (key === "ri") return lang === "es" ? !!st2.ri_es : !!st2.ri_en;
-  const map = lang === "es" ? (st2.tags_es || {}) : (st2.tags_en || {});
+  const langState = buildLegacyPossessionAdapter(st2).langs[normalizeLegacyPossessionLang(lang)];
+  if (key === "ri") return !!langState.ri;
+  const map = langState.tags || {};
   return !!map[key];
 }
 
@@ -2458,13 +4425,12 @@ function setTagLang(oracle_id, lang, key, value) {
   }
 
   const st = ensureEstadoCarta2(oracle_id);
-  const mapKey = lang === "es" ? "tags_es" : "tags_en";
+  const safeLang = normalizeLegacyPossessionLang(lang);
+  const mapKey = safeLang === "es" ? "tags_es" : "tags_en";
   if (!st[mapKey] || typeof st[mapKey] !== "object") st[mapKey] = {};
   st[mapKey][key] = !!value;
 
-  guardarEstado2();
-  sbMarkDirty();
-  scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+  commitEstado2Write(oracle_id);
 }
 
 function getPreferredLangForEstadoKey(estadoKey, fallback = "en") {
@@ -2473,6 +4439,14 @@ function getPreferredLangForEstadoKey(estadoKey, fallback = "en") {
 
   const key = String(estadoKey || "").trim();
   if (!key) return fallback === "es" ? "es" : "en";
+
+  const meta = getCatalogPrintMetaForIntegrity(key);
+  if (meta?.setCode) {
+    return normalizeLegacyPossessionLang(
+      getActiveVisibleLang(meta.setCode, meta.oracleId || "", meta.collectorNumber || "", fallback),
+      fallback
+    );
+  }
 
   const oracleId = uiLangByOracle[key]
     ? key
@@ -2486,21 +4460,21 @@ function adjustTotalQty(estadoKey, delta, preferredLang = "en") {
   const d = Math.trunc(Number(delta) || 0);
   if (!estadoKey || d === 0) return;
 
-  const prefLang = preferredLang === "es" ? "es" : "en";
+  const prefLang = normalizeLegacyPossessionLang(preferredLang);
   const otherLang = prefLang === "en" ? "es" : "en";
 
   if (d > 0) {
-    const st2 = getEstadoCarta2(estadoKey);
-    const prefQty = prefLang === "es" ? st2.qty_es : st2.qty_en;
+    const adapter = getLegacyPossessionAdapterForState(estadoKey);
+    const prefQty = adapter.langs[prefLang].qty;
     setQtyLang(estadoKey, prefLang, prefQty + d);
     return;
   }
 
   let remaining = -d;
   while (remaining > 0) {
-    const st2 = getEstadoCarta2(estadoKey);
-    const prefQty = prefLang === "es" ? st2.qty_es : st2.qty_en;
-    const otherQty = otherLang === "es" ? st2.qty_es : st2.qty_en;
+    const adapter = getLegacyPossessionAdapterForState(estadoKey);
+    const prefQty = adapter.langs[prefLang].qty;
+    const otherQty = adapter.langs[otherLang].qty;
 
     if (prefQty > 0) {
       setQtyLang(estadoKey, prefLang, prefQty - 1);
@@ -2517,8 +4491,7 @@ function adjustTotalQty(estadoKey, delta, preferredLang = "en") {
 function setTotalQtyWithPreferredLang(estadoKey, targetTotal, preferredLang = "en") {
   if (!estadoKey) return;
   const target = clampInt(Number(targetTotal), 0, 999);
-  const st2 = getEstadoCarta2(estadoKey);
-  const current = Number(st2.qty_en || 0) + Number(st2.qty_es || 0);
+  const current = getLegacyPossessionAdapterForState(estadoKey).totals.qty;
   adjustTotalQty(estadoKey, target - current, preferredLang);
 }
 
@@ -2533,7 +4506,15 @@ function cargarUILangByOracle() {
   const raw = safeLocalStorageGet(LS_UI_LANG);
   if (!raw) return;
   try {
-    uiLangByOracle = JSON.parse(raw) || {};
+    const parsed = JSON.parse(raw) || {};
+    const normalized = {};
+    for (const [oracleIdRaw, langRaw] of Object.entries(parsed)) {
+      const oracleId = String(oracleIdRaw || "").trim();
+      const lang = normalizeLegacyPossessionLang(langRaw, "en");
+      if (!oracleId) continue;
+      normalized[oracleId] = lang;
+    }
+    uiLangByOracle = normalized;
   } catch (e) {
     console.warn("UI lang cache corrupto:", e);
     uiLangByOracle = {};
@@ -2544,21 +4525,1850 @@ function guardarUILangByOracle() {
   safeLocalStorageSet(LS_UI_LANG, JSON.stringify(uiLangByOracle));
 }
 
-function getUILang(oracle_id) {
-  return uiLangByOracle[oracle_id] || "en";
+function syncLegacyUiLangCacheForSet(setCode, lang) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeLang = normalizeLegacyPossessionLang(lang, "en");
+  if (!safeSetCode || !safeLang) return false;
+
+  let changed = false;
+
+  for (const [setKey, cards] of Object.entries(cacheCartasPorSetLang || {})) {
+    const [codeRaw] = String(setKey || "").split("__");
+    const code = String(codeRaw || "").trim().toLowerCase();
+    if (code !== safeSetCode || !Array.isArray(cards)) continue;
+
+    for (const card of cards) {
+      const oracleId = String(card?.oracle_id || "").trim();
+      if (!oracleId) continue;
+      if (uiLangByOracle[oracleId] === safeLang) continue;
+      uiLangByOracle[oracleId] = safeLang;
+      changed = true;
+    }
+  }
+
+  if (changed) guardarUILangByOracle();
+  return changed;
 }
 
-function setUILang(oracle_id, lang) {
-  uiLangByOracle[oracle_id] = lang;
+function getUILang(oracle_id) {
+  const key = String(oracle_id || "").trim();
+  if (!key) return "en";
+  return normalizeLegacyPossessionLang(uiLangByOracle[key], "en");
+}
+
+function setUILang(oracle_id, lang, setCode = "") {
+  const oracleKey = String(oracle_id || "").trim();
+  const safeLang = normalizeLegacyPossessionLang(lang, "en");
+  if (!oracleKey) return;
+
+  uiLangByOracle[oracleKey] = safeLang;
   guardarUILangByOracle();
+
+  const setCodeKey = String(setCode || "").trim().toLowerCase();
+  if (setCodeKey) {
+    setPreferredVisibleLang(setCodeKey, safeLang, { persist: true, syncLegacy: false });
+  }
+}
+
+function getUiPreferencesV3() {
+  if (!estado3 || typeof estado3 !== "object") estado3 = createEmptyEstado3();
+  estado3.uiPreferences = enforceUiPreferencesIntegrityV3(estado3.uiPreferences);
+  return estado3.uiPreferences;
+}
+
+function getManualSetLangOverrides(setCode) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) return {};
+  return normalizeManualLangOverrideMap(getUiPreferencesV3().manualSetLangOverrides?.[safeSetCode]);
+}
+
+function setManualSetLangOverride(setCode, lang, enabled, { persist = true } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!safeSetCode || !safeLang) return false;
+
+  const uiPrefs = getUiPreferencesV3();
+  if (!uiPrefs.manualSetLangOverrides || typeof uiPrefs.manualSetLangOverrides !== "object") {
+    uiPrefs.manualSetLangOverrides = {};
+  }
+
+  const current = normalizeManualLangOverrideMap(uiPrefs.manualSetLangOverrides[safeSetCode]);
+  const next = { ...current };
+  if (enabled) next[safeLang] = true;
+  else delete next[safeLang];
+
+  if (JSON.stringify(current) === JSON.stringify(next)) return false;
+
+  if (Object.keys(next).length === 0) delete uiPrefs.manualSetLangOverrides[safeSetCode];
+  else uiPrefs.manualSetLangOverrides[safeSetCode] = next;
+
+  if (persist) guardarEstado3();
+  if (typeof reconstruirCatalogoColecciones === "function") reconstruirCatalogoColecciones();
+  if (typeof renderColecciones === "function") renderColecciones();
+  if (safeSetCode === String(setActualCode || "").trim().toLowerCase()) {
+    renderSetVisibleLangToolbar(safeSetCode);
+    if (setActualKey && typeof renderTablaSet === "function") renderTablaSet(setActualKey);
+  }
+  return true;
+}
+
+function hasManualSetLangOverride(setCode, lang) {
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!safeLang) return false;
+  return !!getManualSetLangOverrides(setCode)[safeLang];
+}
+
+function getManualCardLangOverrides(setCode, oracleId, collectorNumber = "") {
+  const selectionKey = buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber);
+  if (!selectionKey) return {};
+  return normalizeManualLangOverrideMap(getUiPreferencesV3().manualCardLangOverrides?.[selectionKey]);
+}
+
+function setManualCardLangOverride(setCode, oracleId, collectorNumber, lang, enabled, { persist = true } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const selectionKey = buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber);
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!selectionKey || !safeLang) return false;
+
+  const uiPrefs = getUiPreferencesV3();
+  if (!uiPrefs.manualCardLangOverrides || typeof uiPrefs.manualCardLangOverrides !== "object") {
+    uiPrefs.manualCardLangOverrides = {};
+  }
+
+  const current = normalizeManualLangOverrideMap(uiPrefs.manualCardLangOverrides[selectionKey]);
+  const next = { ...current };
+  if (enabled) next[safeLang] = true;
+  else delete next[safeLang];
+
+  if (JSON.stringify(current) === JSON.stringify(next)) return false;
+
+  if (Object.keys(next).length === 0) delete uiPrefs.manualCardLangOverrides[selectionKey];
+  else uiPrefs.manualCardLangOverrides[selectionKey] = next;
+
+  if (persist) guardarEstado3();
+  if (safeSetCode === String(setActualCode || "").trim().toLowerCase()) {
+    renderSetVisibleLangToolbar(safeSetCode);
+    if (setActualKey && typeof renderTablaSet === "function") renderTablaSet(setActualKey);
+  }
+  return true;
+}
+
+function hasManualCardLangOverride(setCode, oracleId, collectorNumber, lang) {
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!safeLang) return false;
+  return !!getManualCardLangOverrides(setCode, oracleId, collectorNumber)[safeLang];
+}
+
+function getManualAvailableLangsForCard(setCode, oracleId, collectorNumber = "") {
+  return getStableVisibleLangDisplayOrder([
+    ...Object.keys(getManualSetLangOverrides(setCode)),
+    ...Object.keys(getManualCardLangOverrides(setCode, oracleId, collectorNumber))
+  ]);
+}
+
+function isManualLangAllowedForCard(setCode, oracleId, collectorNumber, lang) {
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!safeLang) return false;
+  return hasManualCardLangOverride(setCode, oracleId, collectorNumber, safeLang)
+    || hasManualSetLangOverride(setCode, safeLang)
+    || (safeLang === "es" && hasCanonicalSpanishSetException(setCode) && !hasLoadedNonEmptySetLangBucket(setCode, safeLang));
+}
+
+function buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber = "") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeOracleId = String(oracleId || "").trim();
+  const safeCollector = normalizeCollectorNumberKey(collectorNumber);
+  return `${safeSetCode}::${safeOracleId}::${safeCollector}`;
+}
+
+function getSetVisibleLangChoices(setCode) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const uiPrefs = getUiPreferencesV3();
+  const choices = new Set(normalizeLanguagePreferenceList(getSetUiAvailableLangs(safeSetCode), { fallbackToEnglish: true }));
+
+  for (const [setKey, cartas] of Object.entries(cacheCartasPorSetLang || {})) {
+    if (!Array.isArray(cartas) || cartas.length === 0) continue;
+    const { code, lang } = parseSetKeyParts(setKey);
+    if (code !== safeSetCode) continue;
+    const safeLang = normalizeLanguagePreferenceCode(lang);
+    if (safeLang) choices.add(safeLang);
+  }
+
+  [
+    uiPrefs.activeLangBySet?.[safeSetCode],
+    uiPrefs.preferredSetLang?.[safeSetCode],
+    ...(uiPrefs.visibleLangsBySet?.[safeSetCode] || []),
+    ...Object.keys(getManualSetLangOverrides(safeSetCode))
+  ].forEach(lang => {
+    const safeLang = normalizeLanguagePreferenceCode(lang);
+    if (safeLang) choices.add(safeLang);
+  });
+
+  if (choices.size === 0) choices.add(DEFAULT_APP_FALLBACK_LANG);
+  return getStableVisibleLangDisplayOrder([...choices]);
+}
+
+function getVisibleLangFallback(setCode, fallbackLang = "en") {
+  const preferred = normalizeLanguagePreferenceCode(fallbackLang, DEFAULT_APP_FALLBACK_LANG) || DEFAULT_APP_FALLBACK_LANG;
+  const availableChoices = getSetVisibleLangChoices(setCode);
+  if (availableChoices.includes(preferred)) return preferred;
+  return availableChoices[0] || DEFAULT_APP_FALLBACK_LANG;
+}
+
+function filterAvailableVisibleLangs(setCode, langs, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const available = new Set(getSetVisibleLangChoices(safeSetCode));
+  const normalized = normalizeLanguagePreferenceList(langs, {
+    fallbackToEnglish: false,
+    fallbackLang: getVisibleLangFallback(safeSetCode, fallbackLang)
+  });
+  const filtered = normalized.filter(lang => available.size === 0 || available.has(lang));
+  if (filtered.length > 0) return filtered;
+  return [getVisibleLangFallback(safeSetCode, fallbackLang)];
+}
+
+function shouldRepairLegacyVisibleLangsForSet(setCode, storedLangs, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const availableChoices = getSetVisibleLangChoices(safeSetCode);
+  const normalizedStored = normalizeLanguagePreferenceList(storedLangs, {
+    fallbackToEnglish: false,
+    fallbackLang: getVisibleLangFallback(safeSetCode, fallbackLang)
+  });
+
+  if (normalizedStored.length !== 1) return false;
+  if (normalizedStored[0] !== "en") return false;
+  if (!availableChoices.includes("es")) return false;
+
+  const uiPrefs = getUiPreferencesV3();
+  const preferred = normalizeLanguagePreferenceCode(uiPrefs.preferredSetLang?.[safeSetCode]);
+  const active = normalizeLanguagePreferenceCode(uiPrefs.activeLangBySet?.[safeSetCode]);
+
+  if (preferred && preferred !== "en") return false;
+  if (active && active !== "en") return false;
+
+  return true;
+}
+
+function getVisibleLangsForSet(setCode, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const uiPrefs = getUiPreferencesV3();
+  const stored = uiPrefs.visibleLangsBySet?.[safeSetCode];
+  if (Array.isArray(stored) && stored.length > 0) {
+    const filteredStored = filterAvailableVisibleLangs(safeSetCode, stored, fallbackLang);
+    if (shouldRepairLegacyVisibleLangsForSet(safeSetCode, filteredStored, fallbackLang)) {
+      const repaired = filterAvailableVisibleLangs(safeSetCode, getSetVisibleLangChoices(safeSetCode), fallbackLang);
+      uiPrefs.visibleLangsBySet[safeSetCode] = repaired;
+      guardarEstado3();
+      return repaired;
+    }
+    return filteredStored;
+  }
+  return filterAvailableVisibleLangs(safeSetCode, getSetVisibleLangChoices(safeSetCode), fallbackLang);
+}
+
+function setVisibleLangsForSet(setCode, langs, { persist = true } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) return [];
+  const uiPrefs = getUiPreferencesV3();
+  const normalizedLangs = filterAvailableVisibleLangs(safeSetCode, langs, uiPrefs.preferredSetLang?.[safeSetCode] || uiPrefs.activeLangBySet?.[safeSetCode] || "en");
+  const previousLangs = JSON.stringify(uiPrefs.visibleLangsBySet?.[safeSetCode] || []);
+  uiPrefs.visibleLangsBySet[safeSetCode] = normalizedLangs;
+
+  const activeLang = normalizeLanguagePreferenceCode(uiPrefs.activeLangBySet?.[safeSetCode]);
+  if (!activeLang || !normalizedLangs.includes(activeLang)) {
+    uiPrefs.activeLangBySet[safeSetCode] = normalizedLangs[0];
+  }
+
+  if (persist && previousLangs !== JSON.stringify(normalizedLangs)) guardarEstado3();
+  return [...normalizedLangs];
+}
+
+const LANGS_WITH_FLAG_ASSET = new Set(["en", "es"]);
+const LANG_DISPLAY_LABELS = {};
+const LANG_DISPLAY_ORDER = ["en", "es"];
+
+function hasLangFlagAsset(lang) {
+  return LANGS_WITH_FLAG_ASSET.has(normalizeLanguagePreferenceCode(lang));
+}
+
+function getLangDisplayLabel(lang) {
+  const safeLang = normalizeLanguagePreferenceCode(lang, "en") || "en";
+  return LANG_DISPLAY_LABELS[safeLang] || safeLang.toUpperCase();
+}
+
+function sortVariantLangCodes(langs, preferredLangs = []) {
+  const unique = [...new Set((langs || []).map(lang => normalizeLanguagePreferenceCode(lang)).filter(Boolean))];
+  const preferred = preferredLangs.map(lang => normalizeLanguagePreferenceCode(lang)).filter(Boolean);
+  const score = (lang) => {
+    const preferredIndex = preferred.indexOf(lang);
+    if (preferredIndex !== -1) return preferredIndex - 100;
+    const knownIndex = LANG_DISPLAY_ORDER.indexOf(lang);
+    if (knownIndex !== -1) return knownIndex;
+    return LANG_DISPLAY_ORDER.length + 100;
+  };
+  return unique.sort((left, right) => {
+    const scoreDiff = score(left) - score(right);
+    if (scoreDiff !== 0) return scoreDiff;
+    return left.localeCompare(right);
+  });
+}
+
+function getStableVisibleLangDisplayOrder(langs) {
+  return sortVariantLangCodes(normalizeLanguagePreferenceList(langs), []);
+}
+
+function getSetExactSessionCardKey(setCode, oracleId, collectorNumber = "") {
+  return buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber);
+}
+
+function getSetRuntimeUiLangs(setCode, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const uiEnabled = new Set(getUiEnabledSetLangs());
+  const runtimeLangs = new Set();
+
+  for (const lang of getSetAvailableLangs(safeSetCode)) {
+    if (uiEnabled.has(lang)) runtimeLangs.add(lang);
+  }
+
+  for (const setKey of Object.keys(cacheCartasPorSetLang || {})) {
+    const { code, lang } = parseSetKeyParts(setKey);
+    if (code !== safeSetCode) continue;
+    if (uiEnabled.has(lang)) runtimeLangs.add(lang);
+  }
+
+  for (const lang of Object.keys(getManualSetLangOverrides(safeSetCode))) {
+    if (uiEnabled.has(lang)) runtimeLangs.add(lang);
+  }
+
+  if (runtimeLangs.size === 0) {
+    runtimeLangs.add(normalizeLanguagePreferenceCode(fallbackLang, DEFAULT_APP_FALLBACK_LANG) || DEFAULT_APP_FALLBACK_LANG);
+  }
+
+  return getStableVisibleLangDisplayOrder([...runtimeLangs]);
+}
+
+function getSessionVisibleLangsForSetExact(setCode, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const runtimeLangs = getSetRuntimeUiLangs(safeSetCode, fallbackLang);
+  const stored = Array.isArray(setExactSessionVisibleLangsBySet?.[safeSetCode])
+    ? setExactSessionVisibleLangsBySet[safeSetCode]
+    : runtimeLangs;
+  const allowed = new Set(runtimeLangs);
+  const filtered = getStableVisibleLangDisplayOrder(stored.filter(lang => allowed.has(lang)));
+  const result = filtered.length > 0 ? filtered : runtimeLangs;
+  setExactSessionVisibleLangsBySet[safeSetCode] = result;
+  return result;
+}
+
+function setSessionVisibleLangsForSetExact(setCode, langs, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const runtimeLangs = getSetRuntimeUiLangs(safeSetCode, fallbackLang);
+  const allowed = new Set(runtimeLangs);
+  const normalized = getStableVisibleLangDisplayOrder(normalizeLanguagePreferenceList(langs, {
+    fallbackToEnglish: false,
+    fallbackLang: getVisibleLangFallback(safeSetCode, fallbackLang)
+  }).filter(lang => allowed.has(lang)));
+  const result = normalized.length > 0 ? normalized : runtimeLangs;
+  setExactSessionVisibleLangsBySet[safeSetCode] = result;
+  return result;
+}
+
+function getSessionVisibleLangsForCardExact(setCode, oracleId, collectorNumber, fallbackLang = "en") {
+  const key = getSetExactSessionCardKey(setCode, oracleId, collectorNumber);
+  const stored = Array.isArray(setExactSessionVisibleLangsByCard?.[key])
+    ? setExactSessionVisibleLangsByCard[key]
+    : null;
+  if (stored && stored.length > 0) return stored;
+  return getSessionVisibleLangsForSetExact(setCode, fallbackLang);
+}
+
+function setSessionVisibleLangsForCardExact(setCode, oracleId, collectorNumber, langs, fallbackLang = "en") {
+  const key = getSetExactSessionCardKey(setCode, oracleId, collectorNumber);
+  const inherited = getSessionVisibleLangsForSetExact(setCode, fallbackLang);
+  const runtimeAllowed = new Set(getSetRuntimeUiLangs(setCode, fallbackLang));
+  const normalized = getStableVisibleLangDisplayOrder(normalizeLanguagePreferenceList(langs, {
+    fallbackToEnglish: false,
+    fallbackLang: getVisibleLangFallback(setCode, fallbackLang)
+  }).filter(lang => runtimeAllowed.has(lang)));
+
+  if (normalized.length === 0 || JSON.stringify(normalized) === JSON.stringify(inherited)) {
+    delete setExactSessionVisibleLangsByCard[key];
+    return inherited;
+  }
+
+  setExactSessionVisibleLangsByCard[key] = normalized;
+  return normalized;
+}
+
+function clearSetExactSessionVisibleLangOverridesForSet(setCode) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  delete setExactSessionVisibleLangsBySet[safeSetCode];
+  const prefix = `${safeSetCode}::`;
+  for (const key of Object.keys(setExactSessionVisibleLangsByCard || {})) {
+    if (String(key || "").startsWith(prefix)) {
+      delete setExactSessionVisibleLangsByCard[key];
+    }
+  }
+}
+
+function hasLoadedSetLangBucket(setCode, lang) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeLang = normalizeLanguagePreferenceCode(lang, "en") || "en";
+  return Array.isArray(cacheCartasPorSetLang[`${safeSetCode}__${safeLang}`]);
+}
+
+function hasLoadedNonEmptySetLangBucket(setCode, lang) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeLang = normalizeLanguagePreferenceCode(lang, "en") || "en";
+  return cartasDeSetKey(`${safeSetCode}__${safeLang}`).length > 0;
+}
+
+function getExactSetPrintIdForLang(setCode, collectorNumber, lang) {
+  const cachedVariants = getCachedSetExactVariants(setCode, collectorNumber);
+  const cachedCard = cachedVariants?.[normalizeLanguagePreferenceCode(lang, "en") || "en"];
+  if (cachedCard?.id) return String(cachedCard.id);
+
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeCollectorNumber = normalizeCollectorNumberKey(collectorNumber);
+  const safeLang = normalizeLanguagePreferenceCode(lang, "en") || "en";
+  if (!safeSetCode || !safeCollectorNumber) return "";
+
+  const byCollectorKey = `${safeSetCode}::${safeCollectorNumber}::${safeLang}`;
+  return [...(catalogPrintsBySetCollectorLang[byCollectorKey] || [])].sort(compareCatalogPrintIds)[0] || "";
+}
+
+function getExactSetCardForLang(setCode, collectorNumber, lang, fallbackCard = null) {
+  const cachedVariants = getCachedSetExactVariants(setCode, collectorNumber);
+  const cachedCard = cachedVariants?.[normalizeLanguagePreferenceCode(lang, "en") || "en"];
+  if (cachedCard) return normalizeVisibleVariantCard(cachedCard, fallbackCard);
+
+  const printId = getExactSetPrintIdForLang(setCode, collectorNumber, lang);
+  if (!printId) return null;
+  const knownCard = getKnownCardById(printId);
+  return knownCard ? normalizeVisibleVariantCard(knownCard, fallbackCard) : null;
+}
+
+function getVariantScopeForCardUI(card) {
+  const normalized = normalizeVisibleVariantCard(card, card);
+  const setCode = String(normalized.setCode || normalized.set || "").trim().toLowerCase();
+  const collectorNumber = normalizeCollectorNumberKey(normalized.collector_number || normalized.numero || "");
+  const isSetScreenActive = !!pantallas?.set?.classList.contains("active");
+  return isSetScreenActive && setCode && collectorNumber && setCode === String(setActualCode || "").trim().toLowerCase()
+    ? "set-exact"
+    : "generic";
+}
+
+function getVariantScopeForElement(element) {
+  const host = element?.id === "modalCartaBody"
+    ? element
+    : (element?.classList?.contains("carta-item") ? element : element?.closest?.(".carta-item") || element?.closest?.("#modalCartaBody"));
+  const controls = host?.querySelector?.(".carta-controles");
+  return controls?.dataset?.variantScope || host?.dataset?.variantScope || "generic";
+}
+
+function getExactSetAvailableLangsForCard(cardOrSetCode, oracleIdArg = "", collectorNumberArg = "", currentLangArg = "en") {
+  const base = (cardOrSetCode && typeof cardOrSetCode === "object")
+    ? normalizeVisibleVariantCard(cardOrSetCode, cardOrSetCode)
+    : normalizeVisibleVariantCard({
+        oracle_id: oracleIdArg,
+        setCode: cardOrSetCode,
+        set: cardOrSetCode,
+        collector_number: collectorNumberArg,
+        numero: collectorNumberArg,
+        lang: currentLangArg
+      }, null);
+
+  const setCode = String(base?.setCode || base?.set || cardOrSetCode || "").trim().toLowerCase();
+  const collectorNumber = normalizeCollectorNumberKey(base?.collector_number || base?.numero || collectorNumberArg || "");
+  const currentLang = normalizeLanguagePreferenceCode(base?.lang || currentLangArg, "en") || "en";
+  const fallbackLang = getVisibleLangFallback(setCode, currentLang);
+  const available = new Set([currentLang, fallbackLang]);
+
+  if (!setCode || !collectorNumber) {
+    return sortVariantLangCodes([...available], [currentLang, fallbackLang, "en", "es"]);
+  }
+
+  for (const lang of getManualAvailableLangsForCard(setCode, String(base?.oracle_id || oracleIdArg || "").trim(), collectorNumber)) {
+    available.add(lang);
+  }
+
+  for (const lang of Object.keys(getCachedSetExactVariants(setCode, collectorNumber) || {})) {
+    available.add(lang);
+  }
+
+  for (const lang of getSetRuntimeUiLangs(setCode, currentLang)) {
+    if (hasLoadedSetLangBucket(setCode, lang)) {
+      if (getExactSetPrintIdForLang(setCode, collectorNumber, lang)) {
+        available.add(lang);
+      }
+    } else {
+      available.add(lang);
+    }
+  }
+
+  return sortVariantLangCodes([...available], [currentLang, fallbackLang, "en", "es"]);
+}
+
+function shouldRepairLegacyVisibleLangsForCardExactSet(setCode, storedLangs, availableLangs, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const normalizedStored = normalizeLanguagePreferenceList(storedLangs, {
+    fallbackToEnglish: false,
+    fallbackLang: getVisibleLangFallback(safeSetCode, fallbackLang)
+  });
+
+  if (normalizedStored.length !== 1) return false;
+  if (normalizedStored[0] !== "en") return false;
+  if (!Array.isArray(availableLangs) || !availableLangs.includes("es")) return false;
+
+  const uiPrefs = getUiPreferencesV3();
+  const preferred = normalizeLanguagePreferenceCode(uiPrefs.preferredSetLang?.[safeSetCode]);
+  const active = normalizeLanguagePreferenceCode(uiPrefs.activeLangBySet?.[safeSetCode]);
+
+  if (preferred && preferred !== "en") return false;
+  if (active && active !== "en") return false;
+
+  return true;
+}
+
+function getVisibleLangsForCardExactSet(setCode, oracleId, collectorNumber = "", fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const uiPrefs = getUiPreferencesV3();
+  const currentLang = normalizeLanguagePreferenceCode(getKnownCardById(getSelectedVariantPrintId(setCode, oracleId, collectorNumber))?.lang, fallbackLang)
+    || normalizeLanguagePreferenceCode(uiPrefs.activeLangBySet?.[safeSetCode], fallbackLang)
+    || normalizeLanguagePreferenceCode(fallbackLang, "en")
+    || "en";
+  const availableLangs = getExactSetAvailableLangsForCard(setCode, oracleId, collectorNumber, currentLang);
+  const sourceLangs = getSessionVisibleLangsForCardExact(safeSetCode, oracleId, collectorNumber, fallbackLang);
+  const normalized = normalizeLanguagePreferenceList(sourceLangs, {
+    fallbackToEnglish: false,
+    fallbackLang: getVisibleLangFallback(safeSetCode, fallbackLang)
+  });
+  const filtered = normalized.filter(lang => availableLangs.includes(lang));
+  if (filtered.length > 0) {
+    return sortVariantLangCodes(filtered, [currentLang, fallbackLang, "en", "es"]);
+  }
+  return [availableLangs[0] || getVisibleLangFallback(safeSetCode, fallbackLang)];
+}
+
+async function resolveExactSetVariantForCard(card, preferredLang = null, { loadOnDemand = true } = {}) {
+  const base = normalizeVisibleVariantCard(card, card);
+  const setCode = String(base.setCode || parseSetKeyParts(base.setKey).code || "").trim().toLowerCase();
+  const collectorNumber = normalizeCollectorNumberKey(base.collector_number || base.numero || "");
+  const oracleId = String(base.oracle_id || "").trim();
+  const fallbackLang = String(base.lang || "en").trim().toLowerCase() || "en";
+
+  if (!setCode || !collectorNumber) {
+    return resolveVisibleVariantForCard(card, preferredLang);
+  }
+
+  const visibleLangs = getVisibleLangsForCardExactSet(setCode, oracleId, collectorNumber, fallbackLang);
+  const requestedLang = preferredLang
+    ? getVisibleLangFallback(setCode, preferredLang)
+    : getPreferredVisibleLang(setCode, fallbackLang, oracleId, collectorNumber);
+  const targetLang = visibleLangs.includes(requestedLang) ? requestedLang : (visibleLangs[0] || requestedLang);
+
+  const selectedPrintId = getSelectedVariantPrintId(setCode, oracleId, collectorNumber);
+  if (selectedPrintId) {
+    const selectedCard = getKnownCardById(selectedPrintId);
+    if (selectedCard) {
+      const normalizedSelected = normalizeVisibleVariantCard(selectedCard, base);
+      const selectedCollector = normalizeCollectorNumberKey(normalizedSelected.collector_number || normalizedSelected.numero || "");
+      const selectedSetCode = String(normalizedSelected.setCode || normalizedSelected.set || "").trim().toLowerCase();
+      if (selectedSetCode === setCode && selectedCollector === collectorNumber && (!preferredLang || normalizedSelected.lang === targetLang)) {
+        return normalizedSelected;
+      }
+    }
+  }
+
+  if (normalizeCollectorNumberKey(base.collector_number || base.numero || "") === collectorNumber && base.lang === targetLang) {
+    return base;
+  }
+
+  let exactCard = getExactSetCardForLang(setCode, collectorNumber, targetLang, base);
+  if (exactCard) return exactCard;
+
+  if (loadOnDemand && !hasLoadedSetLangBucket(setCode, targetLang)) {
+    await ensureSetCardsLoaded(`${setCode}__${targetLang}`);
+    exactCard = getExactSetCardForLang(setCode, collectorNumber, targetLang, base);
+    if (exactCard) return exactCard;
+  }
+
+  if (isManualLangAllowedForCard(setCode, oracleId, collectorNumber, targetLang) && base.lang !== targetLang) {
+    return buildManualVisibleVariantFallback(base, targetLang);
+  }
+
+  return base;
+}
+
+function getAvailableVariantLangsForCard(cardOrSetCode, oracleIdArg = "", collectorNumberArg = "", currentLangArg = "en") {
+  const base = (cardOrSetCode && typeof cardOrSetCode === "object")
+    ? normalizeVisibleVariantCard(cardOrSetCode, cardOrSetCode)
+    : normalizeVisibleVariantCard({
+        oracle_id: oracleIdArg,
+        setCode: cardOrSetCode,
+        set: cardOrSetCode,
+        collector_number: collectorNumberArg,
+        numero: collectorNumberArg,
+        lang: currentLangArg
+      }, null);
+
+  const setCode = String(base?.setCode || base?.set || cardOrSetCode || "").trim().toLowerCase();
+  const oracleId = String(base?.oracle_id || oracleIdArg || "").trim();
+  const collectorNumber = normalizeCollectorNumberKey(base?.collector_number || base?.numero || collectorNumberArg || "");
+  const currentLang = normalizeLanguagePreferenceCode(base?.lang || currentLangArg, "en") || "en";
+  const fallbackLang = getVisibleLangFallback(setCode, currentLang);
+  const available = new Set([currentLang, fallbackLang]);
+
+  if (!setCode) {
+    return sortVariantLangCodes([...available], [currentLang, fallbackLang, "en", "es"]);
+  }
+
+  for (const lang of getManualAvailableLangsForCard(setCode, oracleId, collectorNumber)) {
+    available.add(lang);
+  }
+
+  if (!oracleId) {
+    if (collectorNumber) {
+      for (const lang of getSetUiAvailableLangs(setCode)) {
+        const byCollectorKey = `${setCode}::${collectorNumber}::${lang}`;
+        if ((catalogPrintsBySetCollectorLang[byCollectorKey] || []).length > 0) {
+          available.add(lang);
+        } else if (!cacheCartasPorSetLang[`${setCode}__${lang}`]) {
+          available.add(lang);
+        }
+      }
+    }
+    return sortVariantLangCodes([...available], [currentLang, fallbackLang, "en", "es"]);
+  }
+
+  const variantKey = `${setCode}::${oracleId}::${collectorNumber}`;
+  for (const printId of catalogVariantPrintsBySetCard[variantKey] || []) {
+    const meta = catalogPrintMetaById[printId];
+    const lang = normalizeLanguagePreferenceCode(meta?.lang);
+    if (lang) available.add(lang);
+  }
+
+  for (const [langRaw, variant] of Object.entries(cacheCardByOracleLang[oracleId] || {})) {
+    const lang = normalizeLanguagePreferenceCode(langRaw);
+    if (!lang) continue;
+    const variantSetCode = String(variant?.setCode || variant?.set || variant?._raw?.set || "").trim().toLowerCase();
+    const variantCollector = normalizeCollectorNumberKey(variant?.collector_number || variant?.numero || "");
+    if (variantSetCode && variantSetCode !== setCode) continue;
+    if (collectorNumber && variantCollector && variantCollector !== collectorNumber) continue;
+    available.add(lang);
+  }
+
+  if (collectorNumber) {
+    for (const lang of getSetUiAvailableLangs(setCode)) {
+      const byCollectorKey = `${setCode}::${collectorNumber}::${lang}`;
+      if ((catalogPrintsBySetCollectorLang[byCollectorKey] || []).length > 0) {
+        available.add(lang);
+      } else if (!cacheCartasPorSetLang[`${setCode}__${lang}`]) {
+        available.add(lang);
+      }
+    }
+  }
+
+  const availableResult = sortVariantLangCodes([...available], [currentLang, fallbackLang, "en", "es"]);
+  return availableResult;
+}
+
+function filterVisibleLangsForCard(setCode, oracleId, collectorNumber, langs, fallbackLang = "en", currentLang = "en") {
+  const availableLangs = getAvailableVariantLangsForCard(setCode, oracleId, collectorNumber, currentLang);
+  const availableSet = new Set(availableLangs);
+  const normalized = normalizeLanguagePreferenceList(langs, {
+    fallbackToEnglish: false,
+    fallbackLang: getVisibleLangFallback(setCode, fallbackLang)
+  });
+  const filtered = normalized.filter(lang => availableSet.has(lang));
+  if (filtered.length > 0) {
+    return sortVariantLangCodes(filtered, [currentLang, fallbackLang, "en", "es"]);
+  }
+  return [availableLangs[0] || getVisibleLangFallback(setCode, fallbackLang)];
+}
+
+function buildVisibleLangPanelId(setCode, oracleId, collectorNumber = "") {
+  return `lang-panel-${buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function getVisibleVariantResolutionInfo(card, { variantScope = "generic" } = {}) {
+  const normalized = normalizeVisibleVariantCard(card, card);
+  const resolutionMode = String(normalized?._variantResolution || "").trim().toLowerCase();
+  if (resolutionMode === "manual-fallback") {
+    return {
+      mode: "manual-fallback",
+      text: "Idioma manual · sin print resuelto"
+    };
+  }
+
+  const displayedLang = normalizeLanguagePreferenceCode(normalized?.lang, "en") || "en";
+  const setCode = String(normalized?.setCode || normalized?.set || "").trim().toLowerCase();
+  const oracleId = String(normalized?.oracle_id || "").trim();
+  const collectorNumber = normalizeCollectorNumberKey(normalized?.collector_number || normalized?.numero || "");
+  const metaLang = normalizeLanguagePreferenceCode(getCatalogPrintMetaForIntegrity(normalized?.id)?.lang);
+  const hasExactResolvedPrint = variantScope === "set-exact"
+    ? !!getExactSetPrintIdForLang(setCode, collectorNumber, displayedLang)
+    : false;
+
+  if (displayedLang && metaLang && metaLang === displayedLang) {
+    return { mode: "resolved", text: "" };
+  }
+
+  if (hasExactResolvedPrint) {
+    return { mode: "resolved", text: "" };
+  }
+
+  if (isManualLangAllowedForCard(setCode, oracleId, collectorNumber, displayedLang)) {
+    return {
+      mode: "manual-fallback",
+      text: "Idioma manual · sin print resuelto"
+    };
+  }
+
+  return { mode: "resolved", text: "" };
+}
+
+function getSetLangResolutionInfo(setCode, lang) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeLang = normalizePhase1ManualLangCode(lang);
+  if (!safeSetCode || !safeLang) return { mode: "resolved", text: "" };
+
+  const rawSetLangs = new Set(normalizeSetLangs(setLangsByCode[safeSetCode] || []));
+  const hasRealSetLang = rawSetLangs.has(safeLang) || hasLoadedNonEmptySetLangBucket(safeSetCode, safeLang);
+
+   if (safeLang === "es" && hasCanonicalSpanishSetException(safeSetCode) && !hasLoadedNonEmptySetLangBucket(safeSetCode, safeLang)) {
+    return {
+      mode: "manual-fallback",
+      text: "Excepcion espanola · set sin print resuelto"
+    };
+  }
+
+  if (hasManualSetLangOverride(safeSetCode, safeLang) && !hasRealSetLang) {
+    return {
+      mode: "manual-fallback",
+      text: "Idioma manual · set sin print resuelto"
+    };
+  }
+
+  return { mode: "resolved", text: "" };
+}
+
+function renderLangResolutionNoteHTML(info) {
+  if (!info || info.mode !== "manual-fallback" || !info.text) return "";
+  return `<div class="lang-resolution-note is-manual" title="${escapeAttr(info.text)}">${escapeHtml(info.text)}</div>`;
+}
+
+const visibleVariantSelectorFeedbackTimerByElement = new WeakMap();
+
+function getVisibleVariantSelectorFeedback(controls) {
+  if (!controls) return null;
+  const message = String(controls.dataset.langFeedbackMessage || "").trim();
+  if (!message) return null;
+
+  return {
+    type: String(controls.dataset.langFeedbackType || "info").trim() || "info",
+    message
+  };
+}
+
+function clearVisibleVariantSelectorFeedback(controls) {
+  if (!controls) return;
+  const timerId = visibleVariantSelectorFeedbackTimerByElement.get(controls);
+  if (timerId) {
+    clearTimeout(timerId);
+    visibleVariantSelectorFeedbackTimerByElement.delete(controls);
+  }
+
+  delete controls.dataset.langFeedbackType;
+  delete controls.dataset.langFeedbackMessage;
+}
+
+function setVisibleVariantSelectorFeedback(controls, message, { type = "info", durationMs = 2800 } = {}) {
+  if (!controls) return;
+  const safeMessage = String(message || "").trim();
+  if (!safeMessage) {
+    clearVisibleVariantSelectorFeedback(controls);
+    return;
+  }
+
+  clearVisibleVariantSelectorFeedback(controls);
+  controls.dataset.langFeedbackType = String(type || "info").trim() || "info";
+  controls.dataset.langFeedbackMessage = safeMessage;
+
+  const host = controls.classList.contains("modal-controles")
+    ? document.getElementById("modalCartaBody")
+    : controls.closest(".carta-item");
+  const currentCard = getCurrentVisibleVariantCardForElement(host);
+  if (host && currentCard) syncVisibleVariantSelectorUI(host, currentCard);
+
+  const timerId = setTimeout(() => {
+    clearVisibleVariantSelectorFeedback(controls);
+    const feedbackHost = controls.classList.contains("modal-controles")
+      ? document.getElementById("modalCartaBody")
+      : controls.closest(".carta-item");
+    const feedbackCard = getCurrentVisibleVariantCardForElement(feedbackHost);
+    if (feedbackHost && feedbackCard) syncVisibleVariantSelectorUI(feedbackHost, feedbackCard);
+  }, durationMs);
+
+  visibleVariantSelectorFeedbackTimerByElement.set(controls, timerId);
+}
+
+function getEffectiveSetVisibleLang(setCode, fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeFallback = normalizeLanguagePreferenceCode(fallbackLang, DEFAULT_APP_FALLBACK_LANG) || DEFAULT_APP_FALLBACK_LANG;
+  if (!safeSetCode) return safeFallback;
+
+  const activeLang = getActiveVisibleLang(safeSetCode, "", "", safeFallback);
+  if (safeSetCode !== String(setActualCode || "").trim().toLowerCase()) {
+    return activeLang;
+  }
+
+  const openedLang = normalizeLanguagePreferenceCode(setActualLang, activeLang) || activeLang;
+  const activeResolution = getSetLangResolutionInfo(safeSetCode, activeLang);
+  const openedSetKey = openedLang ? `${safeSetCode}__${openedLang}` : "";
+  const currentSetKey = String(setActualKey || "").trim().toLowerCase();
+  const hasOpenedExactSet = !!openedSetKey
+    && currentSetKey === openedSetKey
+    && (cartasDeSetKey(openedSetKey).length > 0 || hasLoadedNonEmptySetLangBucket(safeSetCode, openedLang));
+
+  if (activeResolution.mode === "manual-fallback") return activeLang;
+  if (hasOpenedExactSet) return openedLang;
+  return activeLang;
+}
+
+function shouldLockVisibleVariantSelector({ context = "card", variantScope = "generic" } = {}) {
+  return context === "card" && variantScope === "set-exact";
+}
+
+function buildVisibleVariantLockFeedback() {
+  return "Esta carta sigue el idioma base activo del set.";
+}
+
+function renderLanguageBadgeHTML(lang, { active = false } = {}) {
+  const safeLang = normalizeLanguagePreferenceCode(lang, "en") || "en";
+  const label = getLangDisplayLabel(safeLang);
+  const classes = ["lang-badge"];
+  if (active) classes.push("lang-active");
+  if (!hasLangFlagAsset(safeLang)) classes.push("lang-badge-code");
+
+  if (hasLangFlagAsset(safeLang)) {
+    return `<span class="${classes.join(" ")}"><img class="flag-icon" src="icons/flag-${safeLang}.svg" alt="${escapeAttr(label)}" /><span class="lang-label">${escapeHtml(label)}</span></span>`;
+  }
+
+  return `<span class="${classes.join(" ")}"><span class="lang-code-pill">${escapeHtml(label)}</span></span>`;
+}
+
+function renderVisibleVariantSelectorHTML(card, { langMode = "both", panelOpen = false, context = "card", variantScope = "generic", feedback = null } = {}) {
+  const normalized = normalizeVisibleVariantCard(card, card);
+  const setCode = String(normalized.setCode || normalized.set || "").toLowerCase();
+  const oracleId = String(normalized.oracle_id || "");
+  const collectorNumber = String(normalized.collector_number || normalized.numero || "");
+  const activeLang = normalizeLanguagePreferenceCode(normalized.lang, "en") || "en";
+  const resolutionInfo = getVisibleVariantResolutionInfo(normalized, { variantScope });
+  const selectorLocked = shouldLockVisibleVariantSelector({ context, variantScope });
+  const feedbackHtml = feedback?.message
+    ? `<div class="lang-selector-feedback is-${escapeAttr(feedback.type || "info")}" role="status" aria-live="polite">${escapeHtml(feedback.message || "")}</div>`
+    : "";
+
+  if (langMode !== "both" || selectorLocked) {
+    const lockButtonHtml = selectorLocked
+      ? `<button class="btn-lang-choice is-active is-locked" type="button" data-lang-locked="true" aria-label="${escapeAttr(buildVisibleVariantLockFeedback())}">${renderLanguageBadgeHTML(activeLang, { active: true })}</button>`
+      : renderLanguageBadgeHTML(activeLang, { active: true });
+    const readonlyContentHtml = selectorLocked
+      ? `<div class="lang-selector-anchor">${lockButtonHtml}${feedbackHtml}</div>`
+      : `${lockButtonHtml}${feedbackHtml}`;
+    return `<div class="lang-selector-shell is-readonly">${readonlyContentHtml}${renderLangResolutionNoteHTML(resolutionInfo)}</div>`;
+  }
+
+  const availableLangs = variantScope === "set-exact"
+    ? getExactSetAvailableLangsForCard(normalized)
+    : getAvailableVariantLangsForCard(normalized);
+  const visibleLangs = getStableVisibleLangDisplayOrder([...availableLangs, activeLang]);
+  const choicesHtml = visibleLangs.map(lang => {
+    const isActive = lang === activeLang;
+    return `<button class="btn-lang-choice${isActive ? " is-active" : ""}" type="button" data-lang-choice="${escapeAttr(lang)}" data-oracle="${escapeAttr(oracleId)}" data-set-code="${escapeAttr(setCode)}" data-collector-number="${escapeAttr(collectorNumber)}" aria-pressed="${isActive ? "true" : "false"}">${renderLanguageBadgeHTML(lang, { active: isActive })}</button>`;
+  }).join("");
+
+  return `
+    <div class="lang-selector-shell" data-selector-context="${escapeAttr(context)}">
+      <div class="lang-selector-top">
+        <div class="lang-selector-buttons">${choicesHtml}</div>
+      </div>
+      ${renderLangResolutionNoteHTML(resolutionInfo)}
+      ${feedbackHtml}
+    </div>
+  `;
+}
+
+function buildSetVisibleLangPanelId(setCode) {
+  return `set-lang-panel-${String(setCode || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-")}`;
+}
+
+function getSetReleasedAt(setCode, lang = "") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeLang = normalizeLanguagePreferenceCode(lang, "") || "";
+  if (!safeSetCode) return "";
+
+  if (safeLang) {
+    const exactMeta = setMetaByKey.get(`${safeSetCode}__${safeLang}`);
+    if (exactMeta?.released_at) return String(exactMeta.released_at || "").trim();
+  }
+
+  for (const candidateLang of getUiEnabledSetLangs()) {
+    const meta = setMetaByKey.get(`${safeSetCode}__${candidateLang}`);
+    if (meta?.released_at) return String(meta.released_at || "").trim();
+  }
+
+  const collectionEntry = obtenerColecciones().find(entry => String(entry.code || "").trim().toLowerCase() === safeSetCode);
+  return String(collectionEntry?.released_at || "").trim();
+}
+
+function isFutureReleasedAt(releasedAt) {
+  const safeReleasedAt = String(releasedAt || "").trim();
+  if (!safeReleasedAt) return false;
+
+  const [year, month, day] = safeReleasedAt.split("-").map(part => Number(part));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return false;
+
+  const releaseDateUtc = Date.UTC(year, month - 1, day);
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return releaseDateUtc > todayUtc;
+}
+
+function clearSetLangToolbarFeedback({ rerender = true } = {}) {
+  if (setLangToolbarFeedbackTimer) {
+    clearTimeout(setLangToolbarFeedbackTimer);
+    setLangToolbarFeedbackTimer = null;
+  }
+
+  const previousSetCode = setLangToolbarFeedbackState?.setCode || "";
+  setLangToolbarFeedbackState = null;
+  if (rerender && previousSetCode) {
+    renderSetVisibleLangToolbar(previousSetCode || setActualCode);
+  }
+}
+
+function setSetLangToolbarFeedback(setCode, feedback = null) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  clearSetLangToolbarFeedback({ rerender: false });
+
+  if (!safeSetCode || !feedback?.message) {
+    renderSetVisibleLangToolbar(safeSetCode || setActualCode);
+    return;
+  }
+
+  setLangToolbarFeedbackState = {
+    setCode: safeSetCode,
+    type: feedback.type || "info",
+    message: String(feedback.message || "").trim(),
+    persist: !!feedback.persist
+  };
+
+  if (!feedback.persist) {
+    const timeoutMs = Number.isFinite(feedback.timeoutMs) ? feedback.timeoutMs : 4800;
+    setLangToolbarFeedbackTimer = setTimeout(() => {
+      clearSetLangToolbarFeedback();
+    }, Math.max(1200, timeoutMs));
+  }
+
+  renderSetVisibleLangToolbar(safeSetCode);
+}
+
+function getSetLangToolbarFeedback(setCode) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) return null;
+  if (setLangToolbarFeedbackState?.setCode !== safeSetCode) return null;
+  return setLangToolbarFeedbackState;
+}
+
+function buildSetLangSwitchFeedback(result) {
+  if (!result || result.status === "changed") return null;
+
+  const langLabel = getLangDisplayLabel(result.requestedLang || result.effectiveLangAfter || DEFAULT_APP_FALLBACK_LANG);
+
+  switch (result.reason) {
+    case "already-active":
+      return {
+        type: "info",
+        message: `Ya estas viendo este set en ${langLabel}.`,
+        timeoutMs: 2800
+      };
+    case "manual-fallback-unresolved":
+      return {
+        type: "warning",
+        message: `${langLabel} esta previsto para este set, pero todavia no hay cartas disponibles.`,
+        timeoutMs: 5200
+      };
+    case "lang-not-openable":
+      return {
+        type: "warning",
+        message: `Este set no se puede abrir en ${langLabel}.`,
+        timeoutMs: 5200
+      };
+    case "set-not-released-yet":
+      return {
+        type: "warning",
+        message: `Este set aun no ha salido en ${langLabel}.`,
+        timeoutMs: 5200
+      };
+    case "no-cards-for-lang":
+      return {
+        type: "warning",
+        message: `No hay cartas publicadas para este set en ${langLabel}.`,
+        timeoutMs: 5200
+      };
+    case "load-error":
+      return {
+        type: "error",
+        message: `No se pudo cargar ${langLabel}. Intentalo otra vez.`,
+        timeoutMs: 6200,
+        persist: true
+      };
+    default:
+      return {
+        type: "warning",
+        message: "No se pudo cambiar el idioma para este set.",
+        timeoutMs: 4800
+      };
+  }
+}
+
+async function switchSetBaseLanguageWithResult(setCode, requestedLang) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const safeRequestedLang = normalizeLanguagePreferenceCode(requestedLang, getActiveVisibleLang(safeSetCode) || DEFAULT_APP_FALLBACK_LANG)
+    || DEFAULT_APP_FALLBACK_LANG;
+  const effectiveLangBefore = getEffectiveSetVisibleLang(safeSetCode, getActiveVisibleLang(safeSetCode) || DEFAULT_APP_FALLBACK_LANG)
+    || DEFAULT_APP_FALLBACK_LANG;
+
+  const baseResult = {
+    status: "unchanged",
+    reason: "fallback-unchanged",
+    setCode: safeSetCode,
+    requestedLang: safeRequestedLang,
+    effectiveLangBefore,
+    effectiveLangAfter: effectiveLangBefore,
+    targetSetKey: safeSetCode && safeRequestedLang ? `${safeSetCode}__${safeRequestedLang}` : "",
+    releaseDate: getSetReleasedAt(safeSetCode, safeRequestedLang)
+  };
+
+  if (!safeSetCode) {
+    return {
+      ...baseResult,
+      status: "failed",
+      reason: "load-error"
+    };
+  }
+
+  if (safeRequestedLang === effectiveLangBefore) {
+    return {
+      ...baseResult,
+      reason: "already-active"
+    };
+  }
+
+  const resolutionInfo = getSetLangResolutionInfo(safeSetCode, safeRequestedLang);
+  if (resolutionInfo.mode === "manual-fallback") {
+    return {
+      ...baseResult,
+      reason: "manual-fallback-unresolved"
+    };
+  }
+
+  const openableLangs = getSetOpenableLangs(safeSetCode);
+  if (!openableLangs.includes(safeRequestedLang)) {
+    return {
+      ...baseResult,
+      reason: "lang-not-openable"
+    };
+  }
+
+  const nextLang = setActiveVisibleLang(safeSetCode, safeRequestedLang, { persist: false, syncLegacy: true });
+  const explicitTargetSetKey = nextLang ? `${safeSetCode}__${nextLang}` : "";
+
+  try {
+    if (explicitTargetSetKey) {
+      await ensureSetCardsLoaded(explicitTargetSetKey);
+      const loadedCards = cartasDeSetKey(explicitTargetSetKey).length;
+      if (loadedCards > 0) {
+        clearSetExactSessionVisibleLangOverridesForSet(safeSetCode);
+        const overridesCleared = clearVisibleVariantOverridesForSet(safeSetCode, { persist: false });
+        if (nextLang || overridesCleared) guardarEstado3();
+        await abrirSet(explicitTargetSetKey);
+        return {
+          ...baseResult,
+          status: "changed",
+          reason: "changed",
+          effectiveLangAfter: nextLang || safeRequestedLang,
+          targetSetKey: explicitTargetSetKey,
+          releaseDate: getSetReleasedAt(safeSetCode, nextLang || safeRequestedLang)
+        };
+      }
+    }
+
+    const restoredLang = setActiveVisibleLang(safeSetCode, effectiveLangBefore, { persist: false, syncLegacy: true });
+    if (restoredLang !== nextLang) guardarEstado3();
+    await syncOpenedSetToActiveVisibleLang(safeSetCode);
+
+    const releaseDate = getSetReleasedAt(safeSetCode, nextLang || safeRequestedLang);
+    return {
+      ...baseResult,
+      reason: isFutureReleasedAt(releaseDate) ? "set-not-released-yet" : "no-cards-for-lang",
+      effectiveLangAfter: restoredLang || effectiveLangBefore,
+      targetSetKey: explicitTargetSetKey,
+      releaseDate
+    };
+  } catch (err) {
+    const restoredLang = setActiveVisibleLang(safeSetCode, effectiveLangBefore, { persist: false, syncLegacy: true });
+    if (restoredLang !== nextLang) guardarEstado3();
+    await syncOpenedSetToActiveVisibleLang(safeSetCode);
+    return {
+      ...baseResult,
+      status: "failed",
+      reason: "load-error",
+      effectiveLangAfter: restoredLang || effectiveLangBefore,
+      targetSetKey: explicitTargetSetKey,
+      error: err
+    };
+  }
+}
+
+function getSetLangToolbarRenderState(setCode) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const storedActiveLang = getActiveVisibleLang(safeSetCode);
+  const loadingForSet = setLangToolbarLoadingState?.busy && setLangToolbarLoadingState?.setCode === safeSetCode;
+  const pendingLang = loadingForSet
+    ? (normalizeLanguagePreferenceCode(setLangToolbarLoadingState?.targetLang, storedActiveLang) || storedActiveLang)
+    : "";
+  const effectiveActiveLang = pendingLang || getEffectiveSetVisibleLang(safeSetCode, storedActiveLang || "en") || "en";
+
+  return {
+    activeLang: effectiveActiveLang,
+    isLoading: !!loadingForSet,
+    loadingLang: pendingLang || effectiveActiveLang,
+    feedback: getSetLangToolbarFeedback(safeSetCode)
+  };
+}
+
+function setSetListLoadingState(isLoading, message = "") {
+  const shell = document.getElementById("setListShell");
+  const overlay = document.getElementById("setLoadingOverlay");
+  if (!shell || !overlay) return;
+
+  const text = overlay.querySelector(".set-loading-overlay-text");
+  if (text && message) text.textContent = message;
+
+  shell.classList.toggle("is-loading", !!isLoading);
+  overlay.classList.toggle("hidden", !isLoading);
+  overlay.setAttribute("aria-hidden", isLoading ? "false" : "true");
+}
+
+function setSetLangToolbarLoading(setCode, targetLang = "", isLoading = false) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const loadingLang = normalizeLanguagePreferenceCode(targetLang, getActiveVisibleLang(safeSetCode)) || getActiveVisibleLang(safeSetCode) || "en";
+
+  if (isLoading && safeSetCode) {
+    setLangToolbarLoadingState = {
+      busy: true,
+      setCode: safeSetCode,
+      targetLang: loadingLang
+    };
+  } else {
+    setLangToolbarLoadingState = null;
+  }
+
+  setSetListLoadingState(
+    !!(isLoading && safeSetCode),
+    `Cargando cartas en ${getLangDisplayLabel(loadingLang)}...`
+  );
+
+  renderSetVisibleLangToolbar(safeSetCode || setActualCode);
+}
+
+function renderSetVisibleLangSelectorHTML(setCode, { panelOpen = false } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) return "";
+
+  const { activeLang, isLoading, loadingLang, feedback } = getSetLangToolbarRenderState(safeSetCode);
+  const resolutionInfo = getSetLangResolutionInfo(safeSetCode, activeLang);
+  const availableLangs = getStableVisibleLangDisplayOrder(getSetRuntimeUiLangs(safeSetCode, activeLang));
+  const visibleLangs = getStableVisibleLangDisplayOrder([...availableLangs, activeLang]);
+  const loadingText = `Cargando set en ${getLangDisplayLabel(loadingLang)}...`;
+
+  const choicesHtml = visibleLangs.map(lang => {
+    const isActive = lang === activeLang;
+    return `<button class="btn-lang-choice${isActive ? " is-active" : ""}" type="button" data-set-lang-choice="${escapeAttr(lang)}" data-set-code="${escapeAttr(safeSetCode)}" aria-pressed="${isActive ? "true" : "false"}" ${isLoading ? "disabled" : ""}>${renderLanguageBadgeHTML(lang, { active: isActive })}</button>`;
+  }).join("");
+
+  return `
+    <div class="set-lang-toolbar-card${isLoading ? " is-loading" : ""}">
+      <div class="set-lang-toolbar-copy">
+        <div class="set-lang-toolbar-title">Idiomas base del set</div>
+        <div class="set-lang-toolbar-hint">La tabla usa este idioma como vista principal.</div>
+        ${isLoading ? `<div class="set-lang-toolbar-status" role="status" aria-live="polite"><span class="set-lang-toolbar-spinner" aria-hidden="true"></span><span>${escapeHtml(loadingText)}</span></div>` : ""}
+      </div>
+      <div class="lang-selector-shell" data-selector-context="set" ${isLoading ? 'aria-busy="true"' : ""}>
+        <div class="lang-selector-top">
+          <div class="lang-selector-buttons">${choicesHtml}</div>
+        </div>
+        ${renderLangResolutionNoteHTML(resolutionInfo)}
+        ${feedback ? `<div class="set-lang-toolbar-feedback is-${escapeAttr(feedback.type || "info")}" role="status" aria-live="polite">${escapeHtml(feedback.message || "")}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderSetVisibleLangToolbar(setCode = setActualCode) {
+  const toolbar = document.getElementById("setLangToolbar");
+  if (!toolbar) return;
+
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) {
+    toolbar.innerHTML = "";
+    toolbar.dataset.langSelectorOpen = "false";
+    toolbar.dataset.setCode = "";
+    toolbar.classList.add("hidden");
+    return;
+  }
+
+  const panelOpen = toolbar.dataset.langSelectorOpen === "true";
+  toolbar.dataset.setCode = safeSetCode;
+  toolbar.innerHTML = renderSetVisibleLangSelectorHTML(safeSetCode, { panelOpen });
+  toolbar.classList.remove("hidden");
+}
+
+function closeSetVisibleLangPanel() {
+  const toolbar = document.getElementById("setLangToolbar");
+  if (!toolbar || toolbar.dataset.langSelectorOpen !== "true") return;
+  toolbar.dataset.langSelectorOpen = "false";
+  renderSetVisibleLangToolbar(toolbar.dataset.setCode || setActualCode);
+}
+
+function setSetVisibleLangPanelOpen(isOpen) {
+  const toolbar = document.getElementById("setLangToolbar");
+  if (!toolbar) return;
+  toolbar.dataset.langSelectorOpen = isOpen ? "true" : "false";
+  renderSetVisibleLangToolbar(toolbar.dataset.setCode || setActualCode);
+}
+
+function refreshSetVisibleLangUI({ rerenderTable = true } = {}) {
+  renderSetVisibleLangToolbar(setActualCode);
+  if (rerenderTable && setActualKey) renderTablaSet(setActualKey);
+}
+
+async function syncOpenedSetToActiveVisibleLang(setCode = setActualCode, { rerenderTable = true } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) return;
+
+  const activeLang = getActiveVisibleLang(safeSetCode);
+  const resolvedTargetLang = resolveSetBaseLang(safeSetCode, activeLang || DEFAULT_APP_FALLBACK_LANG);
+  const explicitTargetSetKey = resolvedTargetLang ? `${safeSetCode}__${resolvedTargetLang}` : "";
+
+  if (safeSetCode === setActualCode && explicitTargetSetKey) {
+    try {
+      await ensureSetCardsLoaded(explicitTargetSetKey);
+      if (cartasDeSetKey(explicitTargetSetKey).length > 0) {
+        if (explicitTargetSetKey !== setActualKey) {
+          await abrirSet(explicitTargetSetKey);
+        } else {
+          refreshSetVisibleLangUI({ rerenderTable });
+        }
+        return;
+      }
+    } catch (err) {
+      console.warn(`No se pudo abrir ${explicitTargetSetKey} al sincronizar idioma visible:`, err);
+    }
+  }
+
+  refreshSetVisibleLangUI({ rerenderTable });
+}
+
+function clearVisibleVariantOverridesForSet(setCode, { persist = true } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) return false;
+
+  const uiPrefs = getUiPreferencesV3();
+  const keyPrefix = `${safeSetCode}::`;
+  let changed = false;
+
+  for (const key of Object.keys(uiPrefs.selectedVariantByCard || {})) {
+    if (!String(key || "").startsWith(keyPrefix)) continue;
+    delete uiPrefs.selectedVariantByCard[key];
+    changed = true;
+  }
+
+  for (const key of Object.keys(uiPrefs.visibleLangsByCard || {})) {
+    if (!String(key || "").startsWith(keyPrefix)) continue;
+    delete uiPrefs.visibleLangsByCard[key];
+    changed = true;
+  }
+
+  if (persist && changed) guardarEstado3();
+  return changed;
+}
+
+function getVisibleLangsForCard(setCode, oracleId, collectorNumber = "", fallbackLang = "en") {
+  const key = buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber);
+  const uiPrefs = getUiPreferencesV3();
+  const stored = uiPrefs.visibleLangsByCard?.[key];
+  const currentLang = normalizeLanguagePreferenceCode(getKnownCardById(getSelectedVariantPrintId(setCode, oracleId, collectorNumber))?.lang, fallbackLang)
+    || normalizeLanguagePreferenceCode(uiPrefs.activeLangBySet?.[String(setCode || "").trim().toLowerCase()], fallbackLang)
+    || normalizeLanguagePreferenceCode(fallbackLang, "en")
+    || "en";
+  if (Array.isArray(stored) && stored.length > 0) {
+    return filterVisibleLangsForCard(setCode, oracleId, collectorNumber, stored, fallbackLang, currentLang);
+  }
+  return filterVisibleLangsForCard(setCode, oracleId, collectorNumber, getVisibleLangsForSet(setCode, fallbackLang), fallbackLang, currentLang);
+}
+
+function setVisibleLangsForCard(setCode, oracleId, collectorNumber, langs, { persist = true } = {}) {
+  const key = buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber);
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const uiPrefs = getUiPreferencesV3();
+  const currentLang = normalizeLanguagePreferenceCode(getKnownCardById(getSelectedVariantPrintId(safeSetCode, oracleId, collectorNumber))?.lang,
+    uiPrefs.activeLangBySet?.[safeSetCode] || uiPrefs.preferredSetLang?.[safeSetCode] || "en") || "en";
+  const normalizedLangs = filterVisibleLangsForCard(
+    safeSetCode,
+    oracleId,
+    collectorNumber,
+    langs,
+    uiPrefs.activeLangBySet?.[safeSetCode] || uiPrefs.preferredSetLang?.[safeSetCode] || "en",
+    currentLang
+  );
+  const inheritedSetLangs = filterVisibleLangsForCard(safeSetCode, oracleId, collectorNumber, getVisibleLangsForSet(safeSetCode, normalizedLangs[0]), normalizedLangs[0], currentLang);
+  const previous = JSON.stringify(uiPrefs.visibleLangsByCard?.[key] || []);
+
+  if (JSON.stringify(normalizedLangs) === JSON.stringify(inheritedSetLangs)) {
+    delete uiPrefs.visibleLangsByCard[key];
+  } else {
+    uiPrefs.visibleLangsByCard[key] = normalizedLangs;
+  }
+
+  if (persist && previous !== JSON.stringify(uiPrefs.visibleLangsByCard?.[key] || [])) guardarEstado3();
+  return [...(uiPrefs.visibleLangsByCard?.[key] || inheritedSetLangs)];
+}
+
+function setVisibleLangsForCardExactSet(setCode, oracleId, collectorNumber, langs, { persist = true } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const uiPrefs = getUiPreferencesV3();
+  const currentLang = normalizeLanguagePreferenceCode(
+    getKnownCardById(getSelectedVariantPrintId(safeSetCode, oracleId, collectorNumber))?.lang,
+    uiPrefs.activeLangBySet?.[safeSetCode] || uiPrefs.preferredSetLang?.[safeSetCode] || "en"
+  ) || "en";
+  const available = new Set(getExactSetAvailableLangsForCard(safeSetCode, oracleId, collectorNumber, currentLang));
+  const normalizedLangs = setSessionVisibleLangsForCardExact(
+    safeSetCode,
+    oracleId,
+    collectorNumber,
+    sortVariantLangCodes(
+      normalizeLanguagePreferenceList(langs, {
+        fallbackToEnglish: false,
+        fallbackLang: getVisibleLangFallback(safeSetCode, currentLang)
+      }).filter(lang => available.has(lang)),
+      [currentLang, "en", "es"]
+    ),
+    currentLang
+  );
+  return [...normalizedLangs];
+}
+
+function getActiveVisibleLang(setCode, oracleId = "", collectorNumber = "", fallbackLang = "en") {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  const uiPrefs = getUiPreferencesV3();
+  const visibleLangs = oracleId
+    ? getVisibleLangsForCard(safeSetCode, oracleId, collectorNumber, fallbackLang)
+    : getVisibleLangsForSet(safeSetCode, fallbackLang);
+  const activeLang = normalizeLanguagePreferenceCode(uiPrefs.activeLangBySet?.[safeSetCode]);
+  if (activeLang && visibleLangs.includes(activeLang)) return activeLang;
+
+  const preferred = normalizeLanguagePreferenceCode(uiPrefs.preferredSetLang?.[safeSetCode]);
+  if (preferred && visibleLangs.includes(preferred)) return preferred;
+
+  return visibleLangs[0] || getVisibleLangFallback(safeSetCode, fallbackLang);
+}
+
+function getPreferredVisibleLang(setCode, fallbackLang = "en", oracleId = "", collectorNumber = "") {
+  return getActiveVisibleLang(setCode, oracleId, collectorNumber, fallbackLang);
+}
+
+function setActiveVisibleLang(setCode, lang, { persist = true, syncLegacy = false } = {}) {
+  const safeSetCode = String(setCode || "").trim().toLowerCase();
+  if (!safeSetCode) return "";
+  const uiPrefs = getUiPreferencesV3();
+  const visibleLangs = getSetVisibleLangChoices(safeSetCode);
+  const safeLang = resolveSetBaseLang(safeSetCode, lang || visibleLangs[0] || DEFAULT_APP_FALLBACK_LANG);
+  const previousPreferred = uiPrefs.preferredSetLang[safeSetCode];
+  const previousActive = uiPrefs.activeLangBySet[safeSetCode];
+
+  uiPrefs.preferredSetLang[safeSetCode] = safeLang;
+  uiPrefs.activeLangBySet[safeSetCode] = safeLang;
+
+  if (!Array.isArray(uiPrefs.visibleLangsBySet?.[safeSetCode]) || !uiPrefs.visibleLangsBySet[safeSetCode].includes(safeLang)) {
+    setVisibleLangsForSet(safeSetCode, [...visibleLangs, safeLang], { persist: false });
+  }
+
+  if (persist && (previousPreferred !== safeLang || previousActive !== safeLang)) guardarEstado3();
+
+  if (syncLegacy) syncLegacyUiLangCacheForSet(safeSetCode, safeLang);
+  return safeLang;
+}
+
+function setPreferredVisibleLang(setCode, lang, { persist = true, syncLegacy = false } = {}) {
+  return setActiveVisibleLang(setCode, lang, { persist, syncLegacy });
+}
+
+function getNextVisibleLang(setCode, currentLang, oracleId = "", collectorNumber = "", fallbackLang = "en") {
+  const visibleLangs = getVisibleLangsForCard(setCode, oracleId, collectorNumber, fallbackLang);
+  if (visibleLangs.length <= 1) return "";
+  const safeCurrent = normalizeLanguagePreferenceCode(currentLang, visibleLangs[0]) || visibleLangs[0];
+  const currentIndex = visibleLangs.indexOf(safeCurrent);
+  if (currentIndex === -1) return visibleLangs[0];
+  return visibleLangs[(currentIndex + 1) % visibleLangs.length] || "";
+}
+
+function getSelectedVariantPrintId(setCode, oracleId, collectorNumber = "") {
+  const uiPrefs = getUiPreferencesV3();
+  const key = buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber);
+  const selected = String(uiPrefs.selectedVariantByCard?.[key] || "").trim();
+  if (selected && !isSelectedVariantPrintIdValid(setCode, oracleId, collectorNumber, selected)) {
+    delete uiPrefs.selectedVariantByCard[key];
+    return "";
+  }
+  return selected || "";
+}
+
+function setSelectedVariantPrintId(setCode, oracleId, collectorNumber, printId) {
+  const safePrintId = String(printId || "").trim();
+  const uiPrefs = getUiPreferencesV3();
+  const key = buildVisibleVariantSelectionKey(setCode, oracleId, collectorNumber);
+  const previousPrintId = String(uiPrefs.selectedVariantByCard?.[key] || "").trim();
+  if (!safePrintId) {
+    delete uiPrefs.selectedVariantByCard[key];
+  } else if (!isSelectedVariantPrintIdValid(setCode, oracleId, collectorNumber, safePrintId)) {
+    return;
+  } else {
+    uiPrefs.selectedVariantByCard[key] = safePrintId;
+  }
+  if (previousPrintId !== String(uiPrefs.selectedVariantByCard?.[key] || "").trim()) {
+    guardarEstado3();
+  }
+}
+
+function getKnownCardById(printId) {
+  const key = String(printId || "").trim();
+  if (!key) return null;
+
+  for (const cartas of Object.values(cacheCartasPorSetLang || {})) {
+    if (!Array.isArray(cartas)) continue;
+    const found = cartas.find(c => String(c?.id || "") === key);
+    if (found) return found;
+  }
+
+  for (const variants of Object.values(cacheCardByOracleLang || {})) {
+    if (!variants || typeof variants !== "object") continue;
+    for (const variant of Object.values(variants)) {
+      if (String(variant?.id || "") === key) return normalizeVisibleVariantCard(variant);
+    }
+  }
+
+  return null;
+}
+
+function normalizeVisibleVariantCard(card, fallbackCard = null) {
+  if (!card) return fallbackCard;
+
+  if (card.nombre && card.numero !== undefined && card._img !== undefined) {
+    return card;
+  }
+
+  const fallbackMeta = fallbackCard ? extractCatalogPrintMeta(fallbackCard, fallbackCard.setKey || "") : null;
+  const cardMeta = extractCatalogPrintMeta(card, card.setKey || fallbackMeta?.setKey || "");
+  const lang = String(card.lang || fallbackMeta?.lang || "en").toLowerCase();
+  const setCode = String(card.setCode || card.set || card._raw?.set || fallbackMeta?.setCode || "").toLowerCase();
+  const collectorNumber = String(card.collector_number || card.collectorNumber || card.numero || fallbackMeta?.collectorNumber || "");
+
+  return {
+    id: String(card.id || fallbackCard?.id || ""),
+    oracle_id: String(card.oracle_id || fallbackCard?.oracle_id || cardMeta?.oracleId || ""),
+    setCode,
+    set: setCode,
+    setKey: card.setKey || fallbackCard?.setKey || (setCode ? `${setCode}__${lang}` : ""),
+    set_name: card.set_name || card._raw?.set_name || fallbackCard?.set_name || "",
+    nombre: card.nombre || pickCardName(card, lang) || card.printed_name || card.name || fallbackCard?.nombre || "Carta",
+    numero: collectorNumber,
+    collector_number: collectorNumber,
+    rareza: card.rareza || mapRarity(card.rarity),
+    lang,
+    releasedAt: card.releasedAt || card.released_at || fallbackCard?.releasedAt || "",
+    type_line: card.type_line || fallbackCard?.type_line || "",
+    cmc: card.cmc ?? fallbackCard?.cmc ?? 0,
+    color_identity: card.color_identity || fallbackCard?.color_identity || [],
+    _img: card._img || pickImage(card) || fallbackCard?._img || null,
+    _prices: card._prices || card.prices || fallbackCard?._prices || null,
+    _colors: card._colors || card.colors || fallbackCard?._colors || null,
+    _raw: card._raw || card,
+    _variantResolution: card._variantResolution || fallbackCard?._variantResolution || "",
+    _variantResolutionReason: card._variantResolutionReason || fallbackCard?._variantResolutionReason || ""
+  };
+}
+
+function buildManualVisibleVariantFallback(card, targetLang) {
+  const base = normalizeVisibleVariantCard(card, card);
+  const safeLang = normalizePhase1ManualLangCode(targetLang, base.lang || "en") || base.lang || "en";
+  const setCode = String(base.setCode || base.set || "").trim().toLowerCase();
+  return normalizeVisibleVariantCard({
+    ...base,
+    lang: safeLang,
+    setKey: setCode ? `${setCode}__${safeLang}` : base.setKey,
+    _variantResolution: "manual-fallback",
+    _variantResolutionReason: "manual-lang-no-print"
+  }, base);
+}
+
+function findCachedVariantForCard(card, lang) {
+  const base = normalizeVisibleVariantCard(card, card);
+  const oracleId = String(base.oracle_id || "").trim();
+  const setCode = String(base.setCode || parseSetKeyParts(base.setKey).code || "").trim().toLowerCase();
+  const collectorNumber = normalizeCollectorNumberKey(base.collector_number || base.numero || "");
+  const targetLang = String(lang || "en").trim().toLowerCase();
+
+  if (!oracleId || !setCode) return null;
+
+  const setKey = `${setCode}__${targetLang}`;
+  const cachedSetCards = cacheCartasPorSetLang[setKey] || [];
+  const exact = cachedSetCards.find(c => String(c.oracle_id || "") === oracleId && normalizeCollectorNumberKey(c.collector_number || c.numero || "") === collectorNumber);
+  if (exact) return normalizeVisibleVariantCard(exact, base);
+
+  if (collectorNumber) {
+    const byCollectorKey = `${setCode}::${collectorNumber}::${targetLang}`;
+    const byCollectorPrintId = [...(catalogPrintsBySetCollectorLang[byCollectorKey] || [])].sort(compareCatalogPrintIds)[0];
+    if (byCollectorPrintId) {
+      const byCollectorCard = getKnownCardById(byCollectorPrintId);
+      if (byCollectorCard) return normalizeVisibleVariantCard(byCollectorCard, base);
+    }
+  }
+
+  if (!collectorNumber) {
+    const generic = cachedSetCards.find(c => String(c.oracle_id || "") === oracleId);
+    if (generic) return normalizeVisibleVariantCard(generic, base);
+  }
+
+  const cachedByLang = cacheCardByOracleLang[oracleId]?.[targetLang];
+  if (cachedByLang) {
+    const cachedVariantCollector = normalizeCollectorNumberKey(cachedByLang?.collector_number || cachedByLang?.numero || "");
+    const cachedVariantSetCode = String(cachedByLang?.setCode || cachedByLang?.set || cachedByLang?._raw?.set || "").trim().toLowerCase();
+    const sameCollector = !collectorNumber || !cachedVariantCollector || cachedVariantCollector === collectorNumber;
+    const sameSet = !setCode || !cachedVariantSetCode || cachedVariantSetCode === setCode;
+    if (sameCollector && sameSet) return normalizeVisibleVariantCard(cachedByLang, base);
+  }
+
+  return null;
+}
+
+async function resolveVisibleVariantForCard(card, preferredLang = null) {
+  const base = normalizeVisibleVariantCard(card, card);
+  const oracleId = String(base.oracle_id || "").trim();
+  const setCode = String(base.setCode || parseSetKeyParts(base.setKey).code || "").trim().toLowerCase();
+  const collectorNumber = String(base.collector_number || base.numero || "").trim();
+  const fallbackLang = String(base.lang || "en").trim().toLowerCase() || "en";
+  const visibleLangs = getVisibleLangsForCard(setCode, oracleId, collectorNumber, fallbackLang);
+  const requestedLang = preferredLang ? getVisibleLangFallback(setCode, preferredLang) : getPreferredVisibleLang(setCode, fallbackLang, oracleId, collectorNumber);
+  const targetLang = visibleLangs.includes(requestedLang) ? requestedLang : (visibleLangs[0] || requestedLang);
+
+  const selectedPrintId = getSelectedVariantPrintId(setCode, oracleId, collectorNumber);
+  if (selectedPrintId) {
+    const selectedCard = getKnownCardById(selectedPrintId);
+    if (selectedCard) {
+      const normalizedSelected = normalizeVisibleVariantCard(selectedCard, base);
+      if (!preferredLang || normalizedSelected.lang === targetLang) {
+        return normalizedSelected;
+      }
+    }
+  }
+
+  if (base.lang === targetLang) return base;
+
+  const cached = findCachedVariantForCard(base, targetLang);
+  if (cached) return cached;
+
+  const fetched = await getPrintByOracleLang(oracleId, targetLang, setCode, collectorNumber);
+  if (fetched) return normalizeVisibleVariantCard(fetched, base);
+  if (isManualLangAllowedForCard(setCode, oracleId, collectorNumber, targetLang)) {
+    return buildManualVisibleVariantFallback(base, targetLang);
+  }
+  return base;
+}
+
+function getCurrentVisibleVariantCardForElement(element, fallbackCard = null) {
+  if (!element) return fallbackCard;
+
+  const modalBody = element.id === "modalCartaBody" ? element : element.closest("#modalCartaBody");
+  if (modalBody) {
+    const currentPrintId = String(modalBody.dataset.currentPrintId || "").trim();
+    const currentLang = normalizeLanguagePreferenceCode(modalBody.dataset.activeLang, fallbackCard?.lang || "en") || fallbackCard?.lang || "en";
+    const knownCard = getKnownCardById(currentPrintId);
+    if (knownCard) {
+      const normalizedKnown = normalizeVisibleVariantCard(knownCard, fallbackCard);
+      if (normalizedKnown.lang !== currentLang) {
+        return buildManualVisibleVariantFallback(normalizedKnown, currentLang);
+      }
+      return normalizedKnown;
+    }
+    return normalizeVisibleVariantCard({
+      id: currentPrintId,
+      oracle_id: modalBody.dataset.oracle || fallbackCard?.oracle_id || "",
+      setCode: modalBody.dataset.setCode || fallbackCard?.setCode || fallbackCard?.set || "",
+      set: modalBody.dataset.setCode || fallbackCard?.setCode || fallbackCard?.set || "",
+      collector_number: modalBody.dataset.collectorNumber || fallbackCard?.collector_number || fallbackCard?.numero || "",
+      numero: modalBody.dataset.collectorNumber || fallbackCard?.collector_number || fallbackCard?.numero || "",
+      lang: currentLang
+    }, fallbackCard);
+  }
+
+  const cartaItem = element.classList?.contains("carta-item") ? element : element.closest(".carta-item");
+  if (cartaItem) {
+    const currentPrintId = String(cartaItem.dataset.visiblePrintId || cartaItem.dataset.cardId || "").trim();
+    const currentLang = normalizeLanguagePreferenceCode(cartaItem.dataset.visibleLang, fallbackCard?.lang || "en") || fallbackCard?.lang || "en";
+    const knownCard = getKnownCardById(currentPrintId);
+    if (knownCard) {
+      const normalizedKnown = normalizeVisibleVariantCard(knownCard, fallbackCard);
+      if (normalizedKnown.lang !== currentLang) {
+        return buildManualVisibleVariantFallback(normalizedKnown, currentLang);
+      }
+      return normalizedKnown;
+    }
+    return normalizeVisibleVariantCard({
+      id: currentPrintId,
+      oracle_id: cartaItem.dataset.oracle || fallbackCard?.oracle_id || "",
+      setCode: cartaItem.dataset.setCode || fallbackCard?.setCode || fallbackCard?.set || "",
+      set: cartaItem.dataset.setCode || fallbackCard?.setCode || fallbackCard?.set || "",
+      collector_number: cartaItem.dataset.collectorNumber || fallbackCard?.collector_number || fallbackCard?.numero || "",
+      numero: cartaItem.dataset.collectorNumber || fallbackCard?.collector_number || fallbackCard?.numero || "",
+      lang: currentLang
+    }, fallbackCard);
+  }
+
+  return fallbackCard;
+}
+
+function syncVisibleVariantSelectorUI(element, variantCard) {
+  const currentCard = getCurrentVisibleVariantCardForElement(element, variantCard);
+  if (!currentCard) return;
+
+  const host = element.id === "modalCartaBody" ? element : (element.classList?.contains("carta-item") ? element : element.closest(".carta-item"));
+  if (!host) return;
+
+  const controls = host.querySelector(".carta-controles");
+  const header = controls?.querySelector(".controles-header");
+  if (!controls || !header) return;
+
+  const panelOpen = controls.dataset.langSelectorOpen === "true";
+  const langMode = controls.dataset.langMode || getCardControlsConfig().langMode || "both";
+  const context = controls.classList.contains("modal-controles") ? "modal" : "card";
+  const variantScope = controls.dataset.variantScope || getVariantScopeForElement(host);
+  const feedback = getVisibleVariantSelectorFeedback(controls);
+  controls.dataset.langSelectorLocked = shouldLockVisibleVariantSelector({ context, variantScope }) ? "true" : "false";
+  header.innerHTML = renderVisibleVariantSelectorHTML(currentCard, { langMode, panelOpen, context, variantScope, feedback });
+}
+
+function closeAllVisibleVariantPanels(exceptControls = null) {
+  document.querySelectorAll('.carta-controles[data-lang-selector-open="true"]').forEach(controls => {
+    if (exceptControls && controls === exceptControls) return;
+    controls.dataset.langSelectorOpen = "false";
+    const host = controls.classList.contains("modal-controles")
+      ? document.getElementById("modalCartaBody")
+      : controls.closest(".carta-item");
+    if (host?.classList?.contains("carta-item")) {
+      host.classList.remove("has-open-lang-panel");
+    }
+    const currentCard = getCurrentVisibleVariantCardForElement(host);
+    if (host && currentCard) syncVisibleVariantSelectorUI(host, currentCard);
+  });
+}
+
+function setVisibleVariantPanelOpen(controls, isOpen) {
+  if (!controls) return;
+  controls.dataset.langSelectorOpen = isOpen ? "true" : "false";
+  const host = controls.classList.contains("modal-controles")
+    ? document.getElementById("modalCartaBody")
+    : controls.closest(".carta-item");
+  if (host?.classList?.contains("carta-item")) {
+    host.classList.toggle("has-open-lang-panel", !!isOpen);
+  }
+  const currentCard = getCurrentVisibleVariantCardForElement(host);
+  if (host && currentCard) syncVisibleVariantSelectorUI(host, currentCard);
+}
+
+async function selectVisibleVariantLangForElement(element, lang, fallbackCard = null) {
+  const currentCard = getCurrentVisibleVariantCardForElement(element, fallbackCard);
+  if (!currentCard) return null;
+
+  const normalized = normalizeVisibleVariantCard(currentCard, currentCard);
+  const setCode = String(normalized.setCode || normalized.set || "").toLowerCase();
+  const oracleId = String(normalized.oracle_id || "");
+  const collectorNumber = String(normalized.collector_number || normalized.numero || "");
+  const targetLang = normalizeLanguagePreferenceCode(lang, normalized.lang || "en") || normalized.lang || "en";
+  const variantScope = getVariantScopeForElement(element);
+  const shouldShowExactLoadHint = variantScope === "set-exact"
+    && !!setCode
+    && targetLang !== normalizeLanguagePreferenceCode(normalized.lang, "en")
+    && !hasLoadedSetLangBucket(setCode, targetLang);
+
+  if (shouldShowExactLoadHint) {
+    setSetListLoadingState(true, `Cargando cartas en ${getLangDisplayLabel(targetLang)}...`);
+  }
+
+  let variantCard = null;
+  try {
+    variantCard = variantScope === "set-exact"
+      ? await resolveExactSetVariantForCard(normalized, targetLang)
+      : await resolveVisibleVariantForCard(normalized, targetLang);
+  } finally {
+    if (shouldShowExactLoadHint && !(setLangToolbarLoadingState?.busy && setLangToolbarLoadingState?.setCode === setCode)) {
+      setSetListLoadingState(false);
+    }
+  }
+  if (!variantCard) return null;
+
+  if (variantCard.id) {
+    setSelectedVariantPrintId(setCode, oracleId, collectorNumber, variantCard.id);
+  }
+
+  const modalBody = document.getElementById("modalCartaBody");
+  const setCard = document.querySelector(`.carta-item[data-set-code="${CSS.escape(setCode)}"][data-collector-number="${CSS.escape(collectorNumber)}"]`);
+
+  if (setCard) applyVisibleVariantToCardItem(setCard, variantCard);
+  if (modalBody
+    && String(modalBody.dataset.setCode || "").toLowerCase() === setCode
+    && String(modalBody.dataset.collectorNumber || "") === collectorNumber) {
+    applyVisibleVariantToModal(modalBody, variantCard);
+  }
+
+  return normalizeVisibleVariantCard(variantCard, normalized);
+}
+
+async function updateVisibleLangSelectionForElement(element, nextVisibleLangs, fallbackCard = null) {
+  const currentCard = getCurrentVisibleVariantCardForElement(element, fallbackCard);
+  if (!currentCard) return null;
+
+  const normalized = normalizeVisibleVariantCard(currentCard, currentCard);
+  const setCode = String(normalized.setCode || normalized.set || "").toLowerCase();
+  const oracleId = String(normalized.oracle_id || "");
+  const collectorNumber = String(normalized.collector_number || normalized.numero || "");
+  const variantScope = getVariantScopeForElement(element);
+  const normalizedLangs = variantScope === "set-exact"
+    ? setVisibleLangsForCardExactSet(setCode, oracleId, collectorNumber, nextVisibleLangs, { persist: true })
+    : setVisibleLangsForCard(setCode, oracleId, collectorNumber, nextVisibleLangs, { persist: true });
+  const safeVisibleLangs = sortVariantLangCodes(normalizedLangs, [normalized.lang, "en", "es"]);
+  const currentLang = normalizeLanguagePreferenceCode(normalized.lang, safeVisibleLangs[0]) || safeVisibleLangs[0];
+  const nextLang = safeVisibleLangs.includes(currentLang) ? currentLang : (safeVisibleLangs[0] || currentLang);
+  if (!safeVisibleLangs.includes(currentLang)) {
+    setSelectedVariantPrintId(setCode, oracleId, collectorNumber, "");
+  }
+  return selectVisibleVariantLangForElement(element, nextLang, normalized);
+}
+
+function applyVisibleVariantToCardItem(cartaItem, variantCard) {
+  if (!cartaItem || !variantCard) return;
+
+  const normalized = normalizeVisibleVariantCard(variantCard, variantCard);
+  const visibleLang = String(normalized.lang || "en").trim().toLowerCase() || "en";
+  const normalizedSetCode = String(normalized.setCode || normalized.set || "").trim().toLowerCase();
+  const normalizedCollectorNumber = String(normalized.collector_number || normalized.numero || "").trim();
+  const normalizedOracleId = String(normalized.oracle_id || "").trim();
+
+  cartaItem.dataset.visiblePrintId = String(normalized.id || "");
+  cartaItem.dataset.visibleLang = visibleLang;
+  cartaItem.dataset.cardId = String(normalized.id || "");
+  if (normalizedOracleId) cartaItem.dataset.oracle = normalizedOracleId;
+  if (normalizedSetCode) cartaItem.dataset.setCode = normalizedSetCode;
+  if (normalizedCollectorNumber) cartaItem.dataset.collectorNumber = normalizedCollectorNumber;
+
+  const btnCarta = cartaItem.querySelector('.btn-link-carta');
+  if (btnCarta) {
+    btnCarta.dataset.id = String(normalized.id || "");
+    if (normalizedOracleId) btnCarta.dataset.oracle = normalizedOracleId;
+    if (normalizedSetCode) btnCarta.dataset.setCode = normalizedSetCode;
+    if (normalizedCollectorNumber) btnCarta.dataset.collectorNumber = normalizedCollectorNumber;
+    btnCarta.textContent = normalized.nombre || "Carta";
+  }
+
+  const numero = cartaItem.querySelector('.carta-numero');
+  if (numero) numero.textContent = `#${normalizedCollectorNumber}`;
+
+  const img = cartaItem.querySelector('.carta-imagen');
+  if (img) {
+    img.alt = normalized.nombre || "Carta";
+    img.dataset.oracle = normalizedOracleId;
+    img.dataset.set = normalizedSetCode;
+    img.dataset.numero = normalizedCollectorNumber;
+    if (normalized._img) loadImageWithCache(img, normalized._img);
+  }
+
+  const controles = cartaItem.querySelector('.carta-controles');
+  if (controles) {
+    controles.dataset.activeLang = visibleLang;
+  }
+  syncVisibleVariantSelectorUI(cartaItem, normalized);
+}
+
+function applyVisibleVariantToModal(container, variantCard) {
+  if (!container || !variantCard) return;
+  const normalized = normalizeVisibleVariantCard(variantCard, variantCard);
+  const modal = document.getElementById('modalCarta');
+  const titulo = document.getElementById('modalCartaTitulo');
+  if (titulo) titulo.textContent = normalized.nombre || 'Carta';
+
+  container.dataset.currentPrintId = String(normalized.id || '');
+  container.dataset.activeLang = String(normalized.lang || 'en');
+  container.dataset.setCode = String(normalized.setCode || normalized.set || '');
+  container.dataset.collectorNumber = String(normalized.collector_number || normalized.numero || '');
+
+  const img = container.querySelector('#imgCartaModal') || container.querySelector('img[data-img-url]');
+  if (img && normalized._img) {
+    img.alt = normalized.nombre || 'Carta';
+    loadImageWithCache(img, normalized._img);
+  }
+
+  const info = container.querySelector('#modalCartaInfoLinea');
+  if (info) {
+    info.textContent = [normalized.collector_number ? `#${normalized.collector_number}` : '', normalized.rareza || ''].filter(Boolean).join(' · ');
+  }
+
+  const precio = container.querySelector('#modalCartaPrecio');
+  if (precio) {
+    precio.textContent = `Precio orientativo: ${formatPrecioEUR(normalized._prices)}`;
+  }
+
+  const btnSwitch = modal?.querySelector('.btn-modal-lang-switch');
+  const visibleLang = String(normalized.lang || 'en').toLowerCase() || 'en';
+  const controls = container.querySelector('.carta-controles');
+  if (controls) controls.dataset.activeLang = visibleLang;
+  if (btnSwitch) btnSwitch.remove();
+  syncVisibleVariantSelectorUI(container, normalized);
 }
 
 // Buscar print de una carta por oracle_id y lang en Scryfall
 async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, preferredCollectorNumber = null) {
   if (!oracle_id) return null;
+  const normalizedPreferredSetCode = String(preferredSetCode || "").trim().toLowerCase();
+  const normalizedPreferredCollector = normalizeCollectorNumberKey(preferredCollectorNumber || "");
   
   // Si es EN, devolver la carta ya cargada (no fetch adicional)
   if (lang === "en") {
+    if (normalizedPreferredSetCode && normalizedPreferredCollector) {
+      const byCollectorKey = `${normalizedPreferredSetCode}::${normalizedPreferredCollector}::en`;
+      const byCollectorPrintId = [...(catalogPrintsBySetCollectorLang[byCollectorKey] || [])].sort(compareCatalogPrintIds)[0];
+      if (byCollectorPrintId) {
+        const byCollectorCard = getKnownCardById(byCollectorPrintId);
+        if (byCollectorCard) {
+          if (!cacheCardByOracleLang[oracle_id]) cacheCardByOracleLang[oracle_id] = {};
+          cacheCardByOracleLang[oracle_id].en = byCollectorCard;
+          return byCollectorCard;
+        }
+      }
+    }
+
     // Buscar en cache de cartas cargadas
     for (const [setKey, cartas] of Object.entries(cacheCartasPorSetLang)) {
       const found = cartas.find(c => c.oracle_id === oracle_id && c.lang === "en");
@@ -2573,8 +6383,15 @@ async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, pr
   
   // Para ES, revisar cache primero
   if (cacheCardByOracleLang[oracle_id]?.es) {
+    const cachedEs = cacheCardByOracleLang[oracle_id].es;
+    const cachedEsSetCode = String(cachedEs?.setCode || cachedEs?.set || cachedEs?._raw?.set || "").trim().toLowerCase();
+    const cachedEsCollector = normalizeCollectorNumberKey(cachedEs?.collector_number || cachedEs?.numero || "");
+    const exactPreferredMatch = !normalizedPreferredSetCode || !normalizedPreferredCollector
+      || (cachedEsSetCode === normalizedPreferredSetCode && cachedEsCollector === normalizedPreferredCollector);
+    if (exactPreferredMatch) {
     console.log(`✓ Print ES cacheado para oracle ${oracle_id}`);
-    return cacheCardByOracleLang[oracle_id].es;
+      return cachedEs;
+    }
   }
   
   // Evitar búsquedas duplicadas simultáneas
@@ -2626,6 +6443,13 @@ async function getPrintByOracleLang(oracle_id, lang, preferredSetCode = null, pr
       }
     }
     
+    // Si se pidió una carta concreta del set y no existe esa misma impresión en el idioma objetivo,
+    // no saltar a otra versión/arte de la carta.
+    if (!selectedCard && normalizedPreferredSetCode && normalizedPreferredCollector) {
+      fetchingPrints.delete(fetchKey);
+      return null;
+    }
+
     // Si no hay match exacto, tomar el primero con imagen
     if (!selectedCard) {
       selectedCard = cards.find(c => {
@@ -2716,38 +6540,9 @@ function guardarOracleCache() {
 // ===== Construcción de índice oracle_id -> ids =====
 
 function construirIndiceOracleToIds() {
-  oracleToIds = {};
-  
-  // Recorrer todas las cartas cargadas en cache
-  for (const [setKey, cartas] of Object.entries(cacheCartasPorSetLang)) {
-    if (!Array.isArray(cartas)) continue;
-    
-    cartas.forEach(carta => {
-      if (!carta.oracle_id || !carta.id) return;
-      
-      const oracle = String(carta.oracle_id);
-      const lang = String(carta.lang || "en").toLowerCase();
-      const id = String(carta.id);
-      
-      if (!oracleToIds[oracle]) {
-        oracleToIds[oracle] = {};
-      }
-      
-      if (lang === "en") {
-        oracleToIds[oracle].en = id;
-      } else if (lang === "es") {
-        oracleToIds[oracle].es = id;
-      }
-      
-      // Actualizar cache de resolución
-      if (!oracleIdCache[id]) {
-        oracleIdCache[id] = { oracle_id: oracle, lang };
-      }
-    });
-  }
-  
+  rebuildCatalogIndexesV3();
   guardarOracleCache();
-  console.log(`Índice oracle_id construido: ${Object.keys(oracleToIds).length} cartas únicas`);
+  console.log(`Índice oracle_id construido: ${Object.keys(oracleToIds).length} cartas únicas, ${Object.keys(catalogPrintMetaById).length} prints indexados`);
 }
 
 // ===== Migración progresiva desde estado legacy =====
@@ -2894,19 +6689,15 @@ function getEstadoCarta_Compat(id) {
   const cached = oracleIdCache[id];
   
   if (cached && cached.oracle_id) {
-    // Usar estado2
-    const st2 = getEstadoCarta2(id);
-    const lang = cached.lang || "en";
-    
-    const qtyKey = lang === "es" ? "qty_es" : "qty_en";
-    const foilKey = lang === "es" ? "foil_es" : "foil_en";
-    const riKey = lang === "es" ? "ri_es" : "ri_en";
+    const lang = normalizeLegacyPossessionLang(cached.lang || "en");
+    const adapter = getLegacyPossessionAdapterForState(id);
+    const langState = adapter.langs[lang] || createEmptyLegacyPossessionLangEntry();
     
     return {
-      qty: st2[qtyKey],
-      foilQty: st2[foilKey],
+      qty: langState.qty,
+      foilQty: langState.foil,
       playedQty: 0, // No usado
-      wantMore: st2[riKey]
+      wantMore: langState.ri
     };
   }
   
@@ -3193,7 +6984,7 @@ function agruparResultadosBusqueda(cards) {
       .map(v => {
         const setKey = `${v.set}__${v.lang}`;
         // Estado por impresión (id)
-        const st2 = getEstadoCarta2(v.id);
+        const st2 = getEstadoCartaCompatV3(v.id);
 
         return {
           id: v.id, // UUID (por si se necesita)
@@ -3309,9 +7100,10 @@ function reconstruirCatalogoColecciones() {
 
   for (const s of (catalogoSets || [])) {
     const code = String(s.code || "").toLowerCase();
-    const availableLangs = getSetAvailableLangs(code);
+    const dataLangs = getSetAvailableLangs(code);
+    const availableLangs = getSetUiAvailableLangs(code);
     const nombreES = setNameEsByCode[code] || null;
-    const nombreMostrar = (nombreES && availableLangs.includes("es")) ? `${s.name} / ${nombreES}` : s.name;
+    const nombreMostrar = (nombreES && dataLangs.includes("es")) ? `${s.name} / ${nombreES}` : s.name;
 
     const entry = {
       key: code,               // base key = code
@@ -3319,6 +7111,7 @@ function reconstruirCatalogoColecciones() {
       nombre: nombreMostrar,
       name_en: s.name,
       name_es: nombreES,
+      dataLangs,
       availableLangs,
       released_at: s.released_at || "",
       set_type: s.set_type || "",
@@ -3388,10 +7181,15 @@ async function ensureSetCardsLoaded(setKey) {
   const processedCards = cards.map(card => ({
     id: card.id, // UUID string
     oracle_id: card.oracle_id,
+    setCode: String(card.set || code || "").toLowerCase(),
+    setKey,
+    set_name: card.set_name || "",
     nombre: pickCardName(card, lang),
     numero: card.collector_number,
+    collector_number: card.collector_number,
     rareza: mapRarity(card.rarity),
     lang,
+    releasedAt: card.released_at || "",
     type_line: card.type_line || '',
     cmc: card.cmc || 0,
     color_identity: card.color_identity || [],
@@ -3507,14 +7305,29 @@ function guardarHiddenCollections() {
 // Modal carta + precio
 // ===============================
 
-function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = null, navIndex = -1, cardData = null, oracleId = null }) {
+function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = null, navIndex = -1, cardData = null, oracleId = null, setCode = "", collectorNumber = "" }) {
   const modal = document.getElementById("modalCarta");
   const tit = document.getElementById("modalCartaTitulo");
   const body = document.getElementById("modalCartaBody");
 
   if (!modal || !tit || !body) return;
 
-  tit.textContent = titulo || "Carta";
+  const baseModalCard = normalizeVisibleVariantCard({
+    ...(cardData || {}),
+    id: cardData?.id || "",
+    oracle_id: oracleId || cardData?.oracle_id || "",
+    setCode: String(setCode || cardData?.set || "").toLowerCase(),
+    set: String(setCode || cardData?.set || "").toLowerCase(),
+    nombre: titulo || pickCardName(cardData || {}, cardData?.lang || "en") || "Carta",
+    numero: collectorNumber || numero || cardData?.collector_number || "",
+    collector_number: collectorNumber || numero || cardData?.collector_number || "",
+    rareza: rareza || mapRarity(cardData?.rarity) || "",
+    _img: imageUrl || pickImage(cardData || {}) || "",
+    _prices: cardData?.prices || null,
+    _raw: cardData || null
+  }, cardData || null);
+
+  tit.textContent = baseModalCard.nombre || "Carta";
 
   // Guardamos estado para navegación
   if (Array.isArray(navLista) && navLista.length) {
@@ -3526,20 +7339,20 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
   }
 
   const infoBits = [];
-  if (numero) infoBits.push(`#${numero}`);
-  if (rareza) infoBits.push(rareza);
+  if (baseModalCard.collector_number) infoBits.push(`#${baseModalCard.collector_number}`);
+  if (baseModalCard.rareza) infoBits.push(baseModalCard.rareza);
   const infoLinea = infoBits.length ? infoBits.join(" · ") : "";
 
-  const precioTxt = precio || "—";
+  const precioTxt = precio || formatPrecioEUR(baseModalCard._prices) || "—";
 
   const tieneNav = Array.isArray(navLista) && navLista.length > 0 && navIndex >= 0;
   const prevDisabled = !tieneNav || navIndex <= 0;
   const nextDisabled = !tieneNav || navIndex >= navLista.length - 1;
 
   // Detectar si es carta de doble cara
-  const esDobleCaracardFaces = cardData?.card_faces?.length >= 2;
-  const imagenCara1 = cardData?.card_faces?.[0]?.image_uris?.normal;
-  const imagenCara2 = cardData?.card_faces?.[1]?.image_uris?.normal;
+  const esDobleCaracardFaces = baseModalCard?._raw?.card_faces?.length >= 2;
+  const imagenCara1 = baseModalCard?._raw?.card_faces?.[0]?.image_uris?.normal;
+  const imagenCara2 = baseModalCard?._raw?.card_faces?.[1]?.image_uris?.normal;
   
   // Variable para rastrear qué cara se muestra (la guardamos en el body como data attribute)
   let caraActual = 1;
@@ -3548,8 +7361,8 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
     <div class="card" style="margin-bottom:12px;">
       <div class="modal-info-row">
         <div class="modal-info-main">
-          ${infoLinea ? `<div><strong>${infoLinea}</strong></div>` : ""}
-          <div class="hint" style="margin-top:6px;">Precio orientativo: ${precioTxt}</div>
+          ${infoLinea ? `<div id="modalCartaInfoLinea"><strong>${infoLinea}</strong></div>` : `<div id="modalCartaInfoLinea"></div>`}
+          <div id="modalCartaPrecio" class="hint" style="margin-top:6px;">Precio orientativo: ${precioTxt}</div>
         </div>
         ${tieneNav ? `
         <div class="modal-nav">
@@ -3561,16 +7374,22 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
     </div>
     ${esDobleCaracardFaces && imagenCara1 && imagenCara2 ? `
       <div style="position: relative; display: inline-block;">
-        <img id="imgCartaModal" alt="${titulo || "Carta"}" loading="lazy" 
+        <img id="imgCartaModal" alt="${baseModalCard.nombre || "Carta"}" loading="lazy" 
              data-cara1="${imagenCara1}" data-cara2="${imagenCara2}" data-cara-actual="1" />
         <button id="btnVoltearCarta" class="btn-voltear-carta" type="button" title="Voltear carta">
           🔄
         </button>
       </div>
-    ` : (imageUrl ? `<img alt="${titulo || "Carta"}" loading="lazy" data-img-url="${imageUrl}" />`
+    ` : (baseModalCard._img ? `<img alt="${baseModalCard.nombre || "Carta"}" loading="lazy" data-img-url="${baseModalCard._img}" />`
               : `<div class="card"><p>No hay imagen disponible.</p></div>`)}
-    ${oracleId ? generarControlesModalCarta(oracleId) : ''}
+    ${baseModalCard.oracle_id ? generarControlesModalCarta(baseModalCard) : ''}
   `;
+
+  body.dataset.oracle = String(baseModalCard.oracle_id || "");
+  body.dataset.setCode = String(baseModalCard.setCode || "");
+  body.dataset.collectorNumber = String(baseModalCard.collector_number || "");
+  body.dataset.currentPrintId = String(baseModalCard.id || "");
+  body.dataset.activeLang = String(baseModalCard.lang || "en");
 
   const btnPrev = body.querySelector('.btn-nav-prev');
   const btnNext = body.querySelector('.btn-nav-next');
@@ -3586,9 +7405,9 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
   
   if (imgCarta && imagenCara1) {
     loadImageWithCache(imgCarta, imagenCara1);
-  } else if (imageUrl) {
+  } else if (baseModalCard._img) {
     const imgSimple = body.querySelector('img[data-img-url]') || body.querySelector('img');
-    if (imgSimple) loadImageWithCache(imgSimple, imageUrl);
+    if (imgSimple) loadImageWithCache(imgSimple, baseModalCard._img);
   }
 
   if (btnVoltear && imgCarta) {
@@ -3607,26 +7426,41 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
   }
 
   // Event listeners para controles del modal (si existen)
-  if (oracleId) {
-    wireControlesModalCarta(body, oracleId);
+  if (baseModalCard.oracle_id) {
+    applyVisibleVariantToModal(body, baseModalCard);
+    wireControlesModalCarta(body, baseModalCard);
+    if (getCardControlsConfig().langMode === "both") {
+      const modalPreferredLang = getActiveVisibleLang(
+        String(baseModalCard.setCode || baseModalCard.set || "").toLowerCase(),
+        String(baseModalCard.oracle_id || ""),
+        String(baseModalCard.collector_number || baseModalCard.numero || ""),
+        baseModalCard.lang || "en"
+      );
+      resolveVisibleVariantForCard(baseModalCard, modalPreferredLang).then(variantCard => {
+        if (variantCard) applyVisibleVariantToModal(body, variantCard);
+      }).catch(() => {});
+    }
   }
 
   modal.classList.remove("hidden");
 }
 
-function generarControlesModalCarta(oracleId) {
+function generarControlesModalCarta(card) {
   const cfg = getCardControlsConfig();
-  const langActivo = cfg.langMode === "both" ? getUILang(oracleId) : cfg.langMode;
+  const normalized = normalizeVisibleVariantCard(card, card);
+  const setCode = String(normalized.setCode || normalized.set || "").toLowerCase();
+  const collectorNumber = String(normalized.collector_number || normalized.numero || "");
+  const variantScope = getVariantScopeForCardUI(normalized);
+  const langActivo = cfg.langMode === "both"
+    ? getPreferredVisibleLang(setCode, normalized.lang || getActiveVisibleLang(setCode, normalized.oracle_id, collectorNumber, "en"), normalized.oracle_id, collectorNumber)
+    : getPreferredSetLang(setCode, cfg.langMode);
 
   if (cfg.langMode !== "both") {
     return `
       <div class="card" style="margin-top: 16px;">
-        <div class="carta-controles modal-controles" data-active-lang="${langActivo}" style="background: rgba(0,0,0,.06);">
+        <div class="carta-controles modal-controles" data-active-lang="${langActivo}" data-lang-mode="${cfg.langMode}" data-lang-selector-open="false" data-variant-scope="${variantScope}" style="background: rgba(0,0,0,.06);">
           <div class="controles-header">
-            <span class="lang-badge lang-active">
-              <img class="flag-icon" src="icons/flag-${langActivo === "en" ? "en" : "es"}.svg" alt="${langActivo === "en" ? "EN" : "ES"}" />
-              <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
-            </span>
+            ${renderVisibleVariantSelectorHTML({ ...normalized, lang: langActivo }, { langMode: cfg.langMode, panelOpen: false, context: "modal", variantScope })}
           </div>
         </div>
       </div>
@@ -3635,106 +7469,75 @@ function generarControlesModalCarta(oracleId) {
 
   return `
     <div class="card" style="margin-top: 16px;">
-      <div class="carta-controles modal-controles" data-active-lang="${langActivo}" style="background: rgba(0,0,0,.06);">
-        <!-- Header con botón de cambio de idioma (solo banderas pequeñas) -->
+      <div class="carta-controles modal-controles" data-active-lang="${langActivo}" data-lang-mode="both" data-lang-selector-open="false" data-variant-scope="${variantScope}" style="background: rgba(0,0,0,.06);">
         <div class="controles-header">
-          <button class="btn-lang-switch btn-modal-lang-switch" data-oracle="${oracleId}" type="button" title="Cambiar idioma" aria-label="Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}">
-            <span class="lang-badge lang-active">
-              <img class="flag-icon" src="icons/flag-${langActivo === "en" ? "en" : "es"}.svg" alt="${langActivo === "en" ? "EN" : "ES"}" />
-              <span class="lang-label">${langActivo === "en" ? "EN" : "ES"}</span>
-            </span>
-            <span class="lang-switch-action">
-              <span class="arrow">→</span>
-              <img class="flag-icon flag-target-icon" src="icons/flag-${langActivo === "en" ? "es" : "en"}.svg" alt="${langActivo === "en" ? "ES" : "EN"}" />
-            </span>
-          </button>
+          ${renderVisibleVariantSelectorHTML({ ...normalized, lang: langActivo }, { langMode: "both", panelOpen: false, context: "modal", variantScope })}
         </div>
       </div>
     </div>
   `;
 }
 
-function wireControlesModalCarta(container, oracleId) {
-  // Toggle de idioma (único listener en el modal)
-  container.querySelectorAll('.btn-modal-lang-switch').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (getCardControlsConfig().langMode !== "both") return;
-      const cartaControles = btn.closest('.carta-controles');
-      if (!cartaControles) return;
-      
-      // Prevenir clics múltiples
-      if (cartaControles.dataset.animating === "true") return;
-      cartaControles.dataset.animating = "true";
-      
-      const currentLang = cartaControles.dataset.activeLang || "en";
-      const newLang = currentLang === "en" ? "es" : "en";
-      setUILang(oracleId, newLang);
-      
-      // Actualizar atributo para animación CSS
-      cartaControles.dataset.activeLang = newLang;
-      
-      // Actualizar badge activo: imagen y label
-      const flagIcon = btn.querySelector(".lang-badge.lang-active .flag-icon");
-      const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
-      const targetIcon = btn.querySelector(".flag-target-icon");
-      
-      if (flagIcon) flagIcon.src = `icons/flag-${newLang}.svg`;
-      if (flagIcon) flagIcon.alt = newLang.toUpperCase();
-      if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
-      if (targetIcon) targetIcon.src = `icons/flag-${newLang === "en" ? "es" : "en"}.svg`;
-      if (targetIcon) targetIcon.alt = newLang === "en" ? "ES" : "EN";
-      
-      // Actualizar aria-label
-      btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
-      
-      // Cambiar imagen del modal (si existe)
-      const imgModal = document.querySelector('#imgCartaModal');
-      const modalBody = document.getElementById('modalCartaBody');
-      
-      if (!imgModal && modalBody) {
-        // Si no existe #imgCartaModal, buscar cualquier img en el modal (excepto botón de voltear)
-        const allImgs = modalBody.querySelectorAll('img:not(#imgCartaModal)');
-        if (allImgs.length > 0) {
-          const firstImg = allImgs[0];
-          
-          if (newLang === "es") {
-            // Buscar print ES y actualizar imagen
-            const cartaItem = document.querySelector(`.carta-item[data-oracle="${oracleId}"]`);
-            if (cartaItem) {
-              const imgElement = cartaItem.querySelector('.carta-imagen');
-              const setCode = imgElement?.dataset?.set || "";
-              const numero = imgElement?.dataset?.numero || "";
-              
-              getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
-                if (printES) {
-                  const imgUrl = printES.image_uris?.normal || 
-                               printES.card_faces?.[0]?.image_uris?.normal;
-                  
-                  if (imgUrl) {
-                    if (!firstImg.dataset.imgEnOriginal) {
-                      firstImg.dataset.imgEnOriginal = firstImg.dataset.imgCacheKey || firstImg.src;
-                    }
-                    console.log(`✅ Actualizando imagen modal a ES para ${oracleId}`);
-                    loadImageWithCache(firstImg, imgUrl);
-                  }
-                }
-              });
-            }
-          } else if (newLang === "en") {
-            // Restaurar imagen EN
-            if (firstImg.dataset.imgEnOriginal) {
-              console.log(`✅ Restaurando imagen modal a EN para ${oracleId}`);
-              loadImageWithCache(firstImg, firstImg.dataset.imgEnOriginal);
-            }
-          }
-        }
-      }
-      
-      // Desbloquear después de animación
+function wireControlesModalCarta(container, card) {
+  if (container.dataset.modalVariantSelectorWired === "true") return;
+  container.dataset.modalVariantSelectorWired = "true";
+
+  container.addEventListener("click", async (event) => {
+    const target = event.target;
+    const controls = target.closest(".carta-controles");
+    if (!controls) return;
+
+    const toggleBtn = target.closest(".btn-lang-panel-toggle");
+    if (toggleBtn) {
+      const shouldOpen = controls.dataset.langSelectorOpen !== "true";
+      closeAllVisibleVariantPanels(shouldOpen ? controls : null);
+      setVisibleVariantPanelOpen(controls, shouldOpen);
+      return;
+    }
+
+    const choiceBtn = target.closest(".btn-lang-choice");
+    if (!choiceBtn) return;
+    if (controls.dataset.langSelectorLocked === "true" || choiceBtn.dataset.langLocked === "true") {
+      setVisibleVariantSelectorFeedback(controls, buildVisibleVariantLockFeedback(), { type: "info" });
+      return;
+    }
+    if (controls.dataset.animating === "true") return;
+    controls.dataset.animating = "true";
+    try {
+      await selectVisibleVariantLangForElement(container, choiceBtn.dataset.langChoice || "", card);
+      syncVisibleVariantSelectorUI(container, getCurrentVisibleVariantCardForElement(container, card));
+    } finally {
       setTimeout(() => {
-        cartaControles.dataset.animating = "false";
-      }, 220);
+        controls.dataset.animating = "false";
+      }, 180);
+    }
+  });
+
+  container.addEventListener("change", async (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || !input.classList.contains("chk-visible-lang")) return;
+    const controls = input.closest(".carta-controles");
+    if (!controls) return;
+
+    const currentCard = getCurrentVisibleVariantCardForElement(container, card);
+    if (!currentCard) return;
+    const normalized = normalizeVisibleVariantCard(currentCard, currentCard);
+    const variantScope = getVariantScopeForElement(container);
+    const availableLangs = variantScope === "set-exact"
+      ? getExactSetAvailableLangsForCard(normalized)
+      : getAvailableVariantLangsForCard(normalized);
+    const selectedLangs = availableLangs.filter(lang => {
+      const checkbox = controls.querySelector(`.chk-visible-lang[data-lang-option="${lang}"]`);
+      return !!checkbox?.checked;
     });
+
+    if (selectedLangs.length === 0) {
+      input.checked = true;
+      return;
+    }
+
+    await updateVisibleLangSelectionForElement(container, selectedLangs, card);
+    syncVisibleVariantSelectorUI(container, getCurrentVisibleVariantCardForElement(container, card));
   });
 }
 
@@ -3807,14 +7610,58 @@ function formatPrecioEUR(prices) {
 
 const MTGJSON_SETLIST_URL = "https://mtgjson.com/api/v5/SetList.json";
 const LS_SET_METADATA_BY_CODE = "mtg_set_metadata_by_code_v1";
-const SUPPORTED_SET_LANGS = ["en", "es"];
+const DEFAULT_APP_FALLBACK_LANG = "en";
+const UI_ENABLED_SET_LANGS = ["en", "es"];
 const MTGJSON_LANGUAGE_TO_APP_LANG = {
   english: "en",
   spanish: "es"
 };
+const CANONICAL_SPANISH_SET_EXCEPTIONS = {
+  forceSpanishByCode: {
+    ps11: true,
+    psal: true
+  },
+  forceSpanishOnlyByCode: {
+    ps11: true,
+    psal: true
+  },
+  spanishNameByCode: {}
+};
 
 let setNameEsByCode = {}; // { "ons": "Embestida", ... }
 let setLangsByCode = {};  // { "ons": ["en", "es"], ... }
+const setUiLangHydrationInFlight = new Map();
+let setExactSessionVisibleLangsBySet = {};
+let setExactSessionVisibleLangsByCard = {};
+
+function getUiEnabledSetLangs() {
+  return [...UI_ENABLED_SET_LANGS];
+}
+
+function hasCanonicalSpanishSetException(code) {
+  const safeCode = String(code || "").trim().toLowerCase();
+  if (!safeCode) return false;
+  return !!CANONICAL_SPANISH_SET_EXCEPTIONS.forceSpanishByCode?.[safeCode];
+}
+
+function getCanonicalSpanishSetName(code) {
+  const safeCode = String(code || "").trim().toLowerCase();
+  if (!safeCode) return "";
+  const name = CANONICAL_SPANISH_SET_EXCEPTIONS.spanishNameByCode?.[safeCode];
+  return String(name || "").trim();
+}
+
+function hasCanonicalSpanishOnlySetException(code) {
+  const safeCode = String(code || "").trim().toLowerCase();
+  if (!safeCode) return false;
+  return !!CANONICAL_SPANISH_SET_EXCEPTIONS.forceSpanishOnlyByCode?.[safeCode];
+}
+
+function normalizeAppLangCode(lang) {
+  const key = String(lang || "").trim().toLowerCase();
+  if (!key) return "";
+  return normalizeSupportedLangCode(MTGJSON_LANGUAGE_TO_APP_LANG[key] || key);
+}
 
 const SET_LANGUAGE_OVERRIDES = {
   forceInclude: {},
@@ -3826,12 +7673,11 @@ function normalizeSetLangs(langs) {
   const source = Array.isArray(langs) ? langs : [];
 
   for (const lang of source) {
-    const key = String(lang || "").trim().toLowerCase();
-    const mapped = MTGJSON_LANGUAGE_TO_APP_LANG[key] || key;
-    if (SUPPORTED_SET_LANGS.includes(mapped)) normalized.add(mapped);
+    const mapped = normalizeAppLangCode(lang);
+    if (mapped) normalized.add(mapped);
   }
 
-  if (normalized.size === 0) normalized.add("en");
+  if (normalized.size === 0) normalized.add(DEFAULT_APP_FALLBACK_LANG);
   return [...normalized].sort();
 }
 
@@ -3840,39 +7686,133 @@ function applySetLanguageOverrides(code, langs) {
   const add = SET_LANGUAGE_OVERRIDES.forceInclude?.[code] || [];
   const remove = SET_LANGUAGE_OVERRIDES.forceExclude?.[code] || [];
 
+  if (hasCanonicalSpanishSetException(code)) {
+    langSet.add("es");
+  }
+
+  if (hasCanonicalSpanishOnlySetException(code)) {
+    langSet.delete("en");
+    langSet.add("es");
+  }
+
   add.forEach(lang => {
-    if (SUPPORTED_SET_LANGS.includes(lang)) langSet.add(lang);
+    const mapped = normalizeAppLangCode(lang);
+    if (mapped) langSet.add(mapped);
   });
 
   remove.forEach(lang => {
-    langSet.delete(lang);
+    const mapped = normalizeAppLangCode(lang);
+    if (mapped) langSet.delete(mapped);
   });
 
-  if (langSet.size === 0) langSet.add("en");
+  if (langSet.size === 0) langSet.add(DEFAULT_APP_FALLBACK_LANG);
   return [...langSet].sort();
 }
 
 function getSetAvailableLangs(code) {
   const codeLower = String(code || "").toLowerCase();
-  return applySetLanguageOverrides(codeLower, setLangsByCode[codeLower] || ["en"]);
+  const manualLangs = Object.keys(getManualSetLangOverrides(codeLower));
+  return applySetLanguageOverrides(codeLower, [...(setLangsByCode[codeLower] || [DEFAULT_APP_FALLBACK_LANG]), ...manualLangs]);
+}
+
+function getSetOpenableLangs(code) {
+  const codeLower = String(code || "").trim().toLowerCase();
+  if (!codeLower) return [DEFAULT_APP_FALLBACK_LANG];
+
+  const openable = new Set(getSetUiAvailableLangs(codeLower));
+
+  for (const setKey of Object.keys(cacheCartasPorSetLang || {})) {
+    const [setCodeRaw, langRaw] = String(setKey || "").split("__");
+    const setCode = String(setCodeRaw || "").trim().toLowerCase();
+    const lang = normalizeAppLangCode(langRaw);
+    if (setCode !== codeLower || !lang) continue;
+    if (getUiEnabledSetLangs().includes(lang)) openable.add(lang);
+  }
+
+  for (const lang of getUiEnabledSetLangs()) {
+    if (setMetaByKey.has(`${codeLower}__${lang}`)) openable.add(lang);
+  }
+
+  if (openable.size === 0) openable.add(DEFAULT_APP_FALLBACK_LANG);
+  return getUiEnabledSetLangs().filter(lang => openable.has(lang));
+}
+
+function resolveSetBaseLang(code, preferredLang = "") {
+  const codeLower = String(code || "").trim().toLowerCase();
+  const preferred = normalizeAppLangCode(preferredLang);
+  const openable = getSetOpenableLangs(codeLower);
+
+  if (preferred && openable.includes(preferred)) return preferred;
+  if (openable.includes(DEFAULT_APP_FALLBACK_LANG)) return DEFAULT_APP_FALLBACK_LANG;
+  if (openable.includes("es")) return "es";
+  return openable[0] || DEFAULT_APP_FALLBACK_LANG;
+}
+
+function getSetUiAvailableLangs(code) {
+  const available = new Set(getSetAvailableLangs(code));
+  const visible = getUiEnabledSetLangs().filter(lang => available.has(lang));
+  if (visible.length > 0) return visible;
+  if (available.has(DEFAULT_APP_FALLBACK_LANG)) return [DEFAULT_APP_FALLBACK_LANG];
+  return [getPreferredSetLang(code, DEFAULT_APP_FALLBACK_LANG)];
 }
 
 function setHasLang(code, lang) {
-  return getSetAvailableLangs(code).includes(String(lang || "en").toLowerCase());
+  return getSetAvailableLangs(code).includes(normalizeAppLangCode(lang) || DEFAULT_APP_FALLBACK_LANG);
 }
 
 function getPreferredSetLang(code, preferredLang = "en") {
-  const langs = getSetAvailableLangs(code);
-  const preferred = String(preferredLang || "en").toLowerCase();
-  if (langs.includes(preferred)) return preferred;
-  if (langs.includes("en")) return "en";
-  if (langs.includes("es")) return "es";
-  return langs[0] || "en";
+  return resolveSetBaseLang(code, preferredLang);
 }
 
 function getPreferredSetKey(code, preferredLang = "en") {
   const codeLower = String(code || "").toLowerCase();
-  return `${codeLower}__${getPreferredSetLang(codeLower, preferredLang)}`;
+  return `${codeLower}__${resolveSetBaseLang(codeLower, preferredLang)}`;
+}
+
+async function hydrateUiSetLangChoicesFromSetData(code, probeLangs = []) {
+  const safeCode = String(code || "").trim().toLowerCase();
+  if (!safeCode) return false;
+
+  const normalizedProbeLangs = [...new Set((Array.isArray(probeLangs) ? probeLangs : [])
+    .map(lang => normalizeAppLangCode(lang))
+    .filter(Boolean)
+    .filter(lang => lang !== DEFAULT_APP_FALLBACK_LANG))];
+
+  if (normalizedProbeLangs.length === 0) return false;
+
+  const missingLangs = normalizedProbeLangs.filter(lang => !getSetVisibleLangChoices(safeCode).includes(lang));
+  if (missingLangs.length === 0) return false;
+
+  const hydrationKey = `${safeCode}::${missingLangs.sort().join(",")}`;
+  if (setUiLangHydrationInFlight.has(hydrationKey)) {
+    return setUiLangHydrationInFlight.get(hydrationKey);
+  }
+
+  const hydrationPromise = (async () => {
+    let changed = false;
+
+    for (const lang of missingLangs) {
+      try {
+        await ensureSetCardsLoaded(`${safeCode}__${lang}`);
+        if (cartasDeSetKey(`${safeCode}__${lang}`).length > 0) {
+          const merged = new Set(getSetAvailableLangs(safeCode));
+          merged.add(lang);
+          setLangsByCode[safeCode] = applySetLanguageOverrides(safeCode, [...merged]);
+          changed = true;
+        }
+      } catch (err) {
+        console.warn(`No se pudo hidratar ${safeCode}__${lang}:`, err);
+      }
+    }
+
+    if (changed) guardarSetMetadataEnLocalStorage();
+    return changed;
+  })().finally(() => {
+    setUiLangHydrationInFlight.delete(hydrationKey);
+  });
+
+  setUiLangHydrationInFlight.set(hydrationKey, hydrationPromise);
+  return hydrationPromise;
 }
 
 function cargarSetMetadataDesdeLocalStorage() {
@@ -3881,8 +7821,29 @@ function cargarSetMetadataDesdeLocalStorage() {
   try {
     const obj = JSON.parse(raw);
     if (obj && typeof obj === "object") {
-      setNameEsByCode = (obj.names && typeof obj.names === "object") ? obj.names : {};
-      setLangsByCode = (obj.langs && typeof obj.langs === "object") ? obj.langs : {};
+      const namesRaw = (obj.names && typeof obj.names === "object") ? obj.names : {};
+      const normalizedNames = {};
+      for (const [codeRaw, valueRaw] of Object.entries(namesRaw)) {
+        const code = String(codeRaw || "").trim().toLowerCase();
+        const value = String(valueRaw || "").trim();
+        if (!code || !value) continue;
+        normalizedNames[code] = value;
+      }
+      for (const [codeRaw, valueRaw] of Object.entries(CANONICAL_SPANISH_SET_EXCEPTIONS.spanishNameByCode || {})) {
+        const code = String(codeRaw || "").trim().toLowerCase();
+        const value = String(valueRaw || "").trim();
+        if (!code || !value) continue;
+        normalizedNames[code] = value;
+      }
+      setNameEsByCode = normalizedNames;
+      const langsRaw = (obj.langs && typeof obj.langs === "object") ? obj.langs : {};
+      const normalizedLangs = {};
+      for (const [codeRaw, langs] of Object.entries(langsRaw)) {
+        const code = String(codeRaw || "").trim().toLowerCase();
+        if (!code) continue;
+        normalizedLangs[code] = applySetLanguageOverrides(code, langs);
+      }
+      setLangsByCode = normalizedLangs;
       return true;
     }
   } catch {}
@@ -3897,8 +7858,7 @@ function guardarSetMetadataEnLocalStorage() {
 }
 
 async function cargarSetMetadataDesdeMTGJSON() {
-  // Si ya tenemos cache, no descargamos
-  if (cargarSetMetadataDesdeLocalStorage()) return;
+  cargarSetMetadataDesdeLocalStorage();
 
   const data = await fetch(MTGJSON_SETLIST_URL, { headers: { "Accept": "application/json" } })
     .then(r => {
@@ -3914,10 +7874,18 @@ async function cargarSetMetadataDesdeMTGJSON() {
     const code = String(s.code || "").toLowerCase();
     if (!code) continue;
 
-    const esName = s?.translations?.Spanish;
+    const esName = getCanonicalSpanishSetName(code) || s?.translations?.Spanish;
     if (esName) names[code] = esName;
 
     langs[code] = applySetLanguageOverrides(code, Array.isArray(s?.languages) ? s.languages : []);
+  }
+
+  for (const [codeRaw, valueRaw] of Object.entries(CANONICAL_SPANISH_SET_EXCEPTIONS.spanishNameByCode || {})) {
+    const code = String(codeRaw || "").trim().toLowerCase();
+    const value = String(valueRaw || "").trim();
+    if (!code || !value) continue;
+    names[code] = value;
+    if (!langs[code]) langs[code] = applySetLanguageOverrides(code, []);
   }
 
   setNameEsByCode = names;
@@ -3951,6 +7919,10 @@ function mostrarPantalla(nombre, agregarAlHistorial = true) {
     if (p) p.classList.remove("active");
   });
   if (pantallas[nombre]) pantallas[nombre].classList.add("active");
+
+  if (nombre === "cuenta" && typeof applyBootStateHealth === "function") {
+    applyBootStateHealth();
+  }
   
   // Agregar al historial de navegación interna
   if (agregarAlHistorial && !manejandoPopstate) {
@@ -4160,33 +8132,39 @@ function renderCardControlsOptionsUI() {
   const contadoresList = document.getElementById("listaContadoresOpciones");
   if (contadoresList) {
     const counters = cfg.extraCounters || [];
-    contadoresList.innerHTML = counters.length
-      ? counters.map(c => `
+    const countersHtml = counters.map(c => {
+      const checkedAttr = c.enabled ? "checked" : "";
+      return `
         <div class="opciones-item" data-control-type="counter" data-key="${escapeAttr(c.key)}">
           <label class="chkline">
-            <input type="checkbox" data-action="toggle" ${c.enabled ? "checked" : ""} />
+            <input type="checkbox" data-action="toggle" ${checkedAttr} />
             <span>${escapeHtml(c.label)}</span>
           </label>
           <button class="btn-secundario btn-mini" data-action="remove">Eliminar</button>
         </div>
-      `).join("")
-      : `<div class="hint">No hay contadores extra.</div>`;
+      `;
+    }).join("");
+    contadoresList.innerHTML = counters.length ? countersHtml : `<div class="hint">No hay contadores extra.</div>`;
   }
 
   const tagsList = document.getElementById("listaTagsOpciones");
   if (tagsList) {
     const tags = cfg.extraTags || [];
-    tagsList.innerHTML = tags.length
-      ? tags.map(t => `
+    const tagsHtml = tags.map(t => {
+      const checkedAttr = t.enabled ? "checked" : "";
+      const removeButtonHtml = t.builtIn
+        ? ""
+        : `<button class="btn-secundario btn-mini" data-action="remove">Eliminar</button>`;
+      return `
         <div class="opciones-item" data-control-type="tag" data-key="${escapeAttr(t.key)}">
           <label class="chkline">
-            <input type="checkbox" data-action="toggle" ${t.enabled ? "checked" : ""} />
+            <input type="checkbox" data-action="toggle" ${checkedAttr} />
             <span>${escapeHtml(t.label)}</span>
           </label>
-          ${t.builtIn ? "" : `<button class=\"btn-secundario btn-mini\" data-action=\"remove\">Eliminar</button>`}
-        </div>
-      `).join("")
-      : `<div class="hint">No hay tags.</div>`;
+          ${removeButtonHtml}
+      `;
+    }).join("");
+    tagsList.innerHTML = tags.length ? tagsHtml : `<div class="hint">No hay tags.</div>`;
   }
 }
 
@@ -4244,8 +8222,7 @@ function progresoDeColeccion(setKey) {
     const tengo = lista.filter(c => {
       const estadoKey = getEstadoKeyFromCard(c);
       if (!estadoKey) return getEstadoCarta(c.id).qty > 0; // Fallback legacy
-      const st2 = getEstadoCarta2(estadoKey);
-      return (st2.qty_en + st2.qty_es) > 0;
+      return getLegacyPossessionAdapterForState(estadoKey).totals.qty > 0;
     }).length;
     return { tengo, total };
   }
@@ -4620,6 +8597,9 @@ function cargarFiltrosColecciones() {
 
 let setActualCode = null;
 let setActualLang = "en";
+let setLangToolbarLoadingState = null;
+let setLangToolbarFeedbackState = null;
+let setLangToolbarFeedbackTimer = null;
 
 function aplicarUILangSet() {
   const btnEn = document.getElementById("btnSetLangEn");
@@ -4785,40 +8765,6 @@ function renderTablaSetWithStableScroll(setKey) {
   });
 }
 
-
-function getCardTotalsForSetFilter(card) {
-  const estadoKey = getEstadoKeyFromCard(card);
-  if (estadoKey) {
-    const st2 = getEstadoCarta2(estadoKey);
-    return {
-      qty: (Number(st2.qty_en) || 0) + (Number(st2.qty_es) || 0),
-      foil: (Number(st2.foil_en) || 0) + (Number(st2.foil_es) || 0)
-    };
-  }
-  const st = getEstadoCarta(card?.id);
-  return {
-    qty: Number(st.qty) || 0,
-    foil: Number(st.foilQty) || 0
-  };
-}
-
-function cardMatchesColorFilter(card) {
-  if (!filtroColorSetEnabled || filtroColoresSet.size === 0) return true;
-  const identity = getCardColorIdentity(card);
-  const normalized = identity.map(c => String(c || "").toUpperCase().trim()).filter(Boolean);
-  const selected = filtroColoresSet;
-
-  if (normalized.length === 0) {
-    return selected.has("C");
-  }
-
-  if (selected.size === 1) {
-    const only = [...selected][0];
-    return normalized.includes(only);
-  }
-  return normalized.some(c => selected.has(c));
-}
-
 function getCardColorIdentity(card) {
   const asArray = (v) => (Array.isArray(v) ? v : null);
 
@@ -4846,8 +8792,7 @@ function cardMatchesRarityFilter(card) {
 }
 
 function getListaSetFiltrada(setKey) {
-  let lista = cartasDeSetKey(setKey)
-    .sort((a, b) => compareCollectorNumbers(a.numero, b.numero));
+  let lista = getMergedSetExactCards(setKey);
 
   const ft = String(filtroTextoSet || "").trim();
 if (ft) {
@@ -4880,12 +8825,16 @@ if (ft) {
 async function abrirSet(setKey) {
   const [codeRaw, langRaw] = String(setKey || "").split("__");
   const code = String(codeRaw || "").toLowerCase();
-  const lang = getPreferredSetLang(code, langRaw || "en");
+  const explicitLang = normalizeLanguagePreferenceCode(langRaw);
+  const lang = resolveSetBaseLang(code, explicitLang || DEFAULT_APP_FALLBACK_LANG);
   const resolvedSetKey = `${code}__${lang}`;
+  const currentScreen = historialNavegacion[historialNavegacion.length - 1] || "menu";
+  const shouldPushSetHistory = currentScreen !== "set";
 
   setActualKey = resolvedSetKey;
   setActualCode = code;
   setActualLang = lang;
+  getSessionVisibleLangsForSetExact(code, lang);
 
   // Actualizar checkbox de ocultar colección
   const chkOcultarColeccion = document.getElementById("chkOcultarColeccion");
@@ -4896,14 +8845,24 @@ async function abrirSet(setKey) {
   const info = setMetaByKey.get(resolvedSetKey) || { nombre: "Set", lang };
   document.getElementById("tituloSet").textContent = info.nombre; // Sin mostrar idioma
   aplicarUILangSet();
+  renderSetVisibleLangToolbar();
 
   // UI rápida de “cargando”
   document.getElementById("progresoSet").textContent = "Cargando cartas...";
   document.getElementById("listaCartasSet").innerHTML = `<div class="card"><p>Cargando…</p></div>`;
-  mostrarPantalla("set");
+  setSetListLoadingState(true, `Cargando cartas en ${getLangDisplayLabel(lang)}...`);
+  mostrarPantalla("set", shouldPushSetHistory);
 
   try {
     await ensureSetCardsLoaded(resolvedSetKey);
+    syncLegacyUiLangCacheForSet(code, lang);
+    const missingUiLangs = getUiEnabledSetLangs().filter(candidateLang => candidateLang !== lang && !getSetVisibleLangChoices(code).includes(candidateLang));
+    if (missingUiLangs.length > 0) {
+      const hydrated = await hydrateUiSetLangChoicesFromSetData(code, missingUiLangs);
+      if (hydrated) {
+        renderSetVisibleLangToolbar(code);
+      }
+    }
     actualizarProgresoGuardado(resolvedSetKey);
     renderColecciones();
     if (cartasDeSetKey(resolvedSetKey).length === 0) {
@@ -4918,6 +8877,7 @@ renderColecciones(); // para que al volver ya no salga
 }
 
   } catch (err) {
+    setSetListLoadingState(false);
     document.getElementById("listaCartasSet").innerHTML =
       `<div class="card"><p>Error cargando este set. Mira la consola.</p></div>`;
     console.error(err);
@@ -4929,7 +8889,9 @@ renderColecciones(); // para que al volver ya no salga
   document.getElementById("progresoSet").textContent = `Progreso: ${tengo} / ${total}`;
 
   aplicarUIFiltrosSet();
+  renderSetVisibleLangToolbar(code);
   renderTablaSet(resolvedSetKey);
+  setSetListLoadingState(false);
 }
 
 
@@ -5094,27 +9056,31 @@ function renderTablaSet(setKey) {
   const createCartaItem = (c, idx) => {
     // Usar estado2 para determinar si tiene cantidad (suma de ambos idiomas)
     let totalQty = 0;
-    let st2 = null;
+    let possession = null;
     const oracleId = c.oracle_id || "";
     const estadoKey = getEstadoKeyFromCard(c);
 
     if (estadoKey) {
-      st2 = getEstadoCarta2(estadoKey);
-      totalQty = st2.qty_en + st2.qty_es;
+      possession = getLegacyPossessionAdapterForState(estadoKey);
+      totalQty = possession.totals.qty;
     } else {
       // Fallback para cartas sin oracle_id (no debería pasar)
       const stLegacy = getEstadoCarta(c.id);
       totalQty = stLegacy.qty;
       // Crear objeto compatible con estructura v2 para el renderizado
-      st2 = { qty_en: stLegacy.qty, qty_es: 0, foil_en: stLegacy.foilQty, foil_es: 0, ri_en: stLegacy.wantMore, ri_es: false, counters_en: {}, counters_es: {}, tags_en: {}, tags_es: {} };
+      possession = buildLegacyPossessionAdapter({ qty_en: stLegacy.qty, qty_es: 0, foil_en: stLegacy.foilQty, foil_es: 0, ri_en: stLegacy.wantMore, ri_es: false, counters_en: {}, counters_es: {}, tags_en: {}, tags_es: {} });
     }
 
     const controlsCfg = getCardControlsConfig();
     const langMode = controlsCfg.langMode || "both";
     const langsToShow = langMode === "both" ? ["en", "es"] : [langMode];
 
-    // Layout clásico con toggle EN <-> ES
-    const langActivo = langMode === "both" ? getUILang(c.oracle_id) : langMode;
+    const baseVisibleCard = normalizeVisibleVariantCard(c, c);
+    const setCode = String(baseVisibleCard.setCode || c.setCode || c.set || parseSetKeyParts(c.setKey).code || "").toLowerCase();
+    const collectorNumber = String(baseVisibleCard.collector_number || c.collector_number || c.numero || "");
+    const langActivo = langMode === "both"
+        ? getEffectiveSetVisibleLang(setCode, baseVisibleCard.lang || getActiveVisibleLang(setCode, String(baseVisibleCard.oracle_id || c.oracle_id || ""), collectorNumber, "en"))
+      : getPreferredSetLang(setCode, langMode);
     const tieneImg = c._img && c._img.trim() !== "";
     const hasQty = totalQty > 0;
 
@@ -5123,6 +9089,10 @@ function renderTablaSet(setKey) {
     item.dataset.oracle = oracleId;
     item.dataset.stateKey = estadoKey;
     item.dataset.cardId = String(c.id);
+    item.dataset.setCode = setCode;
+    item.dataset.collectorNumber = collectorNumber;
+    item.dataset.visiblePrintId = String(baseVisibleCard.id || c.id || "");
+    item.dataset.visibleLang = String(langActivo || baseVisibleCard.lang || "en");
 
     const header = document.createElement("div");
     header.className = "carta-header";
@@ -5141,6 +9111,8 @@ function renderTablaSet(setKey) {
     btnCarta.dataset.oracle = oracleId;
     btnCarta.dataset.id = String(c.id);
     btnCarta.dataset.idx = String(idx);
+    btnCarta.dataset.setCode = setCode;
+    btnCarta.dataset.collectorNumber = collectorNumber;
     btnCarta.textContent = c.nombre || "";
 
     const numero = document.createElement("span");
@@ -5161,8 +9133,8 @@ function renderTablaSet(setKey) {
       img.alt = c.nombre || "";
       img.dataset.imgEn = c._img;
       img.dataset.oracle = oracleId;
-      img.dataset.set = c.set || "";
-      img.dataset.numero = c.numero || "";
+      img.dataset.set = setCode;
+      img.dataset.numero = collectorNumber;
       loadImageWithCache(img, c._img);
       imgContainer.appendChild(img);
     } else {
@@ -5176,48 +9148,17 @@ function renderTablaSet(setKey) {
     controles.className = "carta-controles";
     controles.dataset.activeLang = langActivo;
     controles.dataset.langMode = langMode;
+    controles.dataset.langSelectorOpen = "false";
+    controles.dataset.variantScope = "set-exact";
+    controles.dataset.langSelectorLocked = "true";
+    item.dataset.variantScope = "set-exact";
 
     const controlesHeader = document.createElement("div");
     controlesHeader.className = "controles-header";
-
-    const badge = document.createElement("span");
-    badge.className = "lang-badge lang-active";
-    const badgeImg = document.createElement("img");
-    badgeImg.className = "flag-icon";
-    badgeImg.src = `icons/flag-${langActivo === "en" ? "en" : "es"}.svg`;
-    badgeImg.alt = langActivo === "en" ? "EN" : "ES";
-    const badgeLbl = document.createElement("span");
-    badgeLbl.className = "lang-label";
-    badgeLbl.textContent = langActivo === "en" ? "EN" : "ES";
-    badge.appendChild(badgeImg);
-    badge.appendChild(badgeLbl);
-
-    if (langMode === "both") {
-      const btnSwitch = document.createElement("button");
-      btnSwitch.className = "btn-lang-switch";
-      btnSwitch.type = "button";
-      btnSwitch.dataset.oracle = oracleId;
-      btnSwitch.title = "Cambiar idioma";
-      btnSwitch.setAttribute("aria-label", `Cambiar a idioma ${langActivo === "en" ? "español" : "inglés"}`);
-
-      const switchAction = document.createElement("span");
-      switchAction.className = "lang-switch-action";
-      const arrow = document.createElement("span");
-      arrow.className = "arrow";
-      arrow.textContent = "→";
-      const targetImg = document.createElement("img");
-      targetImg.className = "flag-icon flag-target-icon";
-      targetImg.src = `icons/flag-${langActivo === "en" ? "es" : "en"}.svg`;
-      targetImg.alt = langActivo === "en" ? "ES" : "EN";
-      switchAction.appendChild(arrow);
-      switchAction.appendChild(targetImg);
-
-      btnSwitch.appendChild(badge);
-      btnSwitch.appendChild(switchAction);
-      controlesHeader.appendChild(btnSwitch);
-    } else {
-      controlesHeader.appendChild(badge);
-    }
+    controlesHeader.innerHTML = renderVisibleVariantSelectorHTML(
+      { ...baseVisibleCard, lang: langActivo },
+      { langMode, panelOpen: false, context: "card", variantScope: "set-exact" }
+    );
 
     const slider = document.createElement("div");
     slider.className = "lang-slider";
@@ -5230,22 +9171,23 @@ function renderTablaSet(setKey) {
     const buildExtraCounters = (lang) => extraCountersCfg.map(c => ({
       key: c.key,
       label: c.label,
-      value: getCounterValue(st2, lang, c.key)
+      value: getCounterValue(possession.raw, lang, c.key)
     }));
 
     const buildExtraTags = (lang) => extraTagsCfg.map(t => ({
       key: t.key,
       label: t.label,
-      checked: getTagValue(st2, lang, t.key)
+      checked: getTagValue(possession.raw, lang, t.key)
     }));
 
     for (const lang of langsToShow) {
+      const langState = possession.langs[normalizeLegacyPossessionLang(lang)] || createEmptyLegacyPossessionLangEntry();
       track.appendChild(createLangPanel({
         lang,
         stateKey: estadoKey,
-        qty: lang === "es" ? st2.qty_es : st2.qty_en,
-        foil: lang === "es" ? st2.foil_es : st2.foil_en,
-        ri: lang === "es" ? st2.ri_es : st2.ri_en,
+        qty: langState.qty,
+        foil: langState.foil,
+        ri: langState.ri,
         extraCounters: buildExtraCounters(lang),
         extraTags: buildExtraTags(lang)
       }));
@@ -5260,19 +9202,14 @@ function renderTablaSet(setKey) {
     item.appendChild(imgContainer);
     item.appendChild(controles);
 
-    if (langMode === "es" && tieneImg && oracleId) {
-      const imgElement = imgContainer.querySelector(".carta-imagen");
-      if (imgElement) {
-        const setCode = imgElement.dataset.set || "";
-        const numero = imgElement.dataset.numero || "";
-        getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
-          if (printES) {
-            const imgUrl = printES.image_uris?.normal || printES.card_faces?.[0]?.image_uris?.normal;
-            if (imgUrl) imgElement.src = imgUrl;
-          }
-        }).catch(() => {});
-      }
-    }
+    const initialVisibleCard = normalizeVisibleVariantCard({ ...baseVisibleCard, lang: langActivo }, baseVisibleCard);
+    applyVisibleVariantToCardItem(item, initialVisibleCard);
+    const preferredVisibleLang = langMode === "both"
+      ? langActivo
+      : langMode;
+    resolveExactSetVariantForCard(baseVisibleCard, preferredVisibleLang).then(variantCard => {
+      if (variantCard) applyVisibleVariantToCardItem(item, variantCard);
+    }).catch(() => {});
 
     return item;
   };
@@ -5482,9 +9419,10 @@ function renderTablaSet(setKey) {
 
 // Helper: Actualizar panel de idioma específico sin re-render completo
 function actualizarPanelLang(estadoKey, lang) {
-  const st2 = getEstadoCarta2(estadoKey);
-  const qty = lang === "en" ? st2.qty_en : st2.qty_es;
-  const foil = lang === "en" ? st2.foil_en : st2.foil_es;
+  const adapter = getLegacyPossessionAdapterForState(estadoKey);
+  const langState = adapter.langs[normalizeLegacyPossessionLang(lang)] || createEmptyLegacyPossessionLangEntry();
+  const qty = langState.qty;
+  const foil = langState.foil;
   const cfg = getCardControlsConfig();
   
   // Buscar el panel específico de este estado y lang
@@ -5517,7 +9455,7 @@ function actualizarPanelLang(estadoKey, lang) {
   // Actualizar contadores personalizados
   const extraCounters = getEnabledCountersConfig().filter(c => c.key !== "qty" && c.key !== "foil");
   for (const c of extraCounters) {
-    const value = getCounterValue(st2, lang, c.key);
+    const value = getCounterValue(adapter.raw, lang, c.key);
     const input = panel.querySelector(`.inp-counter[data-control="${c.key}"]`);
     const btnMinus = panel.querySelector(`.btn-counter-minus[data-control="${c.key}"]`);
     if (input) input.value = value;
@@ -5527,13 +9465,13 @@ function actualizarPanelLang(estadoKey, lang) {
   // Actualizar tags
   const extraTags = getEnabledTagsConfig();
   for (const t of extraTags) {
-    const checked = getTagValue(st2, lang, t.key);
+    const checked = getTagValue(adapter.raw, lang, t.key);
     const chk = panel.querySelector(`.chk-tag[data-control="${t.key}"]`);
     if (chk) chk.checked = !!checked;
   }
   
   // Actualizar LED (suma de ambos idiomas)
-  const totalQty = st2.qty_en + st2.qty_es;
+  const totalQty = adapter.totals.qty;
   const ledIndicator = cartaItem.querySelector('.led-indicator');
   if (ledIndicator) {
     ledIndicator.src = `icons/${totalQty > 0 ? 'Ledazul' : 'Ledrojo'}.png`;
@@ -5557,16 +9495,16 @@ function actualizarPanelLang(estadoKey, lang) {
 
 function marcarTodasCartasSet() {
   if (!setActualKey) return;
+  const targetLang = getBulkSetTargetLang();
   
   const cartas = cartasDeSetKey(setActualKey);
   cartas.forEach(c => {
     const estadoKey = getEstadoKeyFromCard(c);
     if (!estadoKey) return;
-    const st2 = getEstadoCarta2(estadoKey);
-    // Marcar en el idioma preferido de la UI si no tiene cantidad
-    if (st2.qty_en === 0 && st2.qty_es === 0) {
-      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
-      setQtyLang(estadoKey, preferredLang, 1);
+    const possession = getLegacyPossessionAdapterForState(estadoKey);
+    const targetQty = possession.langs[targetLang]?.qty || 0;
+    if (targetQty === 0) {
+      setQtyLang(estadoKey, targetLang, 1);
     }
   });
   
@@ -5576,18 +9514,30 @@ function marcarTodasCartasSet() {
 
 function desmarcarTodasCartasSet() {
   if (!setActualKey) return;
+  const targetLang = getBulkSetTargetLang();
   
   const cartas = cartasDeSetKey(setActualKey);
   cartas.forEach(c => {
     const estadoKey = getEstadoKeyFromCard(c);
     if (!estadoKey) return;
-    // Desmarcar ambos idiomas
-    setQtyLang(estadoKey, "en", 0);
-    setQtyLang(estadoKey, "es", 0);
+    setQtyLang(estadoKey, targetLang, 0);
   });
   
   renderTablaSet(setActualKey);
   scheduleRenderColecciones();
+}
+
+function getBulkSetTargetLang(setCode = setActualCode) {
+  const safeSetCode = String(setCode || setActualCode || "").trim().toLowerCase();
+  const currentSetLang = safeSetCode && safeSetCode === setActualCode
+    ? normalizeLegacyPossessionLang(setActualLang, "en")
+    : "";
+  return currentSetLang || normalizeLegacyPossessionLang(getActiveVisibleLang(safeSetCode), "en");
+}
+
+function getBulkSetTargetLangLabel(setCode = setActualCode) {
+  const lang = getBulkSetTargetLang(setCode);
+  return lang === "es" ? "español" : "inglés";
 }
 
 function parseRangosCartas(texto) {
@@ -5617,6 +9567,7 @@ function parseRangosCartas(texto) {
 
 function aplicarRangosCartas(rangosTexto) {
   if (!setActualKey) return;
+  const targetLang = getBulkSetTargetLang();
   
   const indices = parseRangosCartas(rangosTexto);
   if (indices.length === 0) return;
@@ -5630,8 +9581,7 @@ function aplicarRangosCartas(rangosTexto) {
       const carta = lista[cartaIdx];
       const estadoKey = getEstadoKeyFromCard(carta);
       if (!estadoKey) return;
-      const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
-      adjustTotalQty(estadoKey, 1, preferredLang);
+      adjustTotalQty(estadoKey, 1, targetLang);
     }
   });
   
@@ -5727,10 +9677,11 @@ async function renderResultadosBuscar(texto, opts = {}) {
     for (const g of grupos) {
       for (const v of g.versiones) {
         const lang = v.lang === "es" ? "es" : "en";
-        const st2 = v.st2 || getEstadoCarta2(v.id);
-        const qty = lang === "en" ? (st2.qty_en || 0) : (st2.qty_es || 0);
-        const foilQty = lang === "en" ? (st2.foil_en || 0) : (st2.foil_es || 0);
-        const totalQty = (st2.qty_en || 0) + (st2.qty_es || 0);
+        const possession = getLegacyPossessionAdapterForState(v.id, v.st2 || null);
+        const langState = possession.langs[normalizeLegacyPossessionLang(lang)] || createEmptyLegacyPossessionLangEntry();
+        const qty = langState.qty;
+        const foilQty = langState.foil;
+        const totalQty = possession.totals.qty;
         const hasQty = totalQty > 0;
         const imgUrl = v._img || "";
 
@@ -5763,7 +9714,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
         }
 
         for (const c of extraCountersCfg) {
-          const value = getCounterValue(st2, lang, c.key);
+          const value = getCounterValue(possession.raw, lang, c.key);
           controlsHtml += `
             <div class="control-fila">
               <span class="lbl">${escapeHtml(c.label)}</span>
@@ -5777,7 +9728,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
         }
 
         for (const t of extraTagsCfg) {
-          const checked = getTagValue(st2, lang, t.key);
+          const checked = getTagValue(possession.raw, lang, t.key);
           controlsHtml += `
             <div class="control-fila">
               <span class="lbl">${escapeHtml(t.label)}</span>
@@ -5843,8 +9794,10 @@ async function renderResultadosBuscar(texto, opts = {}) {
       for (const v of g.versiones) {
         // Leer cantidades según el idioma de esta versión
         const lang = v.lang === "es" ? "es" : "en";
-        const qty = lang === "en" ? (v.st2.qty_en || 0) : (v.st2.qty_es || 0);
-        const foilQty = lang === "en" ? (v.st2.foil_en || 0) : (v.st2.foil_es || 0);
+        const possession = getLegacyPossessionAdapterForState(v.id, v.st2 || null);
+        const langState = possession.langs[normalizeLegacyPossessionLang(lang)] || createEmptyLegacyPossessionLangEntry();
+        const qty = langState.qty;
+        const foilQty = langState.foil;
 
         html += `
           <li class="item-version">
@@ -5986,8 +9939,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
         const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
         if (!estadoKey) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        const currentQty = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].qty;
         setQtyLang(estadoKey, lang, currentQty - 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
@@ -5998,8 +9950,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
         const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
         if (!estadoKey) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        const currentQty = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].qty;
         setQtyLang(estadoKey, lang, currentQty + 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
@@ -6010,8 +9961,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
         const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
         if (!estadoKey) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        const currentFoil = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].foil;
         setFoilLang(estadoKey, lang, currentFoil - 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
@@ -6022,8 +9972,7 @@ async function renderResultadosBuscar(texto, opts = {}) {
         const estadoKey = btn.dataset.state;
         const lang = btn.dataset.lang || "en";
         if (!estadoKey) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        const currentFoil = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].foil;
         setFoilLang(estadoKey, lang, currentFoil + 1);
         renderResultadosBuscar(document.getElementById("inputBuscar")?.value || "");
         scheduleRenderColecciones();
@@ -6120,12 +10069,14 @@ async function renderResultadosBuscar(texto, opts = {}) {
 
 
 function exportarEstado() {
+  const version = hasEstado3Data() ? 3 : 2;
   const payload = {
     app: "MTG Colecciones",
-    version: 2, // Actualizado a v2
+    version,
     exportedAt: new Date().toISOString(),
     estado, // Legacy para compatibilidad
     estado2, // Nuevo modelo
+    estado3, // Modelo v3 separado por posesión
     oracleIdCache, // Para resolución
     cardControlsConfig: cardControlsConfig || DEFAULT_CARD_CONTROLS
   };
@@ -6147,7 +10098,9 @@ function exportarEstado() {
 
 function validarPayloadImport(payload) {
   if (!payload || typeof payload !== "object") return { ok: false, msg: "JSON inválido." };
-  if (!payload.estado || typeof payload.estado !== "object") return { ok: false, msg: "Falta 'estado' en el JSON." };
+  if (payload.estado3 && typeof payload.estado3 === "object") return { ok: true, msg: "" };
+  if (payload.estado2 && typeof payload.estado2 === "object") return { ok: true, msg: "" };
+  if (!payload.estado || typeof payload.estado !== "object") return { ok: false, msg: "Falta 'estado', 'estado2' o 'estado3' en el JSON." };
   return { ok: true, msg: "" };
 }
 
@@ -6162,8 +10115,15 @@ function importarEstadoDesdeTexto(jsonText) {
   const v = validarPayloadImport(payload);
   if (!v.ok) return v;
 
-  // Importar estado legacy (siempre presente)
-  estado = payload.estado;
+  // Importar estado legacy (siempre presente en versiones antiguas)
+  if (payload.estado && typeof payload.estado === "object") {
+    estado = payload.estado;
+  }
+
+  if (payload.estado3 && typeof payload.estado3 === "object") {
+    estado3 = normalizeEstado3(payload.estado3);
+    guardarEstado3();
+  }
 
   // Importar estado2 si está presente (versión 2)
   if (payload.estado2) {
@@ -6174,7 +10134,7 @@ function importarEstadoDesdeTexto(jsonText) {
   // Importar oracleIdCache si está presente
   if (payload.oracleIdCache) {
     oracleIdCache = payload.oracleIdCache;
-    guardarOracleIdCache();
+    guardarOracleCache();
   }
 
   if (payload.cardControlsConfig) {
@@ -6343,7 +10303,7 @@ async function verificarCartasEnColeccion(cartas) {
   
   // Agregar los sets de las cartas del deck
   for (const carta of cartas) {
-    setsACargar.add(`${carta.set.toLowerCase()}__en`);
+    setsACargar.add(getPreferredSetKey(carta.set, "en"));
   }
   
   // Cargar todos los sets necesarios en paralelo (más rápido)
@@ -6355,7 +10315,7 @@ async function verificarCartasEnColeccion(cartas) {
   const cacheBusquedas = new Map();
   
   for (const carta of cartas) {
-    const setKey = `${carta.set.toLowerCase()}__en`;
+    const setKey = getPreferredSetKey(carta.set, "en");
     const listaSet = cartasDeSetKey(setKey);
     const existeExacta = listaSet.find(c => c.numero === carta.numero);
     
@@ -6398,7 +10358,7 @@ async function verificarCartasEnColeccion(cartas) {
     // Si existe exacta y la tengo con la cantidad necesaria
     if (existeExacta) {
       const estadoKeyExacta = getEstadoKeyFromCard(existeExacta);
-      const totalQty = estadoKeyExacta ? getTotalQtyEstado2(getEstadoCarta2(estadoKeyExacta)) : 0;
+      const totalQty = estadoKeyExacta ? getTotalQtyEstado2(getEstadoCartaCompatV3(estadoKeyExacta)) : 0;
       if (totalQty >= carta.cantidad) {
         cartasVerificadas.push({
           ...carta,
@@ -6431,7 +10391,7 @@ async function verificarCartasEnColeccion(cartas) {
           for (const c of cartasCargadas) {
             if (normalizarTexto(c.nombre) === nombreNorm) {
               const estadoKey = getEstadoKeyFromCard(c);
-              const totalQty = estadoKey ? getTotalQtyEstado2(getEstadoCarta2(estadoKey)) : 0;
+              const totalQty = estadoKey ? getTotalQtyEstado2(getEstadoCartaCompatV3(estadoKey)) : 0;
               if (totalQty > 0) {
                 encontradaEnCache = true;
                 break;
@@ -6704,7 +10664,7 @@ async function renderDeckCartasModoImagenes() {
 
 async function renderCartaDeckImagen(carta, posicion, tipo) {
   const ledIcon = carta.ledType === 'violeta' ? 'Ledvioleta' : (carta.tengo ? 'Ledazul' : 'Ledrojo');
-  const setKey = `${carta.set.toLowerCase()}__en`;
+  const setKey = getPreferredSetKey(carta.set, "en");
   
   // Cargar el set y obtener la imagen
   await ensureSetCardsLoaded(setKey);
@@ -6715,10 +10675,10 @@ async function renderCartaDeckImagen(carta, posicion, tipo) {
   
   // Obtener cantidad real de la colección
   const estadoKeyDeck = getEstadoKeyFromCard(cartaCatalogo);
-  const st2 = estadoKeyDeck
-    ? getEstadoCarta2(estadoKeyDeck)
-    : { qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0 };
-  const cantidadMostrar = (Number(st2.qty_en) || 0) + (Number(st2.qty_es) || 0);
+  const adapter = estadoKeyDeck
+    ? getLegacyPossessionAdapterForState(estadoKeyDeck)
+    : buildLegacyPossessionAdapter({ qty_en: 0, qty_es: 0, foil_en: 0, foil_es: 0 });
+  const cantidadMostrar = adapter.totals.qty;
   
   const estadoKey = estadoKeyDeck || '';
   
@@ -6780,7 +10740,7 @@ function wireControlesDeckImagenes() {
       const set = btn.dataset.set;
       const numero = btn.dataset.numero;
       
-      const setKey = `${set.toLowerCase()}__en`;
+      const setKey = getPreferredSetKey(set, "en");
       await ensureSetCardsLoaded(setKey);
       const listaSet = cartasDeSetKey(setKey);
       const carta = listaSet.find(c => c.numero === numero);
@@ -6836,7 +10796,7 @@ function wireControlesDeckImagenes() {
 function renderCartaDeck(carta, numero, tipo) {
   const ledIcon = carta.ledType === 'violeta' ? 'Ledvioleta' : (carta.tengo ? 'Ledazul' : 'Ledrojo');
   const cartaId = `${carta.set}-${carta.numero}-${tipo}`;
-  const setKey = `${carta.set.toLowerCase()}__en`;
+  const setKey = getPreferredSetKey(carta.set, "en");
   
   return `
     <li style="padding: 8px 0; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;">
@@ -6934,15 +10894,15 @@ function wireCheckboxesDeck() {
 
 async function marcarCartaDeck(nombre, set, numero) {
   // Buscar la carta exacta
-  const setKey = `${set.toLowerCase()}__en`;
+  const setKey = getPreferredSetKey(set, "en");
   await ensureSetCardsLoaded(setKey);
   const listaSet = cartasDeSetKey(setKey);
   const carta = listaSet.find(c => c.numero === numero);
   
   const estadoKey = getEstadoKeyFromCard(carta);
   if (estadoKey) {
-    const st2 = getEstadoCarta2(estadoKey);
-    if ((st2.qty_en + st2.qty_es) === 0) {
+    const adapter = getLegacyPossessionAdapterForState(estadoKey);
+    if (adapter.totals.qty === 0) {
       const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
       setQtyLang(estadoKey, preferredLang, 1);
       renderColecciones();
@@ -6974,7 +10934,7 @@ function wireBotonesMostrarCartaDeck() {
       const numero = btn.dataset.numero;
       
       // Buscar la carta
-      const setKey = `${set.toLowerCase()}__en`;
+      const setKey = getPreferredSetKey(set, "en");
       await ensureSetCardsLoaded(setKey);
       const listaSet = cartasDeSetKey(setKey);
       const carta = listaSet.find(c => c.numero === numero);
@@ -7587,9 +11547,10 @@ function wireGlobalButtons() {
 
   if (btnMarcarTodasSet) {
     btnMarcarTodasSet.addEventListener("click", async () => {
+      const targetLangLabel = getBulkSetTargetLangLabel();
       const confirmarMarcarTodas = await mostrarModalConfirmacion({
         titulo: "Marcar todas",
-        mensaje: "¿Seguro que quieres marcar todas las cartas de este set?",
+        mensaje: `¿Seguro que quieres marcar todas las cartas de este set en ${targetLangLabel}?`,
         textoAceptar: "Aceptar",
         textoCancelar: "Cancelar"
       });
@@ -7603,9 +11564,10 @@ function wireGlobalButtons() {
   const btnDesmarcarTodasSet = document.getElementById("btnDesmarcarTodasSet");
   if (btnDesmarcarTodasSet) {
     btnDesmarcarTodasSet.addEventListener("click", async () => {
+      const targetLangLabel = getBulkSetTargetLangLabel();
       const confirmarDesmarcarTodas = await mostrarModalConfirmacion({
         titulo: "Desmarcar todas",
-        mensaje: "¿Seguro que quieres desmarcar todas las cartas de este set?",
+        mensaje: `¿Seguro que quieres desmarcar todas las cartas de este set en ${targetLangLabel}?`,
         textoAceptar: "Aceptar",
         textoCancelar: "Cancelar"
       });
@@ -7736,6 +11698,17 @@ function wireGlobalButtons() {
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
 
+    if (document.querySelector('.carta-controles[data-lang-selector-open="true"]')) {
+      closeAllVisibleVariantPanels();
+      return;
+    }
+
+    const setLangToolbar = document.getElementById("setLangToolbar");
+    if (setLangToolbar && setLangToolbar.dataset.langSelectorOpen === "true") {
+      closeSetVisibleLangPanel();
+      return;
+    }
+
     if (modalConfirmacion && !modalConfirmacion.classList.contains("hidden")) {
       cerrarModalConfirmacion(false);
       return;
@@ -7743,6 +11716,19 @@ function wireGlobalButtons() {
 
     cerrarModalCarta();
   });
+
+  if (!document.body.dataset.visibleVariantPanelsWired) {
+    document.body.dataset.visibleVariantPanelsWired = "1";
+    document.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target.closest("#setLangToolbar .btn-lang-panel-toggle")) return;
+      if (target.closest("#setLangToolbar .lang-selector-panel")) return;
+      if (target.closest(".btn-lang-panel-toggle")) return;
+      if (target.closest(".lang-selector-panel")) return;
+      closeAllVisibleVariantPanels();
+      closeSetVisibleLangPanel();
+    });
+  }
 
   // ===============================
   // Event Delegation para listaCartasSet
@@ -7761,84 +11747,58 @@ function wireGlobalButtons() {
         const btn = target.classList.contains("btn-link-carta") ? target : target.closest(".btn-link-carta");
         const id = btn.dataset.id;
         const setKey = setActualKey;
-        const carta = (cacheCartasPorSetLang[setKey] || []).find(x => x.id === id);
+        const cartaItem = btn.closest(".carta-item");
+        const visibleId = cartaItem?.dataset.visiblePrintId || id;
+        const carta = getKnownCardById(visibleId)
+          || (cacheCartasPorSetLang[setKey] || []).find(x => x.id === visibleId)
+          || (cacheCartasPorSetLang[setKey] || []).find(x => x.id === id);
         
         abrirModalCarta({
           titulo: carta?.nombre || "Carta",
           imageUrl: carta?._img || null,
-          numero: carta?.numero || "",
+          numero: carta?.collector_number || carta?.numero || "",
           rareza: carta?.rareza || "",
           precio: formatPrecioEUR(carta?._prices),
           cardData: carta?._raw || null,
           oracleId: carta?.oracle_id || null,
+          setCode: cartaItem?.dataset.setCode || carta?.setCode || carta?.set || "",
+          collectorNumber: cartaItem?.dataset.collectorNumber || carta?.collector_number || carta?.numero || "",
           navLista: getListaSetFiltrada(setKey),
           navIndex: getListaSetFiltrada(setKey).findIndex(c => c.id === id)
         });
         return;
       }
       
-      // Toggle idioma
-      if (target.classList.contains("btn-lang-switch") || target.closest(".btn-lang-switch")) {
-        const btn = target.classList.contains("btn-lang-switch") ? target : target.closest(".btn-lang-switch");
-        const oracleId = btn.dataset.oracle;
-        if (!oracleId) return;
+      if (target.closest(".btn-lang-panel-toggle")) {
+        const controls = target.closest(".carta-controles");
+        if (!controls) return;
+        if (controls.dataset.langSelectorLocked === "true") return;
+        const shouldOpen = controls.dataset.langSelectorOpen !== "true";
+        closeSetVisibleLangPanel();
+        closeAllVisibleVariantPanels(shouldOpen ? controls : null);
+        setVisibleVariantPanelOpen(controls, shouldOpen);
+        return;
+      }
 
-        if (getCardControlsConfig().langMode !== "both") return;
-        
-        const cartaControles = btn.closest(".carta-controles");
-        if (!cartaControles) return;
-        
-        // Prevenir clics múltiples durante animación
+      if (target.closest(".btn-lang-choice")) {
+        const choiceBtn = target.closest(".btn-lang-choice");
+        const cartaControles = choiceBtn.closest(".carta-controles");
+        const cartaItem = choiceBtn.closest(".carta-item");
+        if (!choiceBtn || !cartaControles || !cartaItem) return;
+        if (cartaControles.dataset.langSelectorLocked === "true" || choiceBtn.dataset.langLocked === "true") {
+          setVisibleVariantSelectorFeedback(cartaControles, buildVisibleVariantLockFeedback(), { type: "info" });
+          return;
+        }
         if (cartaControles.dataset.animating === "true") return;
         cartaControles.dataset.animating = "true";
-        
-        const currentLang = cartaControles.dataset.activeLang || "en";
-        const newLang = currentLang === "en" ? "es" : "en";
-        
-        setUILang(oracleId, newLang);
-        cartaControles.dataset.activeLang = newLang;
-        
-        // Actualizar UI del botón
-        const flagIcon = btn.querySelector(".lang-badge.lang-active .flag-icon");
-        const langLabel = btn.querySelector(".lang-badge.lang-active .lang-label");
-        const targetIcon = btn.querySelector(".flag-target-icon");
-        
-        if (flagIcon) {
-          flagIcon.src = `icons/flag-${newLang}.svg`;
-          flagIcon.alt = newLang.toUpperCase();
+        try {
+          await selectVisibleVariantLangForElement(cartaItem, choiceBtn.dataset.langChoice || "");
+          syncVisibleVariantSelectorUI(cartaItem, getCurrentVisibleVariantCardForElement(cartaItem));
+        } finally {
+          setTimeout(() => {
+            cartaControles.dataset.animating = "false";
+          }, 180);
         }
-        if (langLabel) langLabel.textContent = newLang === "en" ? "EN" : "ES";
-        if (targetIcon) {
-          targetIcon.src = `icons/flag-${newLang === "en" ? "es" : "en"}.svg`;
-          targetIcon.alt = newLang === "en" ? "ES" : "EN";
-        }
-        
-        btn.setAttribute("aria-label", `Cambiar a idioma ${newLang === "en" ? "español" : "inglés"}`);
-        
-        // Cargar imagen en paralelo
-        const cartaItem = btn.closest(".carta-item");
-        if (cartaItem) {
-          const imgElement = cartaItem.querySelector(".carta-imagen");
-          
-          if (newLang === "es" && imgElement) {
-            const setCode = imgElement.dataset.set || "";
-            const numero = imgElement.dataset.numero || "";
-            
-            getPrintByOracleLang(oracleId, "es", setCode, numero).then(printES => {
-              if (printES) {
-                const imgUrl = printES.image_uris?.normal || printES.card_faces?.[0]?.image_uris?.normal;
-                if (imgUrl) imgElement.src = imgUrl;
-              }
-            }).catch(err => console.error(`Error cargando imagen ES:`, err));
-          } else if (newLang === "en" && imgElement) {
-            const imgEnOriginal = imgElement.dataset.imgEn;
-            if (imgEnOriginal) imgElement.src = imgEnOriginal;
-          }
-        }
-        
-        setTimeout(() => {
-          cartaControles.dataset.animating = "false";
-        }, 220);
         return;
       }
       
@@ -7847,8 +11807,7 @@ function wireGlobalButtons() {
         const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         if (!estadoKey || !lang) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        const currentQty = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].qty;
         setQtyLang(estadoKey, lang, currentQty - 1);
         actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
@@ -7859,8 +11818,7 @@ function wireGlobalButtons() {
         const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         if (!estadoKey || !lang) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentQty = lang === "en" ? st2.qty_en : st2.qty_es;
+        const currentQty = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].qty;
         setQtyLang(estadoKey, lang, currentQty + 1);
         actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
@@ -7872,8 +11830,7 @@ function wireGlobalButtons() {
         const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         if (!estadoKey || !lang) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        const currentFoil = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].foil;
         setFoilLang(estadoKey, lang, currentFoil - 1);
         actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
@@ -7884,8 +11841,7 @@ function wireGlobalButtons() {
         const estadoKey = target.dataset.state;
         const lang = target.dataset.lang;
         if (!estadoKey || !lang) return;
-        const st2 = getEstadoCarta2(estadoKey);
-        const currentFoil = lang === "en" ? st2.foil_en : st2.foil_es;
+        const currentFoil = getLegacyPossessionAdapterForState(estadoKey).langs[normalizeLegacyPossessionLang(lang)].foil;
         setFoilLang(estadoKey, lang, currentFoil + 1);
         actualizarPanelLang(estadoKey, lang);
         scheduleRenderColecciones();
@@ -7923,6 +11879,35 @@ function wireGlobalButtons() {
     // Change events para inputs
     listaCartasSet.addEventListener("change", (e) => {
       const target = e.target;
+
+      if (target.classList.contains("chk-visible-lang")) {
+        const controls = target.closest(".carta-controles");
+        const cartaItem = target.closest(".carta-item");
+        if (!controls || !cartaItem) return;
+        if (controls.dataset.langSelectorLocked === "true") {
+          target.checked = !!target.defaultChecked;
+          return;
+        }
+
+        const currentCard = getCurrentVisibleVariantCardForElement(cartaItem);
+        if (!currentCard) return;
+        const normalized = normalizeVisibleVariantCard(currentCard, currentCard);
+        const availableLangs = getAvailableVariantLangsForCard(normalized);
+        const selectedLangs = availableLangs.filter(lang => {
+          const checkbox = controls.querySelector(`.chk-visible-lang[data-lang-option="${lang}"]`);
+          return !!checkbox?.checked;
+        });
+
+        if (selectedLangs.length === 0) {
+          target.checked = true;
+          return;
+        }
+
+        updateVisibleLangSelectionForElement(cartaItem, selectedLangs).then(() => {
+          syncVisibleVariantSelectorUI(cartaItem, getCurrentVisibleVariantCardForElement(cartaItem));
+        }).catch(() => {});
+        return;
+      }
       
       // Input cantidad
       if (target.classList.contains("inp-qty")) {
@@ -7967,6 +11952,90 @@ function wireGlobalButtons() {
         setTagLang(estadoKey, lang, key, target.checked);
         return;
       }
+    });
+  }
+
+  const setLangToolbar = document.getElementById("setLangToolbar");
+  if (setLangToolbar && !setLangToolbar.dataset.wired) {
+    setLangToolbar.dataset.wired = "1";
+
+    setLangToolbar.addEventListener("click", async (e) => {
+      const target = e.target;
+
+      const toggleBtn = target.closest("[data-set-lang-panel-toggle]");
+      if (toggleBtn) {
+        const shouldOpen = setLangToolbar.dataset.langSelectorOpen !== "true";
+        closeAllVisibleVariantPanels();
+        setSetVisibleLangPanelOpen(shouldOpen);
+        return;
+      }
+
+      const choiceBtn = target.closest("[data-set-lang-choice]");
+      if (!choiceBtn) return;
+
+      const safeSetCode = String(choiceBtn.dataset.setCode || setActualCode || "").trim().toLowerCase();
+      const selectedLang = normalizeLanguagePreferenceCode(choiceBtn.dataset.setLangChoice, getActiveVisibleLang(safeSetCode));
+      if (!safeSetCode || !selectedLang) return;
+
+      closeSetVisibleLangPanel();
+      clearSetLangToolbarFeedback({ rerender: false });
+
+      setSetLangToolbarLoading(safeSetCode, selectedLang, true);
+
+      try {
+        const result = await switchSetBaseLanguageWithResult(safeSetCode, selectedLang);
+        const feedback = buildSetLangSwitchFeedback(result);
+        if (feedback) {
+          setSetLangToolbarFeedback(safeSetCode, feedback);
+        } else {
+          clearSetLangToolbarFeedback({ rerender: false });
+        }
+
+        if (result?.reason === "load-error" && result?.error) {
+          console.warn(`No se pudo cambiar el idioma base del set ${safeSetCode}:`, result.error);
+        }
+      } catch (err) {
+        console.warn(`No se pudo cambiar el idioma base del set ${safeSetCode}:`, err);
+        setSetLangToolbarFeedback(safeSetCode, {
+          type: "error",
+          message: "No se pudo cargar el idioma. Intentalo otra vez.",
+          timeoutMs: 6200,
+          persist: true
+        });
+      } finally {
+        setSetLangToolbarLoading(safeSetCode, "", false);
+      }
+    });
+
+    setLangToolbar.addEventListener("change", async (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLInputElement) || !target.classList.contains("chk-set-visible-lang")) return;
+
+      const safeSetCode = String(target.dataset.setCode || setActualCode || "").trim().toLowerCase();
+      if (!safeSetCode) return;
+
+      const availableLangs = sortVariantLangCodes(getSetRuntimeUiLangs(safeSetCode), [getActiveVisibleLang(safeSetCode), "en", "es"]);
+      const selectedLangs = availableLangs.filter(lang => {
+        const checkbox = setLangToolbar.querySelector(`.chk-set-visible-lang[data-set-lang-option="${lang}"]`);
+        return !!checkbox?.checked;
+      });
+
+      if (selectedLangs.length === 0) {
+        target.checked = true;
+        return;
+      }
+
+      const nextVisibleLangs = setSessionVisibleLangsForSetExact(safeSetCode, selectedLangs, getActiveVisibleLang(safeSetCode));
+      const activeLang = getActiveVisibleLang(safeSetCode);
+      if (!nextVisibleLangs.includes(activeLang)) {
+        setActiveVisibleLang(safeSetCode, nextVisibleLangs[0], { persist: false, syncLegacy: true });
+      }
+
+      clearSetExactSessionVisibleLangOverridesForSet(safeSetCode);
+      clearVisibleVariantOverridesForSet(safeSetCode, { persist: false });
+      guardarEstado3();
+
+      await syncOpenedSetToActiveVisibleLang(safeSetCode);
     });
   }
 
@@ -8041,15 +12110,15 @@ function wireGlobalButtons() {
             let cartasEliminadas = 0;
             for (const carta of todasLasCartas) {
               if (carta.tengo && carta.ledType === 'azul') {
-                const setKey = `${carta.set.toLowerCase()}__en`;
+                const setKey = getPreferredSetKey(carta.set, "en");
                 await ensureSetCardsLoaded(setKey);
                 const listaSet = cartasDeSetKey(setKey);
                 const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
                 
                 const estadoKey = getEstadoKeyFromCard(cartaCatalogo);
                 if (estadoKey) {
-                  const st2 = getEstadoCarta2(estadoKey);
-                  if ((st2.qty_en + st2.qty_es) > 0) {
+                  const adapter = getLegacyPossessionAdapterForState(estadoKey);
+                  if (adapter.totals.qty > 0) {
                     const preferredLang = getPreferredLangForEstadoKey(estadoKey, "en");
                     adjustTotalQty(estadoKey, -1, preferredLang);
                     cartasEliminadas++;
@@ -8087,7 +12156,7 @@ function wireGlobalButtons() {
               // Revertir cambios en la colección
               for (const carta of todasLasCartas) {
                 if (carta.tengo && carta.ledType === 'azul') {
-                  const setKey = `${carta.set.toLowerCase()}__en`;
+                  const setKey = getPreferredSetKey(carta.set, "en");
                   await ensureSetCardsLoaded(setKey);
                   const listaSet = cartasDeSetKey(setKey);
                   const cartaCatalogo = listaSet.find(c => c.numero === carta.numero);
@@ -8401,24 +12470,9 @@ async function init() {
 
   // Enforce light theme
   applyTheme();
-  
-  // Cargar estado v2 primero (incluye cache de oracle_id)
-  cargarEstado2();
-  
-  // Cargar estado legacy para compatibilidad/migración
-  cargarEstado();
-  
-  // Cargar preferencias de idioma UI por carta
-  cargarUILangByOracle();
-  
-  cargarProgresoPorSet();
-  cargarCardControlsConfig();
-  cargarFiltrosColecciones();
-  scheduleStatsSnapshotUpdate({ renderIfVisible: false });
-  cargarHiddenEmptySets();
-  cargarHiddenCollections();
-  cargarStatsSnapshot();
-  cargarDecks();
+
+  bootStateHealth = bootLoadPersistentState();
+  syncBootRecoverySessionFlag(bootStateHealth);
 
   wireGlobalButtons();
   wireBackupButtons();
@@ -8433,12 +12487,6 @@ async function init() {
     });
   }, 5000); // Después de 5 segundos para no bloquear el inicio
 
-  try {
-    const raw = safeLocalStorageGet(LS_STATS_SNAPSHOT);
-    statsSnapshot = raw ? JSON.parse(raw) : null;
-  } catch {
-    statsSnapshot = null;
-  }
   // ✅ Supabase (nuevo): sesión + listeners + pull + autosave
     try { 
     await sbInit(); 
@@ -8446,6 +12494,8 @@ async function init() {
     console.error("Supabase init error:", e);
     uiSetSyncStatus("Sync desactivada (error).");
   }
+
+  applyBootStateHealth();
 
   try {
     // 1) Cargar catálogo desde cache (rápido)
