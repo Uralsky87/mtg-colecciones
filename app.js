@@ -4246,36 +4246,12 @@ function syncEstado3FromEstado2Key(estadoKey, { persist = true } = {}) {
   const safeKey = String(estadoKey || "").trim();
   if (!safeKey) return false;
 
-  if (!hasEstado3InventoryData() && !hasEstado3ManualInventoryData()) {
-    return rebuildEstado3FromEstado2({ persist });
-  }
-
-  const st2 = getEstadoCarta2(safeKey);
-  const updatedAt = Date.now();
-  const { desiredEntries, desiredManualEntriesBySelectionKey } = buildDesiredInventoryEntriesFromEstado2Key(safeKey, st2, updatedAt);
-  const relatedPrintIds = getRelatedPrintIdsForEstadoKeyV3(safeKey);
-  const relatedSelectionKeys = getRelatedSelectionKeysForEstadoKeyV3(safeKey);
-  for (const printId of Object.keys(desiredEntries)) relatedPrintIds.add(printId);
-
-  for (const selectionKey of Object.keys(desiredManualEntriesBySelectionKey)) {
-    relatedSelectionKeys.add(selectionKey);
-  }
-
-  if (relatedPrintIds.size === 0 && relatedSelectionKeys.size === 0) return false;
-
-  for (const printId of relatedPrintIds) {
-    setInventoryEntryV3(printId, desiredEntries[printId] || {}, { persist: false });
-  }
-
-  for (const selectionKey of relatedSelectionKeys) {
-    const desiredByLang = normalizeManualInventoryLangMap(desiredManualEntriesBySelectionKey[selectionKey] || {});
-    for (const lang of PHASE1_SUPPORTED_MANUAL_LANGS) {
-      setManualInventoryEntryBySelectionKey(selectionKey, lang, desiredByLang[lang] || {}, { persist: false });
-    }
-  }
-
-  if (persist) guardarEstado3();
-  return true;
+  // During v2/v3 coexistence, rebuilding the canonical inventory from the full
+  // compatibility state is safer than incrementally replacing all related
+  // variants for a single visible print. Incremental replacement can wipe the
+  // sibling EN/ES print when the user edits the same card from the other
+  // visible variant.
+  return rebuildEstado3FromEstado2({ persist });
 }
 
 function hasResolvedInventoryMirrorV3ForEstadoKey(estadoKey, st2 = null) {
