@@ -1207,10 +1207,17 @@ function sbApplyCloudPayload(payload, options = {}) {
       guardarHiddenCollections();
     }
 
+    let shouldReconcileStatsSnapshot = false;
+
     // ✅ NUEVO: aplicar snapshot de estadísticas desde nube
     if (payload.statsSnapshot && typeof payload.statsSnapshot === "object") {
-      statsSnapshot = payload.statsSnapshot;
+      statsSnapshot = normalizeStatsSnapshot(payload.statsSnapshot, {
+        source: "cloud-cache",
+        stale: true,
+        note: "Snapshot recibido desde la nube. Pendiente de reconciliación local."
+      });
       safeLocalStorageSet(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
+      shouldReconcileStatsSnapshot = !!statsSnapshot;
     }
 
     // ✅ Aplicar decks desde la nube
@@ -1244,6 +1251,10 @@ function sbApplyCloudPayload(payload, options = {}) {
         renderEstadisticas({ forceRecalc: false });
       }
     } catch {}
+
+    if (shouldReconcileStatsSnapshot) {
+      scheduleStatsSnapshotUpdate({ renderIfVisible: true });
+    }
     
     console.log("sbApplyCloudPayload: datos aplicados correctamente");
     return true;
@@ -2232,24 +2243,140 @@ function scheduleStatsSnapshotUpdate({ renderIfVisible = false } = {}) {
   }, 300);
 }
 
-// Si estás aplicando payload de la nube, evita marcar dirty por cosas derivadas
-let sbApplyingCloud = false;
+function normalizeStatsSnapshot(raw, { source = "local", stale = false, note = "" } = {}) {
+  if (!raw || typeof raw !== "object") return null;
+  if (!raw.resumen || typeof raw.resumen !== "object") return null;
+
+  const normalized = {
+    ...raw,
+    version: Number(raw.version) || 1,
+    updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : Date.now(),
+    resumen: {
+      distinct: Number(raw.resumen?.distinct || 0),
+      totalQty: Number(raw.resumen?.totalQty || 0),
+      foilQty: Number(raw.resumen?.foilQty || 0),
+      riCount: Number(raw.resumen?.riCount || 0)
+    },
+    controlsStats: {
+      counters: Array.isArray(raw.controlsStats?.counters) ? raw.controlsStats.counters : [],
+      tags: Array.isArray(raw.controlsStats?.tags) ? raw.controlsStats.tags : []
+    },
+    sets: raw.sets && typeof raw.sets === "object" ? raw.sets : {},
+    meta: {
+      source: String(raw.meta?.source || source || "local").trim() || "local",
+      stale: raw.meta?.stale !== undefined ? !!raw.meta.stale : !!stale,
+      note: String(raw.meta?.note || note || "").trim(),
+      receivedAt: Number.isFinite(Number(raw.meta?.receivedAt)) ? Number(raw.meta.receivedAt) : Date.now()
+    }
+  };
+
+  return normalized;
+}
 
 function cargarStatsSnapshot() {
   const raw = safeLocalStorageGet(LS_STATS_SNAPSHOT);
   if (!raw) return;
   try {
     const obj = JSON.parse(raw);
-    if (obj && typeof obj === "object") statsSnapshot = obj;
+    statsSnapshot = normalizeStatsSnapshot(obj, { source: "local", stale: false });
   } catch {}
 }
 
 function guardarStatsSnapshot(snap, { markDirty = true } = {}) {
-  statsSnapshot = snap || null;
+  statsSnapshot = normalizeStatsSnapshot(snap, { source: snap?.meta?.source || "local", stale: !!snap?.meta?.stale, note: snap?.meta?.note || "" });
   safeLocalStorageSet(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot || {}));
 
   // Queremos que se sincronice con Supabase, pero NO cuando viene de un pull
-  if (markDirty && !sbApplyingCloud) sbMarkDirty();
+  if (markDirty && !sbApplyingCloudData) sbMarkDirty();
+}
+
+function accumulateStatsFromInventoryEntry(entryRaw, countersCfg, tagsCfg, counterTotals, tagTotals) {
+  const entry = normalizeInventoryEntryV3(entryRaw);
+  const qty = Number(entry.qty || 0);
+  const foil = Number(entry.foil || 0);
+  const distinct = qty > 0 ? 1 : 0;
+  const riCount = entry.ri ? 1 : 0;
+
+  for (const c of countersCfg) {
+    if (c.key === "qty") {
+      counterTotals[c.key] += qty;
+    } else if (c.key === "foil") {
+      counterTotals[c.key] += foil;
+    } else {
+      counterTotals[c.key] += Number(entry.counters?.[c.key] || 0);
+    }
+  }
+
+  for (const t of tagsCfg) {
+    if (t.key === "ri") {
+      if (entry.ri) tagTotals[t.key] += 1;
+    } else {
+      if (entry.tags?.[t.key]) tagTotals[t.key] += 1;
+    }
+  }
+
+  return { distinct, qty, foil, riCount };
+}
+
+function buildSetStatsSummary() {
+  const setKeys = setMetaByKey.size > 0 ? Array.from(setMetaByKey.keys()) : Object.keys(progresoPorSet || {});
+  const totalColecciones = setKeys.length;
+
+  let conAlguna = 0;
+  let completas = 0;
+  let sumTengo = 0;
+  let sumTotal = 0;
+  let live = 0;
+  let cached = 0;
+  let missing = 0;
+
+  for (const setKey of setKeys) {
+    let progress = null;
+
+    if (cacheCartasPorSetLang[setKey]) {
+      progress = progresoDeColeccion(setKey);
+      live += 1;
+    } else {
+      const saved = progresoPorSet?.[setKey];
+      if (saved && typeof saved.total === "number") {
+        progress = {
+          tengo: Number(saved.tengo || 0),
+          total: Number(saved.total)
+        };
+        cached += 1;
+      } else {
+        missing += 1;
+      }
+    }
+
+    if (!progress) continue;
+
+    const t = Number(progress.total);
+    const h = Number(progress.tengo || 0);
+    if (h > 0) conAlguna++;
+    if (Number.isFinite(t) && t > 0) {
+      sumTotal += t;
+      sumTengo += Math.min(h, t);
+      if (h === t) completas++;
+    }
+  }
+
+  const pctGlobal = sumTotal > 0 ? Math.round((sumTengo / sumTotal) * 100) : null;
+  const mode = missing > 0 ? "partial" : (cached > 0 ? "cached" : "fresh");
+
+  return {
+    totalColecciones,
+    conAlguna,
+    completas,
+    pctGlobal,
+    coverage: {
+      live,
+      cached,
+      missing,
+      mode,
+      known: live + cached
+    }
+  };
 }
 
 function calcularStatsDesdeEstado() {
@@ -2266,37 +2393,29 @@ function calcularStatsDesdeEstado() {
   countersCfg.forEach(c => { counterTotals[c.key] = 0; });
   tagsCfg.forEach(t => { tagTotals[t.key] = 0; });
 
-  if (hasEstado3InventoryData()) {
-    for (const [printId, entryRaw] of Object.entries(getEstado3InventoryMap())) {
-      const entry = getInventoryEntryV3(printId);
-      const q = Number(entry.qty || 0);
-      if (q > 0) distinct++;
-      totalQty += q;
-      foilQty += Number(entry.foil || 0);
-      if (entry.ri) riCount++;
+  if (hasEstado3InventoryData() || hasEstado3ManualInventoryData()) {
+    for (const printId of Object.keys(getEstado3InventoryMap())) {
+      const entryTotals = accumulateStatsFromInventoryEntry(getInventoryEntryV3(printId), countersCfg, tagsCfg, counterTotals, tagTotals);
+      distinct += entryTotals.distinct;
+      totalQty += entryTotals.qty;
+      foilQty += entryTotals.foil;
+      riCount += entryTotals.riCount;
+    }
 
-      for (const c of countersCfg) {
-        if (c.key === "qty") {
-          counterTotals[c.key] += q;
-        } else if (c.key === "foil") {
-          counterTotals[c.key] += Number(entry.foil || 0);
-        } else {
-          counterTotals[c.key] += Number(entry.counters?.[c.key] || 0);
-        }
-      }
-
-      for (const t of tagsCfg) {
-        if (t.key === "ri") {
-          if (entry.ri) tagTotals[t.key] += 1;
-        } else {
-          if (entry.tags?.[t.key]) tagTotals[t.key] += 1;
-        }
+    for (const selectionKey of Object.keys(getEstado3ManualInventoryMap())) {
+      const manualByLang = getManualInventoryLangMapBySelectionKey(selectionKey);
+      for (const entry of Object.values(manualByLang)) {
+        const entryTotals = accumulateStatsFromInventoryEntry(entry, countersCfg, tagsCfg, counterTotals, tagTotals);
+        distinct += entryTotals.distinct;
+        totalQty += entryTotals.qty;
+        foilQty += entryTotals.foil;
+        riCount += entryTotals.riCount;
       }
     }
 
     for (const [estadoKey, st2Raw] of Object.entries(estado2 || {})) {
       const st2 = getEstadoCarta2(estadoKey);
-      if (hasResolvedInventoryMirrorV3ForEstadoKey(estadoKey, st2)) continue;
+      if (hasResolvedInventoryMirrorV3ForEstadoKey(estadoKey, st2) || hasManualInventoryMirrorV3ForEstadoKey(estadoKey)) continue;
       const adapter = buildLegacyPossessionAdapter(st2);
 
       const q = adapter.totals.qty;
@@ -2375,29 +2494,6 @@ function calcularStatsDesdeEstado() {
     }
   }
 
-  // Stats por sets (coordinado con colecciones)
-  const setKeys = setMetaByKey.size > 0 ? Array.from(setMetaByKey.keys()) : Object.keys(progresoPorSet || {});
-  const totalColecciones = setKeys.length;
-
-  let conAlguna = 0;
-  let completas = 0;
-  let sumTengo = 0;
-  let sumTotal = 0;
-
-  for (const setKey of setKeys) {
-    const p = progresoDeColeccion(setKey);
-    const t = Number(p.total);
-    const h = Number(p.tengo || 0);
-    if (h > 0) conAlguna++;
-    if (Number.isFinite(t) && t > 0) {
-      sumTotal += t;
-      sumTengo += Math.min(h, t);
-      if (h === t) completas++;
-    }
-  }
-
-  const pctGlobal = sumTotal > 0 ? Math.round((sumTengo / sumTotal) * 100) : null;
-
   return {
     version: 1,
     updatedAt: Date.now(),
@@ -2406,12 +2502,16 @@ function calcularStatsDesdeEstado() {
       counters: countersCfg.map(c => ({ key: c.key, label: c.label, value: counterTotals[c.key] || 0 })),
       tags: tagsCfg.map(t => ({ key: t.key, label: t.label, value: tagTotals[t.key] || 0 }))
     },
-    sets: { totalColecciones, conAlguna, completas, pctGlobal }
+    sets: buildSetStatsSummary()
   };
 }
 
 function actualizarStatsSnapshot({ render = false } = {}) {
-  const snap = calcularStatsDesdeEstado();
+  const snap = normalizeStatsSnapshot(calcularStatsDesdeEstado(), {
+    source: "local-recalc",
+    stale: false,
+    note: ""
+  });
   guardarStatsSnapshot(snap, { markDirty: true });
 
   if (render) renderEstadisticas({ forceRecalc: false });
@@ -2431,6 +2531,8 @@ function renderStatsDesdeSnapshot(snap) {
 
   const r = snap.resumen;
   const s = snap.sets || {};
+  const coverage = s.coverage || {};
+  const meta = snap.meta || {};
   const controlsStats = snap.controlsStats || { counters: [], tags: [] };
 
   const resumenItems = [
@@ -2452,17 +2554,26 @@ function renderStatsDesdeSnapshot(snap) {
     <div class="hint" style="margin-top:10px;">
       Última actualización: ${snap.updatedAt ? new Date(snap.updatedAt).toLocaleString() : "—"}
     </div>
+    ${meta.stale ? `<div class="hint" style="margin-top:6px;">${escapeHtml(meta.note || "Snapshot pendiente de reconciliación local.")}</div>` : ""}
   `;
 
   const pctTxt = (s.pctGlobal == null) ? "—" : `${s.pctGlobal}%`;
+  const pctLabel = coverage.missing > 0 ? "% global conocido" : "% global";
+  const coverageHint = coverage.mode === "fresh"
+    ? "Cobertura de progreso: todas las colecciones visibles están recalculadas en sesión."
+    : coverage.mode === "cached"
+      ? `Cobertura de progreso: ${coverage.live || 0} recalculadas en sesión y ${coverage.cached || 0} desde caché guardada.`
+      : `Cobertura de progreso parcial: ${coverage.live || 0} recalculadas en sesión, ${coverage.cached || 0} desde caché y ${coverage.missing || 0} sin progreso conocido.`;
 
   elSets.innerHTML = `
     <div class="stat-grid">
       <div class="stat"><div class="k">Colecciones (idioma) conocidas</div><div class="v">${s.totalColecciones ?? 0}</div></div>
       <div class="stat"><div class="k">Con alguna carta</div><div class="v">${s.conAlguna ?? 0}</div></div>
       <div class="stat"><div class="k">Completas</div><div class="v">${s.completas ?? 0}</div></div>
-      <div class="stat"><div class="k">% global</div><div class="v">${pctTxt}</div></div>
+      <div class="stat"><div class="k">${pctLabel}</div><div class="v">${pctTxt}</div></div>
+      <div class="stat"><div class="k">Sin progreso conocido</div><div class="v">${coverage.missing ?? 0}</div></div>
     </div>
+    <div class="hint" style="margin-top:10px;">${escapeHtml(coverageHint)}</div>
   `;
 }
 
@@ -2472,7 +2583,7 @@ function renderEstadisticas({ forceRecalc = false } = {}) {
 
   // 2) si no hay snapshot, calcula una vez (para no ver “—”)
   if (!statsSnapshot) {
-    const snap = calcularStatsDesdeEstado();
+    const snap = normalizeStatsSnapshot(calcularStatsDesdeEstado(), { source: "local-recalc", stale: false, note: "" });
     guardarStatsSnapshot(snap, { markDirty: false });
     renderStatsDesdeSnapshot(snap);
     return;
@@ -2480,7 +2591,7 @@ function renderEstadisticas({ forceRecalc = false } = {}) {
 
   // 3) si fuerzas recálculo
   if (forceRecalc) {
-    const snap = calcularStatsDesdeEstado();
+    const snap = normalizeStatsSnapshot(calcularStatsDesdeEstado(), { source: "local-recalc", stale: false, note: "" });
     guardarStatsSnapshot(snap, { markDirty: true });
     renderStatsDesdeSnapshot(snap);
   }
@@ -8598,14 +8709,6 @@ function calcSetStatsFromProgreso() {
   }
   rows.sort((a,b) => (b.pct - a.pct) || (b.tengo - a.tengo));
   return rows;
-}
-
-function guardarStatsSnapshot(snap, { markDirty = false } = {}) {
-  statsSnapshot = snap || null;
-  safeLocalStorageSet(LS_STATS_SNAPSHOT, JSON.stringify(statsSnapshot));
-
-  // opcional: si quieres que esto suba a Supabase en el próximo autosave
-  if (markDirty && typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
 function guardarFiltrosColecciones() {
