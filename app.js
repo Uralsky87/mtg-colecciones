@@ -1139,11 +1139,13 @@ function sbBuildCloudPayload() {
     decks: decks || [],
     cardControlsConfig: cardControlsConfig || DEFAULT_CARD_CONTROLS,
     filtros: {
-      filtroIdiomaColecciones: filtroIdiomaColecciones ?? "all",
-      filtroTextoColecciones: filtroTextoColecciones ?? "",
-      filtroTiposSet: [...filtroTiposSet],
-      ocultarTokens: !!ocultarTokens,
-      ocultarArte: !!ocultarArte
+      filtroIdiomaColecciones: buildCollectionFiltersSnapshot().lang,
+      filtroTextoColecciones: buildCollectionFiltersSnapshot().texto,
+      vistaColecciones: buildCollectionFiltersSnapshot().vista,
+      filtroYearColecciones: buildCollectionFiltersSnapshot().year,
+      filtroTiposSet: buildCollectionFiltersSnapshot().filtroTiposSet,
+      ocultarTokens: buildCollectionFiltersSnapshot().ocultarTokens,
+      ocultarArte: buildCollectionFiltersSnapshot().ocultarArte
     }
   };
 }
@@ -1223,11 +1225,15 @@ function sbApplyCloudPayload(payload, options = {}) {
     }
 
     const f = payload.filtros || {};
-    if (typeof f.filtroIdiomaColecciones === "string") filtroIdiomaColecciones = f.filtroIdiomaColecciones;
-    if (typeof f.filtroTextoColecciones === "string") filtroTextoColecciones = f.filtroTextoColecciones;
-    if (Array.isArray(f.filtroTiposSet)) filtroTiposSet = new Set(f.filtroTiposSet);
-    if (typeof f.ocultarTokens === "boolean") ocultarTokens = f.ocultarTokens;
-    if (typeof f.ocultarArte === "boolean") ocultarArte = f.ocultarArte;
+    applyCollectionFiltersSnapshot({
+      lang: f.filtroIdiomaColecciones ?? f.lang,
+      texto: f.filtroTextoColecciones ?? f.texto,
+      vista: f.vistaColecciones ?? f.vista,
+      year: f.filtroYearColecciones ?? f.year,
+      filtroTiposSet: f.filtroTiposSet,
+      ocultarTokens: f.ocultarTokens,
+      ocultarArte: f.ocultarArte
+    });
 
     renderColecciones();
     if (setActualKey) renderTablaSet(setActualKey);
@@ -6852,10 +6858,22 @@ async function scryGetCardsBySetAndLang(setCode, lang) {
 }
 
 // ===============================
-// Scryfall - búsqueda por nombre (EN/ES)
+// Scryfall - búsqueda por nombre (EN/ES en producto actual)
 // ===============================
 
-const SEARCH_LANGS = ["en", "es"];
+function getSearchLangs() {
+  const langs = (typeof getUiEnabledSetLangs === "function" ? getUiEnabledSetLangs() : ["en", "es"])
+    .map(lang => normalizeLanguagePreferenceCode(lang))
+    .filter(Boolean);
+  return langs.length > 0 ? [...new Set(langs)] : ["en", "es"];
+}
+
+function buildSearchLangClause() {
+  const langs = getSearchLangs();
+  if (langs.length === 1) return `lang:${langs[0]}`;
+  return `(${langs.map(lang => `lang:${lang}`).join(" or ")})`;
+}
+
 const SEARCH_LIMIT = 200; // evita bajar 1000+ prints en cartas hiper reimpresas
 const COMMANDER_SEARCH_LIMIT = 200;
 let buscarExacta = false;
@@ -6888,8 +6906,8 @@ async function scrySearchPrintsByName(texto, opts = {}) {
   const nameClause = buildNameQuery(qUser, !!opts.exact);
   if (!nameClause) return [];
 
-  // Solo papel, solo EN/ES, y búsqueda flexible por nombre
-  const query = `game:paper (lang:en or lang:es) ${nameClause}`;
+  // Solo papel, idiomas visibles soportados por producto actual y búsqueda flexible por nombre.
+  const query = `game:paper ${buildSearchLangClause()} ${nameClause}`;
   const q = encodeURIComponent(query);
   const url = `${SCY_BASE}/cards/search?q=${q}&unique=prints&order=released&dir=desc`;
 
@@ -6940,7 +6958,7 @@ function agruparResultadosBusqueda(cards) {
 
   for (const card of (cards || [])) {
     const lang = String(card.lang || "").toLowerCase();
-    if (!SEARCH_LANGS.includes(lang)) continue;
+    if (!getSearchLangs().includes(lang)) continue;
 
     const key = card.oracle_id || card.id;
     if (!map.has(key)) map.set(key, []);
@@ -6979,17 +6997,22 @@ function agruparResultadosBusqueda(cards) {
         };
       });
 
-    // Título del grupo: "ES / EN" si tenemos ambos
-    const esCard = versionesRaw.find(x => x.lang === "es" && x.printed_name);
-    const enCard = versionesRaw.find(x => x.lang === "en" && x.name);
+    const preferredNames = [];
+    for (const lang of getSearchLangs()) {
+      const version = versionesRaw.find(item => normalizeLanguagePreferenceCode(item?.lang) === lang);
+      if (!version) continue;
+      const displayName = String(
+        lang === "en"
+          ? (version.name || version.printed_name || "")
+          : (version.printed_name || version.name || "")
+      ).trim();
+      if (displayName) preferredNames.push(displayName);
+    }
 
-    const nombreES = esCard?.printed_name || null;
-    const nombreEN = enCard?.name || null;
-
-    let titulo = nombreES || nombreEN || versionesRaw[0]?.name || "Carta";
-    if (nombreES && nombreEN) {
-      const same = nombreES.trim().toLowerCase() === nombreEN.trim().toLowerCase();
-      titulo = same ? nombreES : `${nombreES} / ${nombreEN}`;
+    const uniquePreferredNames = [...new Set(preferredNames.map(name => name.trim()))].filter(Boolean);
+    let titulo = uniquePreferredNames[0] || versionesRaw[0]?.printed_name || versionesRaw[0]?.name || "Carta";
+    if (uniquePreferredNames.length > 1) {
+      titulo = uniquePreferredNames.join(" / ");
     }
 
     // Imagen para el título (la primera que tenga imagen)
@@ -7406,13 +7429,17 @@ function abrirModalCarta({ titulo, imageUrl, numero, rareza, precio, navLista = 
     applyVisibleVariantToModal(body, baseModalCard);
     wireControlesModalCarta(body, baseModalCard);
     if (getCardControlsConfig().langMode === "both") {
+      const variantScope = getVariantScopeForCardUI(baseModalCard);
       const modalPreferredLang = getActiveVisibleLang(
         String(baseModalCard.setCode || baseModalCard.set || "").toLowerCase(),
         String(baseModalCard.oracle_id || ""),
         String(baseModalCard.collector_number || baseModalCard.numero || ""),
         baseModalCard.lang || "en"
       );
-      resolveVisibleVariantForCard(baseModalCard, modalPreferredLang).then(variantCard => {
+      const variantResolver = variantScope === "set-exact"
+        ? resolveExactSetVariantForCard
+        : resolveVisibleVariantForCard;
+      variantResolver(baseModalCard, modalPreferredLang).then(variantCard => {
         if (variantCard) applyVisibleVariantToModal(body, variantCard);
       }).catch(() => {});
     }
@@ -7967,6 +7994,54 @@ function navegarAtras() {
 // 4) Colecciones: filtro + lista + progreso
 // ===============================
 
+function normalizeCollectionFilterLang(lang, fallback = "all") {
+  if (String(lang || "").trim().toLowerCase() === "all") return "all";
+  return normalizeLanguagePreferenceCode(lang, fallback === "all" ? "" : fallback) || (fallback === "all" ? "all" : fallback);
+}
+
+const DEFAULT_SET_TYPE_FILTERS = ["expansion", "core", "commander", "masters", "promo", "token", "memorabilia", "other"];
+const ALLOWED_SET_TYPE_FILTERS = new Set(DEFAULT_SET_TYPE_FILTERS);
+
+function normalizeCollectionYearFilter(yearValue) {
+  const raw = String(yearValue || "").trim();
+  return /^\d{4}$/.test(raw) ? raw : "all";
+}
+
+function normalizeSetTypeFilters(values) {
+  const normalized = new Set();
+  const source = Array.isArray(values) ? values : [];
+
+  for (const valueRaw of source) {
+    const value = String(valueRaw || "").trim().toLowerCase();
+    if (ALLOWED_SET_TYPE_FILTERS.has(value)) normalized.add(value);
+  }
+
+  return normalized.size > 0 ? normalized : new Set(DEFAULT_SET_TYPE_FILTERS);
+}
+
+function buildCollectionFiltersSnapshot() {
+  return {
+    lang: normalizeCollectionFilterLang(filtroIdiomaColecciones),
+    texto: String(filtroTextoColecciones || "").trim().toLowerCase(),
+    vista: vistaColecciones === "lista" ? "lista" : "simbolo",
+    year: normalizeCollectionYearFilter(filtroYearColecciones),
+    filtroTiposSet: [...normalizeSetTypeFilters([...filtroTiposSet])],
+    ocultarTokens: !!ocultarTokens,
+    ocultarArte: !!ocultarArte
+  };
+}
+
+function applyCollectionFiltersSnapshot(raw) {
+  const data = raw && typeof raw === "object" ? raw : {};
+  filtroIdiomaColecciones = normalizeCollectionFilterLang(data.lang);
+  filtroTextoColecciones = typeof data.texto === "string" ? data.texto.trim().toLowerCase() : "";
+  vistaColecciones = data.vista === "lista" ? "lista" : "simbolo";
+  filtroYearColecciones = normalizeCollectionYearFilter(data.year);
+  filtroTiposSet = normalizeSetTypeFilters(data.filtroTiposSet);
+  ocultarTokens = !!data.ocultarTokens;
+  ocultarArte = !!data.ocultarArte;
+}
+
 let filtroIdiomaColecciones = "all"; // "all" | "en" | "es"
 
 let filtroTextoColecciones = ""; // texto del buscador
@@ -8152,9 +8227,7 @@ function setFiltroTextoColecciones(texto) {
 }
 
 function setFiltroYearColecciones(yearValue) {
-  const raw = String(yearValue || "").trim();
-  const next = raw && raw !== "all" ? raw : "all";
-  filtroYearColecciones = next;
+  filtroYearColecciones = normalizeCollectionYearFilter(yearValue);
   guardarFiltrosColecciones();
   scheduleRenderColecciones();
 }
@@ -8222,9 +8295,9 @@ function progresoDeColeccion(setKey) {
 
 
 function setFiltroColecciones(lang) {
-  filtroIdiomaColecciones = lang;
+  filtroIdiomaColecciones = normalizeCollectionFilterLang(lang);
   document.querySelectorAll(".btn-filtro").forEach(b => {
-    b.classList.toggle("active", b.dataset.lang === lang);
+    b.classList.toggle("active", b.dataset.lang === filtroIdiomaColecciones);
   });
   guardarFiltrosColecciones();
   scheduleRenderColecciones();
@@ -8268,7 +8341,7 @@ let ocultarTokens = false;
 let ocultarArte = false;
 let mostrarOcultas = false;
 // Cambio: ahora es un Set con múltiples valores seleccionados
-let filtroTiposSet = new Set(["expansion", "core", "commander", "masters", "promo", "token", "memorabilia", "other"]);
+let filtroTiposSet = new Set(DEFAULT_SET_TYPE_FILTERS);
 
 function aplicarUIFiltrosTipo() {
   const bTok = document.getElementById("btnToggleTokens");
@@ -8536,12 +8609,7 @@ function guardarStatsSnapshot(snap, { markDirty = false } = {}) {
 }
 
 function guardarFiltrosColecciones() {
-  const data = {
-    lang: filtroIdiomaColecciones,
-    texto: filtroTextoColecciones,
-    vista: vistaColecciones,
-    year: filtroYearColecciones
-  };
+  const data = buildCollectionFiltersSnapshot();
   safeLocalStorageSet(LS_FILTERS_KEY, JSON.stringify(data));
   if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
@@ -8553,18 +8621,7 @@ function cargarFiltrosColecciones() {
   try {
     const data = JSON.parse(raw);
     if (data && typeof data === "object") {
-      if (data.lang === "all" || data.lang === "en" || data.lang === "es") {
-        filtroIdiomaColecciones = data.lang;
-      }
-      if (typeof data.texto === "string") {
-        filtroTextoColecciones = data.texto.trim().toLowerCase();
-      }
-      if (data.vista === "lista" || data.vista === "simbolo") {
-        vistaColecciones = data.vista;
-      }
-      if (typeof data.year === "string") {
-        filtroYearColecciones = data.year.trim() || "all";
-      }
+      applyCollectionFiltersSnapshot(data);
     }
   } catch {
     // si está corrupto, lo ignoramos
@@ -11580,6 +11637,7 @@ function wireGlobalButtons() {
   if (btnTok) {
     btnTok.addEventListener("click", () => {
       ocultarTokens = !ocultarTokens;
+      guardarFiltrosColecciones();
       aplicarUIFiltrosTipo();
       renderColecciones();
     });
@@ -11589,6 +11647,7 @@ function wireGlobalButtons() {
   if (btnArt) {
     btnArt.addEventListener("click", () => {
       ocultarArte = !ocultarArte;
+      guardarFiltrosColecciones();
       aplicarUIFiltrosTipo();
       renderColecciones();
     });
@@ -11627,6 +11686,8 @@ function wireGlobalButtons() {
       } else {
         filtroTiposSet.delete(chk.value);
       }
+      filtroTiposSet = normalizeSetTypeFilters([...filtroTiposSet]);
+      guardarFiltrosColecciones();
       renderColecciones();
     });
   });
@@ -11644,7 +11705,8 @@ function wireGlobalButtons() {
   const btnMarcarTodos = document.getElementById("btnMarcarTodos");
   if (btnMarcarTodos) {
     btnMarcarTodos.addEventListener("click", () => {
-      filtroTiposSet = new Set(["expansion", "core", "commander", "masters", "promo", "token", "memorabilia", "other"]);
+      filtroTiposSet = new Set(DEFAULT_SET_TYPE_FILTERS);
+      guardarFiltrosColecciones();
       aplicarUIFiltrosTipo();
       renderColecciones();
     });
@@ -11655,6 +11717,7 @@ function wireGlobalButtons() {
   if (btnDesmarcarTodos) {
     btnDesmarcarTodos.addEventListener("click", () => {
       filtroTiposSet.clear();
+      guardarFiltrosColecciones();
       aplicarUIFiltrosTipo();
       renderColecciones();
     });
