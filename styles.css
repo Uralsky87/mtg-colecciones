@@ -1582,6 +1582,11 @@ label {
   margin-top: 8px;
 }
 
+.commander-exacto:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .commander-actions {
   margin-top: 6px;
 }
@@ -1610,10 +1615,10 @@ label {
   margin-top: 4px;
 }
 
-.carta-item-comandante .cmd-actions {
-  margin-top: 8px;
-  display: flex;
-  justify-content: flex-end;
+.carta-item-comandante[data-loading-versions="1"] .cmd-set::after {
+  content: " Cargando versiones...";
+  color: var(--muted);
+  font-style: italic;
 }
 
 @media (max-width: 640px) {

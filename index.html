@@ -529,6 +529,13 @@
         <small class="hint">Busca palabras dentro del texto de reglas.</small>
       </div>
 
+      <div class="filtro-bloque">
+        <label for="inputCreatureTypeCommander">Tipo de criatura:</label>
+        <input id="inputCreatureTypeCommander" type="text" list="commanderCreatureTypeSuggestions" placeholder="Ej: Wizard, Dragon, Human Wizard..." />
+        <datalist id="commanderCreatureTypeSuggestions"></datalist>
+        <small class="hint">Puedes escribir uno o varios subtipos de criatura. Para varios, sepáralos con comas.</small>
+      </div>
+
       <div class="acciones-verticales commander-actions">
         <button id="btnBuscarComandantes" class="btn-principal" type="button">Buscar</button>
         <button id="btnLuckyCommander" class="btn-secundario" type="button">Voy a tener suerte</button>

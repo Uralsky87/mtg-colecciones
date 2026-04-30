@@ -49,6 +49,168 @@ function formatCommanderCmcLabel(value, open) {
   return String(value);
 }
 
+function escapeScryfallRegexLiteral(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+
+const LS_COMMANDER_CREATURE_TYPES = "mtg_commander_creature_types_v1";
+let commanderCreatureTypeCatalog = [];
+
+function buildCommanderCreatureTypeClause(term) {
+  const safe = String(term || "").replace(/"/g, "").trim();
+  if (!safe) return "";
+  return /\s/.test(safe) ? `t:"${safe}"` : `t:${safe}`;
+}
+
+function setCommanderCreatureTypeCatalog(types) {
+  const unique = new Map();
+  for (const type of (types || [])) {
+    const safe = String(type || "").trim().replace(/\s+/g, " ");
+    if (!safe) continue;
+    unique.set(safe.toLowerCase(), safe);
+  }
+  commanderCreatureTypeCatalog = [...unique.values()].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+}
+
+function loadCommanderCreatureTypeCatalogCache() {
+  try {
+    const raw = safeLocalStorageGet(LS_COMMANDER_CREATURE_TYPES);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return false;
+    setCommanderCreatureTypeCatalog(parsed);
+    return commanderCreatureTypeCatalog.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function saveCommanderCreatureTypeCatalogCache() {
+  if (commanderCreatureTypeCatalog.length === 0) return;
+  safeLocalStorageSet(LS_COMMANDER_CREATURE_TYPES, JSON.stringify(commanderCreatureTypeCatalog));
+}
+
+function extractCommanderCreatureTypeFallbackSuggestions() {
+  const collected = [];
+  const pushSubtypeParts = (typeLine) => {
+    const safe = String(typeLine || "").trim();
+    if (!safe || !/creature/i.test(safe)) return;
+    const parts = safe.split("—");
+    const subtypePart = String(parts[1] || "").trim();
+    if (!subtypePart) return;
+    collected.push(subtypePart);
+    subtypePart.split(/\s+/).forEach(token => {
+      if (token) collected.push(token);
+    });
+  };
+
+  for (const card of cartas || []) pushSubtypeParts(card?.type_line);
+  for (const loadedCards of Object.values(cacheCartasPorSetLang || {})) {
+    for (const card of loadedCards || []) pushSubtypeParts(card?.type_line);
+  }
+
+  setCommanderCreatureTypeCatalog(collected);
+}
+
+async function ensureCommanderCreatureTypeCatalogLoaded() {
+  if (commanderCreatureTypeCatalog.length > 0) return commanderCreatureTypeCatalog;
+  loadCommanderCreatureTypeCatalogCache();
+  if (commanderCreatureTypeCatalog.length > 0) return commanderCreatureTypeCatalog;
+
+  try {
+    const data = await scryFetchJson(`${SCY_BASE}/catalog/creature-types`);
+    const values = Array.isArray(data?.data) ? data.data : [];
+    if (values.length > 0) {
+      setCommanderCreatureTypeCatalog(values);
+      saveCommanderCreatureTypeCatalogCache();
+      return commanderCreatureTypeCatalog;
+    }
+  } catch {}
+
+  extractCommanderCreatureTypeFallbackSuggestions();
+  return commanderCreatureTypeCatalog;
+}
+
+function splitCommanderCreatureTypeSegments(raw) {
+  return String(raw || "")
+    .split(",")
+    .map(segment => segment.trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+}
+
+function resolveCommanderCreatureTypeSegmentTerms(segment) {
+  const safe = String(segment || "").trim().replace(/\s+/g, " ");
+  if (!safe) return [];
+  const exactCatalogMatch = commanderCreatureTypeCatalog.find(type => type.toLowerCase() === safe.toLowerCase());
+  if (exactCatalogMatch) return [exactCatalogMatch];
+  return safe.split(/\s+/).filter(Boolean);
+}
+
+function getCommanderCreatureTypeTerms() {
+  const raw = document.getElementById("inputCreatureTypeCommander")?.value || "";
+  const terms = [];
+  const seen = new Set();
+
+  for (const segment of splitCommanderCreatureTypeSegments(raw)) {
+    for (const term of resolveCommanderCreatureTypeSegmentTerms(segment)) {
+      const normalized = String(term || "").trim();
+      const key = normalized.toLowerCase();
+      if (!normalized || seen.has(key)) continue;
+      seen.add(key);
+      terms.push(normalized);
+    }
+  }
+
+  return terms;
+}
+
+function updateCommanderCreatureTypeSuggestions() {
+  const input = document.getElementById("inputCreatureTypeCommander");
+  const list = document.getElementById("commanderCreatureTypeSuggestions");
+  if (!input || !list) return;
+
+  const raw = String(input.value || "");
+  const commaIndex = raw.lastIndexOf(",");
+  const prefix = commaIndex >= 0 ? raw.slice(0, commaIndex + 1) : "";
+  const currentToken = raw.slice(commaIndex + 1).trim().toLowerCase();
+  const selected = new Set(
+    splitCommanderCreatureTypeSegments(prefix)
+      .map(segment => segment.toLowerCase())
+      .filter(Boolean)
+  );
+
+  const matches = commanderCreatureTypeCatalog
+    .filter(type => !selected.has(type.toLowerCase()))
+    .filter(type => !currentToken || type.toLowerCase().includes(currentToken))
+    .slice(0, 20);
+
+  list.innerHTML = matches
+    .map(type => {
+      const value = prefix ? `${prefix} ${type}`.trim() : type;
+      return `<option value="${escapeAttr(value)}"></option>`;
+    })
+    .join("");
+}
+
+function maybeAppendCommanderCreatureTypeSeparator() {
+  const input = document.getElementById("inputCreatureTypeCommander");
+  if (!input) return;
+
+  const raw = String(input.value || "");
+  if (!raw || /,\s*$/.test(raw)) return;
+
+  const commaIndex = raw.lastIndexOf(",");
+  const prefix = commaIndex >= 0 ? raw.slice(0, commaIndex + 1).trimEnd() : "";
+  const currentSegment = raw.slice(commaIndex + 1).trim().replace(/\s+/g, " ");
+  if (!currentSegment) return;
+
+  const exactCatalogMatch = commanderCreatureTypeCatalog.find(type => type.toLowerCase() === currentSegment.toLowerCase());
+  if (!exactCatalogMatch) return;
+
+  input.value = prefix ? `${prefix} ${exactCatalogMatch}, ` : `${exactCatalogMatch}, `;
+  updateCommanderCreatureTypeSuggestions();
+}
+
 function getCommanderSelectedColors() {
   const colors = [];
   document.querySelectorAll(".chk-commander-color:checked").forEach(chk => {
@@ -64,18 +226,48 @@ function isCommanderColorlessSelected() {
 }
 
 function isCommanderExactColorsSelected() {
-  const chk = document.getElementById("chkCommanderExactColors");
+  const chk = document.getElementById("chkCommanderExacto");
   return chk ? !!chk.checked : false;
 }
 
+function updateCommanderExactColorsAvailability() {
+  const chkExact = document.getElementById("chkCommanderExacto");
+  if (!chkExact) return;
+
+  const hasColoredSelection = getCommanderSelectedColors().length > 0;
+  chkExact.disabled = !hasColoredSelection;
+  if (!hasColoredSelection) chkExact.checked = false;
+}
+
+function syncCommanderColorSelection(changedInput = null) {
+  const colorlessChk = document.getElementById("chkCommanderColorless");
+  const colorChecks = [...document.querySelectorAll(".chk-commander-color")];
+  if (!colorlessChk || colorChecks.length === 0) return;
+
+  if (changedInput === colorlessChk && colorlessChk.checked) {
+    colorChecks.forEach(chk => {
+      chk.checked = false;
+    });
+  } else if (changedInput && colorChecks.includes(changedInput) && changedInput.checked) {
+    colorlessChk.checked = false;
+  } else if (colorlessChk.checked && colorChecks.some(chk => chk.checked)) {
+    colorlessChk.checked = false;
+  }
+
+  updateCommanderExactColorsAvailability();
+}
+
 function buildCommanderQueryFromUI() {
+  syncCommanderColorSelection();
+
   const colors = getCommanderSelectedColors();
   const colorless = isCommanderColorlessSelected();
   const exactColors = isCommanderExactColorsSelected();
   const rulingRaw = document.getElementById("inputRulingCommander")?.value || "";
   const ruling = String(rulingRaw).replace(/"/g, "").trim();
+  const creatureTypeTerms = getCommanderCreatureTypeTerms();
 
-    const clauses = ["game:paper", "(lang:en or lang:es)", "is:commander", "order:cmc"];
+  const clauses = ["game:paper", buildSearchLangClause(), "is:commander", "order:cmc"];
 
   if (colorless && colors.length === 0) {
     clauses.push("id=0");
@@ -85,7 +277,12 @@ function buildCommanderQueryFromUI() {
   }
 
   if (ruling) {
-    clauses.push(`oracle:/.*${ruling}.*/i`);
+    clauses.push(`oracle:/.*${escapeScryfallRegexLiteral(ruling)}.*/i`);
+  }
+
+  for (const term of creatureTypeTerms) {
+    const clause = buildCommanderCreatureTypeClause(term);
+    if (clause) clauses.push(clause);
   }
 
   if (commanderCmcMin !== null && commanderCmcMax === null) {
@@ -99,15 +296,22 @@ function buildCommanderQueryFromUI() {
 }
 
 function updateCommanderCmcUI() {
-  const texto = document.getElementById("textoFiltroManaCommander") || document.getElementById("textoFiltroCmcCommander");
+  const texto = document.getElementById("manaRangoTexto");
   const min = commanderCmcMin;
   const max = commanderCmcMax;
 
   document.querySelectorAll("[data-cmc]").forEach(btn => {
     const parsed = parseCommanderCmcValue(btn.dataset.cmc);
     if (!parsed) return;
-    const isSelected = min !== null && max === null && parsed.value === min && parsed.open === commanderCmcMaxOpen;
-    btn.classList.toggle("is-active", isSelected);
+    const value = parsed.value;
+    const isActive = min !== null && (
+      (max === null && value === min && parsed.open === commanderCmcMaxOpen) ||
+      (max !== null && value === min) ||
+      (max !== null && commanderCmcMaxOpen && value === 10)
+    );
+    const isInRange = min !== null && max !== null && value >= min && (commanderCmcMaxOpen || value <= max);
+    btn.classList.toggle("active", isActive);
+    btn.classList.toggle("in-range", isInRange);
   });
 
   if (!texto) return;
@@ -171,10 +375,18 @@ function resetCommanderSearchUI() {
   const chkColorless = document.getElementById("chkCommanderColorless");
   if (chkColorless) chkColorless.checked = false;
 
+  const chkExact = document.getElementById("chkCommanderExacto");
+  if (chkExact) chkExact.checked = false;
+
   const rulingInput = document.getElementById("inputRulingCommander");
   if (rulingInput) rulingInput.value = "";
 
+  const creatureTypeInput = document.getElementById("inputCreatureTypeCommander");
+  if (creatureTypeInput) creatureTypeInput.value = "";
+  updateCommanderCreatureTypeSuggestions();
+
   setCommanderCmcRange(null, null, false);
+  updateCommanderExactColorsAvailability();
 
   const cont = document.getElementById("resultadosComandantes");
   if (cont) {
@@ -195,10 +407,17 @@ async function renderResultadosComandantes(opts = {}) {
 
   let cards = [];
   try {
-    cards = await scrySearchCommanders(query, {
-      signal: commanderSearchAbortController.signal,
-      unique: "prints"
-    });
+    if (opts.randomOne) {
+      const randomCard = await scrySearchRandomCommander(query, {
+        signal: commanderSearchAbortController.signal
+      });
+      cards = randomCard ? [randomCard] : [];
+    } else {
+      cards = await scrySearchCommanders(query, {
+        signal: commanderSearchAbortController.signal,
+        unique: "cards"
+      });
+    }
   } catch (err) {
     if (err && err.name === "AbortError") return;
     console.error(err);
@@ -213,13 +432,8 @@ async function renderResultadosComandantes(opts = {}) {
     return;
   }
 
-  if (opts.randomOne) {
-    const idx = Math.floor(Math.random() * grupos.length);
-    grupos = [grupos[idx]];
-  }
-
-  const avisoLimit = (cards.length >= COMMANDER_SEARCH_LIMIT)
-    ? `<div class="card"><p class="hint">Nota: se muestran solo las primeras ${COMMANDER_SEARCH_LIMIT} ediciones. Ajusta filtros para acotar.</p></div>`
+  const avisoLimit = (!opts.randomOne && cards.length >= COMMANDER_SEARCH_LIMIT)
+    ? `<div class="card"><p class="hint">Nota: se muestran solo los primeros ${COMMANDER_SEARCH_LIMIT} comandantes. Ajusta filtros para acotar.</p></div>`
     : "";
 
   let html = avisoLimit;
@@ -253,9 +467,6 @@ async function renderResultadosComandantes(opts = {}) {
           <img class="carta-imagen cmd-img" data-img-src="${escapeAttr(imgUrl)}" alt="${escapeAttr(v.nombre || "")}" loading="lazy" style="${imgUrl ? "" : "display:none;"}" />
           <div class="carta-imagen-placeholder cmd-placeholder" style="${imgUrl ? "display:none;" : ""}">Sin imagen</div>
         </div>
-        <div class="cmd-actions">
-          <button class="btn-secundario btn-ir-set" type="button" data-setkey="${v.setKey}" data-cardname="${escapeAttr(v.nombre || "")}">Ir</button>
-        </div>
       </div>
     `;
   }
@@ -268,7 +479,15 @@ async function renderResultadosComandantes(opts = {}) {
   for (const g of grupos) for (const v of g.versiones) verById.set(v.id, v);
 
   const mapaOracleAImg = new Map();
-  for (const g of grupos) mapaOracleAImg.set(g.oracleId, { titulo: g.titulo, img: g.img, versiones: g.versiones || [] });
+  for (const g of grupos) {
+    mapaOracleAImg.set(g.oracleId, {
+      titulo: g.titulo,
+      img: g.img,
+      versiones: g.versiones || [],
+      allVersionsLoaded: false,
+      loadingVersions: false
+    });
+  }
 
   cont._searchVerById = verById;
   cont._searchOracleImg = mapaOracleAImg;
@@ -281,7 +500,7 @@ async function renderResultadosComandantes(opts = {}) {
   if (!cont.dataset.wiredCommanderSearch) {
     cont.dataset.wiredCommanderSearch = "1";
 
-    cont.addEventListener("click", (e) => {
+    cont.addEventListener("click", async (e) => {
       const target = e.target;
       const btn = target.closest("button");
       if (!btn) return;
@@ -291,10 +510,49 @@ async function renderResultadosComandantes(opts = {}) {
         if (!cardEl) return;
         const oracleId = cardEl.dataset.oracle;
         const data = cont._searchOracleImg?.get(oracleId);
-        const versiones = data?.versiones || [];
+        if (!data) return;
+        const currentPrintId = cardEl.querySelector(".cmd-title")?.dataset.id || "";
+
+        if (!data.allVersionsLoaded && !data.loadingVersions) {
+          data.loadingVersions = true;
+          cardEl.dataset.loadingVersions = "1";
+          cardEl.setAttribute("aria-busy", "true");
+          const navButtons = cardEl.querySelectorAll(".btn-cmd-nav");
+          navButtons.forEach(navBtn => { navBtn.disabled = true; });
+
+          try {
+            const fetchedCards = await scrySearchCommanderPrintsByOracle(oracleId, {
+              signal: commanderSearchAbortController?.signal
+            });
+            const fetchedGroup = agruparResultadosBusqueda(fetchedCards).find(group => group.oracleId === oracleId);
+            if (fetchedGroup?.versiones?.length) {
+              data.titulo = fetchedGroup.titulo;
+              data.img = fetchedGroup.img;
+              data.versiones = fetchedGroup.versiones;
+              for (const version of fetchedGroup.versiones) {
+                cont._searchVerById?.set(version.id, version);
+              }
+            }
+            data.allVersionsLoaded = true;
+          } catch (err) {
+            if (!(err && err.name === "AbortError")) {
+              console.error(err);
+            }
+          } finally {
+            data.loadingVersions = false;
+            delete cardEl.dataset.loadingVersions;
+            cardEl.removeAttribute("aria-busy");
+            navButtons.forEach(navBtn => { navBtn.disabled = false; });
+          }
+        }
+
+        const versiones = data.versiones || [];
         if (versiones.length === 0) return;
 
-        const currentIdx = Number(cardEl.dataset.idx || 0);
+        const hydratedCurrentIdx = currentPrintId
+          ? versiones.findIndex(version => version.id === currentPrintId)
+          : -1;
+        const currentIdx = hydratedCurrentIdx >= 0 ? hydratedCurrentIdx : Number(cardEl.dataset.idx || 0);
         const dir = btn.classList.contains("btn-cmd-next") ? 1 : -1;
         const nextIdx = (currentIdx + dir + versiones.length) % versiones.length;
         const v = versiones[nextIdx];
@@ -328,11 +586,6 @@ async function renderResultadosComandantes(opts = {}) {
           }
         }
 
-        const btnIr = cardEl.querySelector(".btn-ir-set");
-        if (btnIr) {
-          btnIr.dataset.setkey = v.setKey;
-          btnIr.dataset.cardname = v.nombre || "";
-        }
         return;
       }
 
@@ -349,24 +602,6 @@ async function renderResultadosComandantes(opts = {}) {
         return;
       }
 
-      if (btn.classList.contains("btn-ir-set")) {
-        (async () => {
-          const setKey = btn.dataset.setkey;
-          const cardName = btn.dataset.cardname || "";
-          if (!setKey) return;
-
-          filtroSoloFaltanSet = false;
-          setFiltroTextoSet(cardName);
-
-          if (typeof hiddenEmptySetKeys !== "undefined" && hiddenEmptySetKeys.has(setKey)) {
-            hiddenEmptySetKeys.delete(setKey);
-            if (typeof guardarHiddenEmptySets === "function") guardarHiddenEmptySets();
-          }
-
-          await abrirSet(setKey);
-          if (typeof aplicarUIFiltrosSet === "function") aplicarUIFiltrosSet();
-        })();
-      }
     });
   }
 }
@@ -7053,6 +7288,56 @@ async function scrySearchCommanders(query, opts = {}) {
   }
 }
 
+async function scrySearchRandomCommander(query, opts = {}) {
+  if (!query) return null;
+
+  const params = new URLSearchParams();
+  params.append("q", query);
+  params.append("unique", "cards");
+
+  const firstUrl = `${SCY_BASE}/cards/search?${params.toString()}`;
+
+  try {
+    const firstPage = await scryFetchJson(firstUrl, opts);
+    const totalCards = Number(firstPage?.total_cards || 0);
+    const firstData = Array.isArray(firstPage?.data) ? firstPage.data : [];
+    if (totalCards <= 0 || firstData.length === 0) return null;
+
+    const pageSize = 175;
+    const randomIndex = Math.floor(Math.random() * totalCards);
+    const targetPage = Math.floor(randomIndex / pageSize) + 1;
+    const indexInPage = randomIndex % pageSize;
+    const pageData = targetPage === 1
+      ? firstData
+      : (await scryFetchJson(`${firstUrl}&page=${targetPage}`, opts))?.data || [];
+
+    return pageData[indexInPage] || pageData[pageData.length - 1] || null;
+  } catch (err) {
+    if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function scrySearchCommanderPrintsByOracle(oracleId, opts = {}) {
+  const safeOracleId = String(oracleId || "").trim();
+  if (!safeOracleId) return [];
+
+  const query = `game:paper ${buildSearchLangClause()} oracleid:${safeOracleId}`;
+  const q = encodeURIComponent(query);
+  const url = `${SCY_BASE}/cards/search?q=${q}&unique=prints&order=released&dir=desc`;
+
+  try {
+    return await scryFetchAllPagesLimited(url, COMMANDER_SEARCH_LIMIT, opts);
+  } catch (err) {
+    if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
+      return [];
+    }
+    throw err;
+  }
+}
+
 function getBuscarExacta() {
   const chk = document.getElementById("chkBuscarExacta");
   return chk ? !!chk.checked : !!buscarExacta;
@@ -11310,6 +11595,39 @@ function wireGlobalButtons() {
     inputRulingCommander.addEventListener("keydown", async (e) => {
       if (e.key === "Enter") await renderResultadosComandantes();
     });
+  }
+
+  const inputCreatureTypeCommander = document.getElementById("inputCreatureTypeCommander");
+  if (inputCreatureTypeCommander) {
+    ensureCommanderCreatureTypeCatalogLoaded().finally(() => {
+      updateCommanderCreatureTypeSuggestions();
+    });
+    inputCreatureTypeCommander.addEventListener("focus", () => {
+      ensureCommanderCreatureTypeCatalogLoaded().finally(() => {
+        updateCommanderCreatureTypeSuggestions();
+      });
+    });
+    inputCreatureTypeCommander.addEventListener("input", () => {
+      updateCommanderCreatureTypeSuggestions();
+    });
+    inputCreatureTypeCommander.addEventListener("change", () => {
+      maybeAppendCommanderCreatureTypeSeparator();
+    });
+    inputCreatureTypeCommander.addEventListener("blur", () => {
+      maybeAppendCommanderCreatureTypeSeparator();
+    });
+    inputCreatureTypeCommander.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") await renderResultadosComandantes();
+    });
+  }
+
+  document.querySelectorAll(".chk-commander-color").forEach(chk => {
+    chk.addEventListener("change", () => syncCommanderColorSelection(chk));
+  });
+
+  const chkCommanderColorless = document.getElementById("chkCommanderColorless");
+  if (chkCommanderColorless) {
+    chkCommanderColorless.addEventListener("change", () => syncCommanderColorSelection(chkCommanderColorless));
   }
 
   const manaRangoBar = document.getElementById("manaRangoBar");
