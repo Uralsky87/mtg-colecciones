@@ -1368,6 +1368,7 @@ function sbBuildCloudPayload() {
     estado3: estado3 || createEmptyEstado3(),
     oracleIdCache: oracleIdCache || {}, // Cache de resolución
     progresoPorSet: progresoPorSet || {},
+    progresoPorSetMeta: progresoPorSetMeta || normalizeSetProgressMeta({}),
     hiddenEmptySetKeys: [...(hiddenEmptySetKeys || new Set())],
     hiddenCollections: [...(hiddenCollections || new Set())],
     statsSnapshot: statsSnapshot || null,
@@ -1429,7 +1430,10 @@ function sbApplyCloudPayload(payload, options = {}) {
 
     if (payload.progresoPorSet && typeof payload.progresoPorSet === "object") {
       progresoPorSet = payload.progresoPorSet;
-      guardarProgresoPorSet();
+      progresoPorSetMeta = normalizeSetProgressMeta(payload.progresoPorSetMeta);
+      safeLocalStorageSet(LS_SET_PROGRESS, JSON.stringify(progresoPorSet));
+      safeLocalStorageSet(LS_SET_PROGRESS_META, JSON.stringify(progresoPorSetMeta));
+      updateSetProgressCacheValidity({ triggerRefresh: true, reason: "cloud-payload" });
     }
 
     if (Array.isArray(payload.hiddenEmptySetKeys)) {
@@ -2446,7 +2450,147 @@ function getMergedSetExactCards(setKey) {
 }
 
 const LS_SET_PROGRESS = "mtg_set_progress_v1";
+const LS_SET_PROGRESS_META = "mtg_set_progress_meta_v1";
 let progresoPorSet = {}; // { "khm__en": { total: 286, tengo: 12 }, ... }
+let progresoPorSetMeta = {
+  version: 1,
+  inventoryToken: "",
+  updatedAt: 0
+};
+let progresoPorSetStale = false;
+let progresoPorSetRefreshPromise = null;
+
+function normalizeSetProgressMeta(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { version: 1, inventoryToken: "", updatedAt: 0 };
+  }
+
+  const version = clampInt(Number(raw.version ?? 1), 1, 999) || 1;
+  const inventoryToken = String(raw.inventoryToken || "").trim();
+  const updatedAt = Number.isFinite(Number(raw.updatedAt)) ? Math.trunc(Number(raw.updatedAt)) : 0;
+  return { version, inventoryToken, updatedAt };
+}
+
+function computeInventoryProgressFingerprint() {
+  if (hasEstado3InventoryData() || hasEstado3ManualInventoryData() || estado3?.migrationMeta) {
+    const inventoryEntries = Object.values(getEstado3InventoryMap());
+    const manualMaps = Object.values(getEstado3ManualInventoryMap());
+
+    let qtyTotal = 0;
+    let foilTotal = 0;
+    let riCount = 0;
+    let maxUpdatedAt = 0;
+
+    for (const entry of inventoryEntries) {
+      const normalized = normalizeInventoryEntryV3(entry);
+      qtyTotal += Number(normalized.qty || 0);
+      foilTotal += Number(normalized.foil || 0);
+      if (normalized.ri) riCount += 1;
+      maxUpdatedAt = Math.max(maxUpdatedAt, Number(normalized.updatedAt || 0));
+    }
+
+    for (const manualMap of manualMaps) {
+      for (const entry of Object.values(manualMap || {})) {
+        const normalized = normalizeInventoryEntryV3(entry);
+        qtyTotal += Number(normalized.qty || 0);
+        foilTotal += Number(normalized.foil || 0);
+        if (normalized.ri) riCount += 1;
+        maxUpdatedAt = Math.max(maxUpdatedAt, Number(normalized.updatedAt || 0));
+      }
+    }
+
+    const migrationMeta = estado3?.migrationMeta || {};
+    const migratedAt = String(migrationMeta.migratedAt || "").trim();
+    const sourceStateKeys = clampInt(Number(migrationMeta.sourceStateKeys ?? 0), 0, 999999) || 0;
+    const unresolvedBuckets = Array.isArray(migrationMeta.unresolvedBuckets) ? migrationMeta.unresolvedBuckets.length : 0;
+
+    return [
+      "v3",
+      inventoryEntries.length,
+      manualMaps.length,
+      qtyTotal,
+      foilTotal,
+      riCount,
+      maxUpdatedAt,
+      migratedAt,
+      sourceStateKeys,
+      unresolvedBuckets
+    ].join("|");
+  }
+
+  const estado2Keys = Object.keys(estado2 || {}).sort();
+  if (estado2Keys.length > 0) {
+    let qtyTotal = 0;
+    let foilTotal = 0;
+    let riCount = 0;
+
+    for (const oracleId of estado2Keys) {
+      const adapter = buildLegacyPossessionAdapter(getEstadoCarta2(oracleId));
+      qtyTotal += Number(adapter.totals.qty || 0);
+      foilTotal += Number(adapter.totals.foil || 0);
+      if (adapter.totals.ri) riCount += 1;
+    }
+
+    return ["v2", estado2Keys.length, qtyTotal, foilTotal, riCount].join("|");
+  }
+
+  const legacyKeys = Object.keys(estado || {}).sort();
+  let qtyTotal = 0;
+  let foilTotal = 0;
+  let riCount = 0;
+
+  for (const id of legacyKeys) {
+    const st = getEstadoCarta(id);
+    qtyTotal += Number(st.qty || 0);
+    foilTotal += Number(st.foilQty || 0);
+    if (st.wantMore) riCount += 1;
+  }
+
+  return ["v1", legacyKeys.length, qtyTotal, foilTotal, riCount].join("|");
+}
+
+function getCurrentSetProgressInventoryToken() {
+  return computeInventoryProgressFingerprint();
+}
+
+function getSavedProgressForSet(setKey) {
+  if (progresoPorSetStale) return null;
+  const saved = progresoPorSet?.[setKey];
+  if (!saved || typeof saved.total !== "number") return null;
+
+  const total = Number(saved.total);
+  const tengo = Number(saved.tengo || 0);
+  const totalSafe = Number.isFinite(total) ? total : null;
+  const tengoSafe = Number.isFinite(tengo) ? tengo : 0;
+
+  if (totalSafe != null && totalSafe > 0) {
+    return { tengo: Math.max(0, Math.min(tengoSafe, totalSafe)), total: totalSafe };
+  }
+
+  return { tengo: Math.max(0, tengoSafe), total: totalSafe };
+}
+
+function updateSetProgressCacheValidity({ triggerRefresh = false, reason = "" } = {}) {
+  const currentToken = getCurrentSetProgressInventoryToken();
+  const cachedToken = String(progresoPorSetMeta?.inventoryToken || "").trim();
+  const hasSavedProgress = Object.keys(progresoPorSet || {}).length > 0;
+  const shouldMarkStale = hasSavedProgress && (!cachedToken || cachedToken !== currentToken);
+
+  progresoPorSetStale = shouldMarkStale;
+
+  if (shouldMarkStale && triggerRefresh && !progresoPorSetRefreshPromise) {
+    progresoPorSetRefreshPromise = recomputeAllProgressFromCache()
+      .catch(err => {
+        if (DEBUG) console.warn("Error recalculando progreso por set tras invalidacion:", reason || "unknown", err);
+      })
+      .finally(() => {
+        progresoPorSetRefreshPromise = null;
+        scheduleRenderColecciones();
+      });
+  }
+
+  return !shouldMarkStale;
+}
 
 function cargarProgresoPorSet() {
   const raw = safeLocalStorageGet(LS_SET_PROGRESS);
@@ -2457,8 +2601,29 @@ function cargarProgresoPorSet() {
   } catch {}
 }
 
+function cargarProgresoPorSetMeta() {
+  const raw = safeLocalStorageGet(LS_SET_PROGRESS_META);
+  if (!raw) {
+    progresoPorSetMeta = normalizeSetProgressMeta({});
+    return;
+  }
+
+  try {
+    progresoPorSetMeta = normalizeSetProgressMeta(JSON.parse(raw));
+  } catch {
+    progresoPorSetMeta = normalizeSetProgressMeta({});
+  }
+}
+
 function guardarProgresoPorSet() {
+  progresoPorSetMeta = normalizeSetProgressMeta({
+    version: 1,
+    inventoryToken: getCurrentSetProgressInventoryToken(),
+    updatedAt: Date.now()
+  });
+  progresoPorSetStale = false;
   safeLocalStorageSet(LS_SET_PROGRESS, JSON.stringify(progresoPorSet));
+  safeLocalStorageSet(LS_SET_PROGRESS_META, JSON.stringify(progresoPorSetMeta));
   if (typeof sbMarkDirty === "function") sbMarkDirty();
 }
 
@@ -2572,12 +2737,9 @@ function buildSetStatsSummary() {
       progress = progresoDeColeccion(setKey);
       live += 1;
     } else {
-      const saved = progresoPorSet?.[setKey];
-      if (saved && typeof saved.total === "number") {
-        progress = {
-          tengo: Number(saved.tengo || 0),
-          total: Number(saved.total)
-        };
+      const saved = getSavedProgressForSet(setKey);
+      if (saved) {
+        progress = saved;
         cached += 1;
       } else {
         missing += 1;
@@ -2865,12 +3027,13 @@ function computeProgresoFromList(lista) {
 async function recomputeAllProgressFromCache() {
   const updated = new Set();
   const now = Date.now();
+  const nextProgress = {};
 
   // 1) RAM cache
   for (const [setKey, lista] of Object.entries(cacheCartasPorSetLang || {})) {
     if (!Array.isArray(lista)) continue;
     const { total, tengo } = computeProgresoFromList(lista);
-    progresoPorSet[setKey] = { total, tengo, updatedAt: now };
+    nextProgress[setKey] = { total, tengo, updatedAt: now };
     updated.add(setKey);
   }
 
@@ -2889,7 +3052,7 @@ async function recomputeAllProgressFromCache() {
         const data = cursor.value;
         if (data && data.setKey && Array.isArray(data.cards) && !updated.has(data.setKey)) {
           const { total, tengo } = computeProgresoFromList(data.cards);
-          progresoPorSet[data.setKey] = { total, tengo, updatedAt: now };
+          nextProgress[data.setKey] = { total, tengo, updatedAt: now };
         }
 
         cursor.continue();
@@ -2900,6 +3063,7 @@ async function recomputeAllProgressFromCache() {
     if (DEBUG) console.warn('Error recalculando progreso desde IndexedDB:', err);
   }
 
+  progresoPorSet = nextProgress;
   guardarProgresoPorSet();
 }
 
@@ -4046,6 +4210,7 @@ function cargarPersistenciaSecundariaConSalud() {
 
   try {
     cargarProgresoPorSet();
+    cargarProgresoPorSetMeta();
   } catch (error) {
     degradedBlocks.push("setProgress");
     if (DEBUG) console.warn("Error cargando progreso por set:", error);
@@ -8673,17 +8838,8 @@ function progresoDeColeccion(setKey) {
   }
 
   // Si no está cargado, intenta usar el resumen guardado
-  const saved = progresoPorSet[setKey];
-  if (saved && typeof saved.total === "number") {
-    const total = Number(saved.total);
-    const tengo = Number(saved.tengo || 0);
-    const totalSafe = Number.isFinite(total) ? total : null;
-    const tengoSafe = Number.isFinite(tengo) ? tengo : 0;
-    if (totalSafe != null && totalSafe > 0) {
-      return { tengo: Math.max(0, Math.min(tengoSafe, totalSafe)), total: totalSafe };
-    }
-    return { tengo: Math.max(0, tengoSafe), total: totalSafe };
-  }
+  const saved = getSavedProgressForSet(setKey);
+  if (saved) return saved;
 
   // Si no sabemos nada todavía
   return { tengo: 0, total: null };
@@ -12933,6 +13089,7 @@ async function init() {
 
   bootStateHealth = bootLoadPersistentState();
   syncBootRecoverySessionFlag(bootStateHealth);
+  updateSetProgressCacheValidity({ triggerRefresh: true, reason: "init" });
 
   wireGlobalButtons();
   wireBackupButtons();
