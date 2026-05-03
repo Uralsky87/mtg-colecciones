@@ -4495,6 +4495,10 @@ function getEstadoCartaCompatV3(estadoKey, fallbackSt2 = null) {
       entry = getManualInventoryEntryBySelectionKey(selectionKey, lang);
     }
 
+    if (!target.printId && selectionKey && isEmptyInventoryEntryV3(entry)) {
+      continue;
+    }
+
     if (isEmptyInventoryEntryV3(entry) && !hasMirror) continue;
 
     if (lang === "en") {
@@ -4608,11 +4612,9 @@ function resolveInventoryTargetPrintV3(estadoKey, lang) {
       return { printId: siblingCandidates[0], reason: "same-set-same-collector-sibling-lang" };
     }
 
-    const canonical = canonicalPrintByOracleLang[`${meta.oracleId}::${safeLang}`];
-    if (canonical) {
-      return { printId: canonical, reason: "canonical-oracle-lang-fallback" };
-    }
-
+    // Do not collapse a concrete visible print into the oracle-level canonical
+    // print for another collector number or set. That merges distinct basic-land
+    // arts/variants into a shared quantity bucket and produces multi-step jumps.
     return { printId: "", reason: "missing-language-variant" };
   }
 
@@ -4622,11 +4624,10 @@ function resolveInventoryTargetPrintV3(estadoKey, lang) {
       return { printId: safeKey, reason: "cached-print-match" };
     }
 
-    const canonical = canonicalPrintByOracleLang[`${cached.oracle_id}::${safeLang}`];
-    if (canonical) {
-      return { printId: canonical, reason: "cached-oracle-lang-fallback" };
-    }
-
+    // Cached print ids have the same ambiguity as catalog meta entries: if the
+    // sibling language does not exist for this exact visible variant, keep the
+    // quantity in the manual per-selection bucket instead of reusing a global
+    // oracle-level print.
     return { printId: "", reason: "missing-language-variant" };
   }
 
