@@ -391,11 +391,14 @@
       <h2>Buscar</h2>
     </div>
 
-    <div class="card">
+    <div class="card buscar-card">
       <label for="inputBuscar">Nombre de carta:</label>
-      <div class="fila">
-        <input id="inputBuscar" type="text" placeholder="Ej: Lightning Bolt" />
-        <button id="btnBuscar" class="btn-principal" type="button">Buscar</button>
+      <div class="buscar-sugerencias-wrap">
+        <div class="fila">
+          <input id="inputBuscar" type="text" placeholder="Ej: Lightning Bolt" autocomplete="off" aria-autocomplete="list" aria-controls="buscarCardSuggestions" aria-expanded="false" />
+          <button id="btnBuscar" class="btn-principal" type="button">Buscar</button>
+        </div>
+        <div id="buscarCardSuggestions" class="buscar-sugerencias hidden" role="listbox" aria-label="Sugerencias de cartas"></div>
       </div>
       <div class="opciones-row opciones-row-top">
         <label class="chkline">
@@ -404,10 +407,10 @@
         </label>
         <label class="chkline">
           <input id="chkBuscarVerImagenes" type="checkbox" />
-          <span>Ver imagenes</span>
+          <span>Ocultar imagenes</span>
         </label>
       </div>
-      <small class="hint">Puedes escribir solo una parte del nombre o activar “Palabra exacta”.</small>
+      <small class="hint">A partir de 3 letras verás sugerencias automáticas. También puedes escribir solo una parte del nombre o activar “Palabra exacta”.</small>
     </div>
 
     <div id="resultadosBuscar"></div>

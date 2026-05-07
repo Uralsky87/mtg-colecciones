@@ -720,6 +720,7 @@ function getMetricsReport() {
 let searchAbortController = null;
 let setLoadAbortController = null;
 let commanderSearchAbortController = null;
+let searchAutocompleteAbortController = null;
 
 function cancelSearchAbort() {
   if (searchAbortController) {
@@ -739,6 +740,13 @@ function cancelCommanderSearchAbort() {
   if (commanderSearchAbortController) {
     commanderSearchAbortController.abort();
     commanderSearchAbortController = null;
+  }
+}
+
+function cancelSearchAutocompleteAbort() {
+  if (searchAutocompleteAbortController) {
+    searchAutocompleteAbortController.abort();
+    searchAutocompleteAbortController = null;
   }
 }
 
@@ -7388,8 +7396,104 @@ function buildSearchLangClause() {
 
 const SEARCH_LIMIT = 200; // evita bajar 1000+ prints en cartas hiper reimpresas
 const COMMANDER_SEARCH_LIMIT = 200;
+const SEARCH_AUTOCOMPLETE_MIN_CHARS = 3;
+const SEARCH_AUTOCOMPLETE_LIMIT = 12;
+const SEARCH_AUTOCOMPLETE_DEBOUNCE_MS = 180;
 let buscarExacta = false;
-let buscarVerImagenes = false;
+let buscarVerImagenes = true;
+let searchAutocompleteTimer = null;
+let searchAutocompleteRequestSeq = 0;
+let buscarSuggestionsVisible = false;
+let buscarSuggestionsItems = [];
+let buscarSuggestionsActiveIndex = -1;
+
+function getBuscarSuggestionsElements() {
+  return {
+    input: document.getElementById("inputBuscar"),
+    list: document.getElementById("buscarCardSuggestions")
+  };
+}
+
+function getBuscarSuggestionsQuery() {
+  return String(getBuscarSuggestionsElements().input?.value || "").trim();
+}
+
+function formatBuscarSuggestionLabel(nombre, query) {
+  const suggestion = String(nombre || "");
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase("es");
+  if (!normalizedQuery) return escapeHtml(suggestion);
+
+  const matchIndex = suggestion.toLocaleLowerCase("es").indexOf(normalizedQuery);
+  if (matchIndex < 0) return escapeHtml(suggestion);
+
+  const matchEnd = matchIndex + normalizedQuery.length;
+  return [
+    escapeHtml(suggestion.slice(0, matchIndex)),
+    `<mark class="buscar-sugerencias-match">${escapeHtml(suggestion.slice(matchIndex, matchEnd))}</mark>`,
+    escapeHtml(suggestion.slice(matchEnd))
+  ].join("");
+}
+
+function renderBuscarSuggestionsList() {
+  const { input, list } = getBuscarSuggestionsElements();
+  if (!input || !list) return;
+
+  const shouldShow = buscarSuggestionsVisible && buscarSuggestionsItems.length > 0;
+  input.setAttribute("aria-expanded", shouldShow ? "true" : "false");
+  list.classList.toggle("hidden", !shouldShow);
+
+  if (!shouldShow) {
+    list.innerHTML = "";
+    return;
+  }
+
+  const query = getBuscarSuggestionsQuery();
+  list.innerHTML = buscarSuggestionsItems.map((nombre, index) => {
+    const isActive = index === buscarSuggestionsActiveIndex;
+    return `
+      <button
+        type="button"
+        class="buscar-sugerencias-item${isActive ? " is-active" : ""}"
+        data-suggestion-index="${index}"
+        role="option"
+        aria-selected="${isActive ? "true" : "false"}"
+      >
+        <span class="buscar-sugerencias-texto">${formatBuscarSuggestionLabel(nombre, query)}</span>
+        <span class="buscar-sugerencias-pill">Carta</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function updateBuscarSuggestions(items, { visible = true } = {}) {
+  buscarSuggestionsItems = Array.isArray(items) ? items.slice(0, SEARCH_AUTOCOMPLETE_LIMIT) : [];
+  buscarSuggestionsActiveIndex = buscarSuggestionsItems.length ? 0 : -1;
+  buscarSuggestionsVisible = visible && buscarSuggestionsItems.length > 0;
+  renderBuscarSuggestionsList();
+}
+
+function setBuscarSuggestionsVisible(visible) {
+  buscarSuggestionsVisible = !!visible && buscarSuggestionsItems.length > 0;
+  renderBuscarSuggestionsList();
+}
+
+function moveBuscarSuggestionsActive(delta) {
+  if (!buscarSuggestionsItems.length) return;
+  const total = buscarSuggestionsItems.length;
+  const nextIndex = buscarSuggestionsActiveIndex < 0
+    ? 0
+    : (buscarSuggestionsActiveIndex + delta + total) % total;
+  buscarSuggestionsActiveIndex = nextIndex;
+  buscarSuggestionsVisible = true;
+  renderBuscarSuggestionsList();
+}
+
+function applyBuscarSuggestion(nombre) {
+  const { input } = getBuscarSuggestionsElements();
+  if (!input) return;
+  input.value = String(nombre || "");
+  clearBuscarSuggestions();
+}
 
 async function scryFetchAllPagesLimited(firstUrl, limit = 200, opts = {}) {
   const all = [];
@@ -7432,6 +7536,92 @@ async function scrySearchPrintsByName(texto, opts = {}) {
     }
     throw err;
   }
+}
+
+async function scryAutocompleteCardNames(texto, opts = {}) {
+  const qUser = String(texto || "").trim();
+  if (!qUser || qUser.length < SEARCH_AUTOCOMPLETE_MIN_CHARS) return [];
+
+  const q = encodeURIComponent(qUser);
+  const url = `${SCY_BASE}/cards/autocomplete?q=${q}`;
+
+  try {
+    const data = await scryFetchJson(url, opts);
+    const items = Array.isArray(data?.data) ? data.data : [];
+    return items
+      .map(name => String(name || "").trim())
+      .filter(Boolean)
+      .slice(0, SEARCH_AUTOCOMPLETE_LIMIT);
+  } catch (err) {
+    if (err.status === 404 && err.data && err.data.object === "error" && err.data.code === "not_found") {
+      return [];
+    }
+    throw err;
+  }
+}
+
+function clearBuscarSuggestions() {
+  searchAutocompleteRequestSeq += 1;
+
+  if (searchAutocompleteTimer) {
+    clearTimeout(searchAutocompleteTimer);
+    searchAutocompleteTimer = null;
+  }
+
+  cancelSearchAutocompleteAbort();
+
+  buscarSuggestionsItems = [];
+  buscarSuggestionsActiveIndex = -1;
+  buscarSuggestionsVisible = false;
+  renderBuscarSuggestionsList();
+}
+
+async function actualizarBuscarSuggestions(texto, seq) {
+  const { list } = getBuscarSuggestionsElements();
+  if (!list) return;
+
+  const q = String(texto || "").trim();
+  if (q.length < SEARCH_AUTOCOMPLETE_MIN_CHARS) {
+    clearBuscarSuggestions();
+    return;
+  }
+
+  cancelSearchAutocompleteAbort();
+  searchAutocompleteAbortController = new AbortController();
+
+  let sugerencias = [];
+  try {
+    sugerencias = await scryAutocompleteCardNames(q, { signal: searchAutocompleteAbortController.signal });
+  } catch (err) {
+    if (err && err.name === "AbortError") return;
+    console.warn("No se pudieron cargar sugerencias de búsqueda:", err);
+    if (seq === searchAutocompleteRequestSeq) clearBuscarSuggestions();
+    return;
+  }
+
+  if (seq !== searchAutocompleteRequestSeq) return;
+
+  updateBuscarSuggestions(sugerencias, { visible: true });
+}
+
+function programarBuscarSuggestions(texto) {
+  const q = String(texto || "");
+
+  if (searchAutocompleteTimer) {
+    clearTimeout(searchAutocompleteTimer);
+    searchAutocompleteTimer = null;
+  }
+
+  if (q.trim().length < SEARCH_AUTOCOMPLETE_MIN_CHARS) {
+    clearBuscarSuggestions();
+    return;
+  }
+
+  const seq = ++searchAutocompleteRequestSeq;
+  searchAutocompleteTimer = setTimeout(() => {
+    searchAutocompleteTimer = null;
+    actualizarBuscarSuggestions(q, seq);
+  }, SEARCH_AUTOCOMPLETE_DEBOUNCE_MS);
 }
 
 async function scrySearchCommanders(query, opts = {}) {
@@ -7511,7 +7701,7 @@ function getBuscarExacta() {
 
 function getBuscarVerImagenes() {
   const chk = document.getElementById("chkBuscarVerImagenes");
-  return chk ? !!chk.checked : !!buscarVerImagenes;
+  return chk ? !chk.checked : !!buscarVerImagenes;
 }
 
 function agruparResultadosBusqueda(cards) {
@@ -8502,43 +8692,75 @@ function mostrarPantalla(nombre, agregarAlHistorial = true) {
   }
 }
 
+function refrescarPantallaDestino(nombre) {
+  if (nombre === "colecciones") {
+    aplicarUIFiltrosColecciones();
+    aplicarUIFiltrosTipo();
+    renderColecciones();
+  } else if (nombre === "decks") {
+    renderListaDecks();
+  } else if (nombre === "buscar") {
+    const inputBuscar = document.getElementById("inputBuscar");
+    if (inputBuscar) inputBuscar.value = "";
+    clearBuscarSuggestions();
+    renderResultadosBuscar("");
+  } else if (nombre === "comandantes") {
+    resetCommanderSearchUI();
+  } else if (nombre === "estadisticas") {
+    renderEstadisticas({ forceRecalc: false });
+  } else if (nombre === "cuenta") {
+    actualizarFechaCatalogo();
+  } else if (nombre === "set") {
+    if (setActualKey) {
+      renderTablaSet(setActualKey);
+    }
+  } else if (nombre === "verDeck") {
+    if (typeof renderDeckCartas === "function") {
+      renderDeckCartas();
+    }
+  }
+}
+
+function resolverPantallaActiva() {
+  const activa = document.querySelector(".pantalla.active");
+  if (!activa) return "menu";
+
+  for (const [nombre, elemento] of Object.entries(pantallas)) {
+    if (elemento === activa) return nombre;
+  }
+  return "menu";
+}
+
+function navegarAObjetivo(target) {
+  if (!target) return false;
+
+  const pantallaActiva = resolverPantallaActiva();
+  if (pantallaActiva === target) return true;
+
+  const targetIndex = historialNavegacion.lastIndexOf(target);
+  if (targetIndex >= 0) {
+    historialNavegacion = historialNavegacion.slice(0, targetIndex + 1);
+  } else if (historialNavegacion[historialNavegacion.length - 1] !== target) {
+    historialNavegacion.push(target);
+  }
+
+  refrescarPantallaDestino(target);
+  mostrarPantalla(target, false);
+
+  try {
+    window.history.replaceState({ pantalla: target }, "", "");
+  } catch {}
+
+  return true;
+}
+
 function navegarAtras() {
   if (historialNavegacion.length > 1) {
     // Quitar la pantalla actual del historial
     historialNavegacion.pop();
     // Obtener la pantalla anterior
     const pantallaAnterior = historialNavegacion[historialNavegacion.length - 1];
-    
-    // Ejecutar lógica específica según la pantalla de destino
-    if (pantallaAnterior === "colecciones") {
-      aplicarUIFiltrosColecciones();
-      aplicarUIFiltrosTipo();
-      renderColecciones();
-    } else if (pantallaAnterior === "decks") {
-      renderListaDecks();
-    } else if (pantallaAnterior === "buscar") {
-      const inputBuscar = document.getElementById("inputBuscar");
-      if (inputBuscar) inputBuscar.value = "";
-      renderResultadosBuscar("");
-    } else if (pantallaAnterior === "comandantes") {
-      resetCommanderSearchUI();
-    } else if (pantallaAnterior === "estadisticas") {
-      renderEstadisticas({ forceRecalc: false });
-    } else if (pantallaAnterior === "cuenta") {
-      actualizarFechaCatalogo();
-    } else if (pantallaAnterior === "menu") {
-      // No necesita lógica especial, solo mostrar el menú
-    } else if (pantallaAnterior === "set") {
-      // Al volver a set, renderizar la tabla con los filtros actuales
-      if (setActualKey) {
-        renderTablaSet(setActualKey);
-      }
-    } else if (pantallaAnterior === "verDeck") {
-      // Al volver a ver deck, renderizar las cartas actuales
-      if (typeof renderDeckCartas === "function") {
-        renderDeckCartas();
-      }
-    }
+    refrescarPantallaDestino(pantallaAnterior);
     
     // Mostrar la pantalla anterior sin agregar al historial
     mostrarPantalla(pantallaAnterior, false);
@@ -8775,6 +8997,7 @@ function renderCardControlsOptionsUI() {
             <span>${escapeHtml(t.label)}</span>
           </label>
           ${removeButtonHtml}
+        </div>
       `;
     }).join("");
     tagsList.innerHTML = tags.length ? tagsHtml : `<div class="hint">No hay tags.</div>`;
@@ -8845,7 +9068,6 @@ function progresoDeColeccion(setKey) {
   // Si no sabemos nada todavía
   return { tengo: 0, total: null };
 }
-
 
 function setFiltroColecciones(lang) {
   filtroIdiomaColecciones = normalizeCollectionFilterLang(lang);
@@ -11669,10 +11891,16 @@ function wireGlobalButtons() {
     });
   }
 
+  const backTargets = {
+    volverMenu: "menu",
+    volverDecks: "decks",
+    volverColecciones: "colecciones"
+  };
+
   // Volver al menú
   document.querySelectorAll("[data-action='volverMenu']").forEach(btn => {
     btn.addEventListener("click", () => {
-      window.history.back(); // Usar el historial del navegador
+      navegarAObjetivo(backTargets[btn.dataset.action]);
     });
   });
   
@@ -11687,14 +11915,14 @@ function wireGlobalButtons() {
   // Volver a decks
   document.querySelectorAll("[data-action='volverDecks']").forEach(btn => {
     btn.addEventListener("click", () => {
-      window.history.back(); // Usar el historial del navegador
+      navegarAObjetivo(backTargets[btn.dataset.action]);
     });
   });
 
   // Volver a colecciones
   document.querySelectorAll("[data-action='volverColecciones']").forEach(btn => {
     btn.addEventListener("click", () => {
-      window.history.back(); // Usar el historial del navegador
+      navegarAObjetivo(backTargets[btn.dataset.action]);
     });
   });
 
@@ -11703,16 +11931,83 @@ function wireGlobalButtons() {
   if (btnBuscar) {
     btnBuscar.addEventListener("click", async () => {
       const inputBuscar = document.getElementById("inputBuscar");
+      clearBuscarSuggestions();
       await renderResultadosBuscar(inputBuscar ? inputBuscar.value : "", { exact: getBuscarExacta() });
     });
   }
 
   const inputBuscar = document.getElementById("inputBuscar");
+  const buscarSuggestionsList = document.getElementById("buscarCardSuggestions");
   if (inputBuscar) {
+    inputBuscar.addEventListener("input", () => {
+      programarBuscarSuggestions(inputBuscar.value);
+    });
+    inputBuscar.addEventListener("focus", () => {
+      const currentQuery = inputBuscar.value.trim();
+      if (buscarSuggestionsItems.length && currentQuery.length >= SEARCH_AUTOCOMPLETE_MIN_CHARS) {
+        setBuscarSuggestionsVisible(true);
+      }
+    });
     inputBuscar.addEventListener("keydown", async (e) => {
-      if (e.key === "Enter") await renderResultadosBuscar(inputBuscar.value, { exact: getBuscarExacta() });
+      if (e.key === "ArrowDown") {
+        if (buscarSuggestionsItems.length) {
+          e.preventDefault();
+          moveBuscarSuggestionsActive(1);
+        }
+        return;
+      }
+
+      if (e.key === "ArrowUp") {
+        if (buscarSuggestionsItems.length) {
+          e.preventDefault();
+          moveBuscarSuggestionsActive(-1);
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (buscarSuggestionsVisible) {
+          e.preventDefault();
+          setBuscarSuggestionsVisible(false);
+        }
+        return;
+      }
+
+      if (e.key === "Enter") {
+        if (buscarSuggestionsVisible && buscarSuggestionsActiveIndex >= 0 && buscarSuggestionsItems[buscarSuggestionsActiveIndex]) {
+          e.preventDefault();
+          applyBuscarSuggestion(buscarSuggestionsItems[buscarSuggestionsActiveIndex]);
+        }
+        clearBuscarSuggestions();
+        await renderResultadosBuscar(inputBuscar.value, { exact: getBuscarExacta() });
+      }
     });
   }
+
+  if (buscarSuggestionsList) {
+    buscarSuggestionsList.addEventListener("mousedown", (e) => {
+      const button = e.target.closest(".buscar-sugerencias-item");
+      if (!button) return;
+      e.preventDefault();
+    });
+
+    buscarSuggestionsList.addEventListener("click", async (e) => {
+      const button = e.target.closest(".buscar-sugerencias-item");
+      if (!button) return;
+      const index = Number(button.dataset.suggestionIndex);
+      const nombre = buscarSuggestionsItems[index];
+      if (!nombre) return;
+      applyBuscarSuggestion(nombre);
+      await renderResultadosBuscar(nombre, { exact: getBuscarExacta() });
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest(".buscar-sugerencias-wrap")) return;
+    setBuscarSuggestionsVisible(false);
+  });
 
   const chkBuscarExacta = document.getElementById("chkBuscarExacta");
   if (chkBuscarExacta) {
@@ -11724,7 +12019,7 @@ function wireGlobalButtons() {
   const chkBuscarVerImagenes = document.getElementById("chkBuscarVerImagenes");
   if (chkBuscarVerImagenes) {
     chkBuscarVerImagenes.addEventListener("change", () => {
-      buscarVerImagenes = !!chkBuscarVerImagenes.checked;
+      buscarVerImagenes = !chkBuscarVerImagenes.checked;
       const q = document.getElementById("inputBuscar")?.value || "";
       if (q.trim()) {
         renderResultadosBuscar(q, { exact: getBuscarExacta(), verImagenes: buscarVerImagenes });
