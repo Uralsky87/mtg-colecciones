@@ -7406,6 +7406,7 @@ let searchAutocompleteRequestSeq = 0;
 let buscarSuggestionsVisible = false;
 let buscarSuggestionsItems = [];
 let buscarSuggestionsActiveIndex = -1;
+let buscarSuggestionsSource = "remote";
 
 function getBuscarSuggestionsElements() {
   return {
@@ -7448,7 +7449,11 @@ function renderBuscarSuggestionsList() {
   }
 
   const query = getBuscarSuggestionsQuery();
-  list.innerHTML = buscarSuggestionsItems.map((nombre, index) => {
+  const sourceBanner = buscarSuggestionsSource === "local"
+    ? `<div class="buscar-sugerencias-source" role="note">Sugerencias locales</div>`
+    : "";
+
+  const itemsHtml = buscarSuggestionsItems.map((nombre, index) => {
     const isActive = index === buscarSuggestionsActiveIndex;
     return `
       <button
@@ -7463,12 +7468,15 @@ function renderBuscarSuggestionsList() {
       </button>
     `;
   }).join("");
+
+  list.innerHTML = `${sourceBanner}${itemsHtml}`;
 }
 
-function updateBuscarSuggestions(items, { visible = true } = {}) {
+function updateBuscarSuggestions(items, { visible = true, source = "remote" } = {}) {
   buscarSuggestionsItems = Array.isArray(items) ? items.slice(0, SEARCH_AUTOCOMPLETE_LIMIT) : [];
   buscarSuggestionsActiveIndex = buscarSuggestionsItems.length ? 0 : -1;
   buscarSuggestionsVisible = visible && buscarSuggestionsItems.length > 0;
+  buscarSuggestionsSource = source === "local" ? "local" : "remote";
   renderBuscarSuggestionsList();
 }
 
@@ -7560,6 +7568,46 @@ async function scryAutocompleteCardNames(texto, opts = {}) {
   }
 }
 
+function localAutocompleteCardNames(texto, limit = SEARCH_AUTOCOMPLETE_LIMIT) {
+  const q = normalizarTexto(String(texto || "").trim());
+  if (!q || q.length < SEARCH_AUTOCOMPLETE_MIN_CHARS) return [];
+
+  const unique = new Map();
+  const max = Math.max(1, Number(limit) || SEARCH_AUTOCOMPLETE_LIMIT);
+
+  const tryAdd = (nameRaw) => {
+    const name = String(nameRaw || "").trim();
+    if (!name) return;
+    const key = normalizarTexto(name);
+    if (!key || unique.has(key)) return;
+    if (!key.includes(q)) return;
+    unique.set(key, name);
+  };
+
+  const scanCards = (cards) => {
+    for (const card of (cards || [])) {
+      tryAdd(card?.nombre);
+      tryAdd(card?.name);
+      tryAdd(card?.printed_name);
+      tryAdd(card?._raw?.printed_name);
+      tryAdd(card?._raw?.name);
+      if (unique.size >= max) return true;
+    }
+    return false;
+  };
+
+  if (scanCards(cartas)) return [...unique.values()];
+
+  const bySetLang = Object.values(cacheCartasPorSetLang || {});
+  for (const cards of bySetLang) {
+    if (scanCards(cards)) break;
+  }
+
+  return [...unique.values()]
+    .sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }))
+    .slice(0, max);
+}
+
 function clearBuscarSuggestions() {
   searchAutocompleteRequestSeq += 1;
 
@@ -7573,6 +7621,7 @@ function clearBuscarSuggestions() {
   buscarSuggestionsItems = [];
   buscarSuggestionsActiveIndex = -1;
   buscarSuggestionsVisible = false;
+  buscarSuggestionsSource = "remote";
   renderBuscarSuggestionsList();
 }
 
@@ -7590,18 +7639,24 @@ async function actualizarBuscarSuggestions(texto, seq) {
   searchAutocompleteAbortController = new AbortController();
 
   let sugerencias = [];
+  let source = "remote";
   try {
     sugerencias = await scryAutocompleteCardNames(q, { signal: searchAutocompleteAbortController.signal });
   } catch (err) {
     if (err && err.name === "AbortError") return;
-    console.warn("No se pudieron cargar sugerencias de búsqueda:", err);
-    if (seq === searchAutocompleteRequestSeq) clearBuscarSuggestions();
-    return;
+    console.warn("No se pudieron cargar sugerencias remotas de búsqueda. Se usa fallback local:", err);
+    sugerencias = localAutocompleteCardNames(q);
+    source = "local";
   }
 
   if (seq !== searchAutocompleteRequestSeq) return;
 
-  updateBuscarSuggestions(sugerencias, { visible: true });
+  if (!sugerencias.length) {
+    clearBuscarSuggestions();
+    return;
+  }
+
+  updateBuscarSuggestions(sugerencias, { visible: true, source });
 }
 
 function programarBuscarSuggestions(texto) {

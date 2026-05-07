@@ -463,6 +463,15 @@ input:focus, select:focus, textarea:focus {
   color: var(--muted);
 }
 
+.buscar-sugerencias-source {
+  padding: 4px 2px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
 @media (max-width: 560px) {
   .buscar-sugerencias {
     padding: 8px;
