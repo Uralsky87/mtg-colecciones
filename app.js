@@ -9547,11 +9547,17 @@ function setFiltroTextoSet(texto) {
 
 function setFiltroSoloFaltanSet(enabled) {
   filtroSoloFaltanSet = !!enabled;
+  if (filtroSoloFaltanSet) {
+    filtroEnPosesionSet = false;
+  }
   rerenderSetConFiltros();
 }
 
 function setFiltroEnPosesionSet(enabled) {
   filtroEnPosesionSet = !!enabled;
+  if (filtroEnPosesionSet) {
+    filtroSoloFaltanSet = false;
+  }
   rerenderSetConFiltros();
 }
 
@@ -9622,27 +9628,80 @@ function renderTablaSetWithStableScroll(setKey) {
 
 function getCardColorIdentity(card) {
   const asArray = (v) => (Array.isArray(v) ? v : null);
+  const asNonEmptyArray = (v) => {
+    const arr = asArray(v);
+    return arr && arr.length > 0 ? arr : null;
+  };
 
   let colors =
-    asArray(card?.color_identity) ||
-    asArray(card?._colors) ||
-    asArray(card?._raw?.color_identity) ||
-    asArray(card?._raw?.colors);
+    asNonEmptyArray(card?.color_identity) ||
+    asNonEmptyArray(card?._colors) ||
+    asNonEmptyArray(card?._raw?.color_identity) ||
+    asNonEmptyArray(card?._raw?.colors);
 
   if (!colors && Array.isArray(card?._raw?.card_faces)) {
     const faceColors = [];
     for (const face of card._raw.card_faces) {
-      const faceIds = asArray(face?.color_identity) || asArray(face?.colors);
-      if (faceIds && faceIds.length) faceColors.push(...faceIds);
+      const faceIds = asNonEmptyArray(face?.color_identity) || asNonEmptyArray(face?.colors);
+      if (faceIds) faceColors.push(...faceIds);
     }
-    if (faceColors.length) colors = faceColors;
+    if (faceColors.length > 0) colors = faceColors;
   }
 
-  return colors || [];
+  return (colors || [])
+    .map(c => String(c || "").trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function getCardTotalsForSetFilter(card) {
+  const estadoKey = getEstadoKeyFromCard(card);
+  if (estadoKey) {
+    const adapter = getLegacyPossessionAdapterForState(estadoKey);
+    return {
+      qty: Number(adapter?.totals?.qty || 0),
+      foil: Number(adapter?.totals?.foil || 0)
+    };
+  }
+
+  const legacy = getEstadoCarta(card?.id || "");
+  return {
+    qty: Number(legacy?.qty || 0),
+    foil: Number(legacy?.foilQty || 0)
+  };
+}
+
+function cardMatchesColorFilter(card) {
+  const VALID_CARD_COLORS = new Set(["W", "U", "B", "R", "G", "C"]);
+  const selected = new Set(
+    [...(filtroColoresSet || [])]
+      .map(c => String(c || "").trim().toUpperCase())
+      .filter(c => VALID_CARD_COLORS.has(c))
+  );
+
+  if (selected.size === 0) return true;
+
+  const colors = new Set(
+    getCardColorIdentity(card)
+      .map(c => String(c || "").trim().toUpperCase())
+      .filter(c => VALID_CARD_COLORS.has(c))
+  );
+
+  // Colorless in Scryfall usually means empty color identity.
+  const wantsColorless = selected.has("C");
+  const isColorless = colors.size === 0 || colors.has("C");
+  if (wantsColorless && isColorless) return true;
+
+  for (const color of selected) {
+    if (color === "C") continue;
+    if (colors.has(color)) return true;
+  }
+
+  return false;
 }
 
 function cardMatchesRarityFilter(card) {
-  if (filtroRarezasSet.size === 0 || filtroRarezasSet.size >= 4) return true;
+  if (filtroRarezasSet.size === 0) return false;
+  if (filtroRarezasSet.size >= 4) return true;
   return filtroRarezasSet.has(card?.rareza);
 }
 
@@ -9670,7 +9729,7 @@ if (ft) {
     lista = lista.filter(c => cardMatchesColorFilter(c));
   }
 
-  if (filtroRarezasSet.size > 0 && filtroRarezasSet.size < 4) {
+  if (filtroRarezasSet.size < 4) {
     lista = lista.filter(c => cardMatchesRarityFilter(c));
   }
 
@@ -12197,12 +12256,20 @@ function wireGlobalButtons() {
 
   const chkSoloFaltanSet = document.getElementById("chkSoloFaltanSet");
   if (chkSoloFaltanSet) {
-    chkSoloFaltanSet.addEventListener("change", () => setFiltroSoloFaltanSet(chkSoloFaltanSet.checked));
+    chkSoloFaltanSet.addEventListener("change", () => {
+      setFiltroSoloFaltanSet(chkSoloFaltanSet.checked);
+      if (chkEnPosesionSet) chkEnPosesionSet.checked = filtroEnPosesionSet;
+      chkSoloFaltanSet.checked = filtroSoloFaltanSet;
+    });
   }
 
   const chkEnPosesionSet = document.getElementById("chkEnPosesionSet");
   if (chkEnPosesionSet) {
-    chkEnPosesionSet.addEventListener("change", () => setFiltroEnPosesionSet(chkEnPosesionSet.checked));
+    chkEnPosesionSet.addEventListener("change", () => {
+      setFiltroEnPosesionSet(chkEnPosesionSet.checked);
+      if (chkSoloFaltanSet) chkSoloFaltanSet.checked = filtroSoloFaltanSet;
+      chkEnPosesionSet.checked = filtroEnPosesionSet;
+    });
   }
 
   const chkFiltroColorSet = document.getElementById("chkFiltroColorSet");
