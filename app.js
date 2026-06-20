@@ -8719,16 +8719,207 @@ const pantallas = {
   cuenta: document.getElementById("pantallaCuenta")
 };
 
-// Sistema de navegación con historial para manejo del botón de retroceso del móvil
+// ===============================
+// Sistema de navegación
+// - historial interno independiente del historial del navegador
+// - sincronización con History API para botón atrás del sistema/móvil
+// - idempotente: no acumula entradas duplicadas consecutivas
+// - bloqueo por token para popstate (evita carreras en pulsaciones rápidas)
+// - deduplicación de refrescos de pantalla en ventana corta
+// Diagnóstico: añade ?debugNav=1 en la URL para activar trazas de consola
+// ===============================
 let historialNavegacion = ["menu"];
 let manejandoPopstate = false;
 let impedirSalidaApp = true; // Evita que la app se cierre al presionar retroceso
+let navHistorySeq = 0;
+let popstateLockToken = 0;
+let popstateReleaseTimer = null;
+const NAV_REFRESH_DEDUPE_MS = 120;
+let lastPantallaRefresh = { signature: "", at: 0 };
+window.DEBUG_NAV = new URL(window.location.href).searchParams.get("debugNav") === "1";
+
+function getNavigationDebugState() {
+  return {
+    activeScreen: resolverPantallaActiva(),
+    historial: [...historialNavegacion],
+    manejandoPopstate: !!manejandoPopstate,
+    impedirSalidaApp: !!impedirSalidaApp,
+    historyLength: window.history.length
+  };
+}
+
+function navDebugLog(event, payload = {}) {
+  if (!window.DEBUG_NAV) return;
+  console.log(`[NAV] ${event}`, {
+    ...payload,
+    ...getNavigationDebugState()
+  });
+}
+
+function isKnownPantalla(nombre) {
+  const target = String(nombre || "").trim();
+  return !!target && !!pantallas[target];
+}
+
+function buildNavHistoryState(state = {}, { forceNewSeq = true } = {}) {
+  const candidate = state && typeof state === "object" ? state : {};
+  const pantallaRaw = String(candidate.pantalla || "").trim();
+  const pantalla = isKnownPantalla(pantallaRaw) ? pantallaRaw : resolverPantallaActiva();
+  if (forceNewSeq) navHistorySeq += 1;
+  return {
+    ...candidate,
+    pantalla,
+    navSeq: navHistorySeq
+  };
+}
+
+function pushHistoryStateSafe(state) {
+  const safeState = buildNavHistoryState(state, { forceNewSeq: true });
+  try {
+    window.history.pushState(safeState, "", "");
+    navDebugLog("history.pushState", { state: safeState });
+  } catch (err) {
+    navDebugLog("history.pushState.error", { state: safeState, error: err?.message || String(err || "") });
+  }
+}
+
+function replaceHistoryStateSafe(state) {
+  const safeState = buildNavHistoryState(state, { forceNewSeq: true });
+  try {
+    window.history.replaceState(safeState, "", "");
+    navDebugLog("history.replaceState", { state: safeState });
+  } catch (err) {
+    navDebugLog("history.replaceState.error", { state: safeState, error: err?.message || String(err || "") });
+  }
+}
+
+function setManejandoPopstate(value, reason = "") {
+  manejandoPopstate = !!value;
+  navDebugLog("popstate.lock", { value: manejandoPopstate, reason });
+}
+
+function clearPopstateReleaseTimer() {
+  if (!popstateReleaseTimer) return;
+  clearTimeout(popstateReleaseTimer);
+  popstateReleaseTimer = null;
+}
+
+function acquirePopstateLock(reason = "") {
+  clearPopstateReleaseTimer();
+  popstateLockToken += 1;
+  setManejandoPopstate(true, reason || "popstate-acquire");
+  return popstateLockToken;
+}
+
+function releasePopstateLock(token, reason = "") {
+  if (token !== popstateLockToken) {
+    navDebugLog("popstate.release.stale", { token, expected: popstateLockToken, reason });
+    return;
+  }
+  clearPopstateReleaseTimer();
+  setManejandoPopstate(false, reason || "popstate-release");
+}
+
+function schedulePopstateRelease(token, delayMs = 50, reason = "") {
+  clearPopstateReleaseTimer();
+  popstateReleaseTimer = setTimeout(() => {
+    popstateReleaseTimer = null;
+    releasePopstateLock(token, reason || "popstate-release-timer");
+  }, delayMs);
+}
+
+function syncNavigationFromHistoryState(state) {
+  const target = String(state?.pantalla || "").trim();
+  if (!isKnownPantalla(target)) return false;
+
+  normalizeHistorialNavegacion();
+  const active = resolverPantallaActiva();
+  if (active === target) {
+    // El estado del navegador apunta a la pantalla ya activa.
+    // Devolver false para que navegarAtras() ejecute el retroceso real
+    // y no se consuma un back press sin navegar.
+    navDebugLog("syncHistoryState.sameScreen.fallback", { target });
+    return false;
+  }
+
+  const targetIndex = historialNavegacion.lastIndexOf(target);
+  if (targetIndex >= 0) {
+    historialNavegacion = historialNavegacion.slice(0, targetIndex + 1);
+  } else {
+    pushHistorialPantallaUnique(target);
+  }
+
+  refrescarPantallaDestino(target);
+  mostrarPantalla(target, false);
+  navDebugLog("historyState.synced", { target });
+  return true;
+}
+
+function getPantallaRefreshSignature(nombre) {
+  return String(nombre || "").trim();
+}
+
+function shouldSkipPantallaRefresh(nombre) {
+  const signature = getPantallaRefreshSignature(nombre);
+  const now = (typeof performance !== "undefined" && typeof performance.now === "function")
+    ? performance.now()
+    : Date.now();
+
+  const isDuplicate = signature
+    && lastPantallaRefresh.signature === signature
+    && (now - lastPantallaRefresh.at) < NAV_REFRESH_DEDUPE_MS;
+
+  if (!isDuplicate) {
+    lastPantallaRefresh = { signature, at: now };
+  }
+
+  return isDuplicate;
+}
+
+function normalizeHistorialNavegacion() {
+  const validScreens = new Set(Object.keys(pantallas));
+  const normalized = [];
+
+  for (const raw of Array.isArray(historialNavegacion) ? historialNavegacion : []) {
+    const screen = String(raw || "").trim();
+    if (!screen || !validScreens.has(screen)) continue;
+    if (normalized[normalized.length - 1] === screen) continue;
+    normalized.push(screen);
+  }
+
+  historialNavegacion = normalized.length > 0 ? normalized : ["menu"];
+  return historialNavegacion;
+}
+
+function pushHistorialPantallaUnique(nombre) {
+  const target = String(nombre || "").trim();
+  if (!target) return false;
+
+  normalizeHistorialNavegacion();
+  if (historialNavegacion[historialNavegacion.length - 1] === target) {
+    navDebugLog("historial.skipDuplicate", { target });
+    return false;
+  }
+
+  historialNavegacion.push(target);
+  navDebugLog("historial.push", { target });
+  return true;
+}
+
+window.__getNavigationDebugState = getNavigationDebugState;
 
 function mostrarPantalla(nombre, agregarAlHistorial = true) {
+  navDebugLog("mostrarPantalla.start", { nombre, agregarAlHistorial });
+
   Object.values(pantallas).forEach(p => {
     if (p) p.classList.remove("active");
   });
-  if (pantallas[nombre]) pantallas[nombre].classList.add("active");
+
+  if (pantallas[nombre]) {
+    pantallas[nombre].classList.add("active");
+  } else {
+    navDebugLog("mostrarPantalla.invalidTarget", { nombre });
+  }
 
   if (nombre === "cuenta" && typeof applyBootStateHealth === "function") {
     applyBootStateHealth();
@@ -8736,18 +8927,29 @@ function mostrarPantalla(nombre, agregarAlHistorial = true) {
   
   // Agregar al historial de navegación interna
   if (agregarAlHistorial && !manejandoPopstate) {
-    historialNavegacion.push(nombre);
+    const pushed = pushHistorialPantallaUnique(nombre);
     // Agregar un estado al historial del navegador para que el botón de retroceso funcione
-    window.history.pushState({ pantalla: nombre }, "", "");
+    if (pushed) {
+      pushHistoryStateSafe({ pantalla: nombre });
+    }
   }
   
   // Re-detectar scroller activo al cambiar vistas
   if (typeof updateScrollerOnViewChange === "function") {
     updateScrollerOnViewChange();
   }
+
+  navDebugLog("mostrarPantalla.end", { nombre, agregarAlHistorial });
 }
 
 function refrescarPantallaDestino(nombre) {
+  if (shouldSkipPantallaRefresh(nombre)) {
+    navDebugLog("refrescarPantallaDestino.skipDedupe", { nombre });
+    return;
+  }
+
+  navDebugLog("refrescarPantallaDestino.run", { nombre });
+
   if (nombre === "colecciones") {
     aplicarUIFiltrosColecciones();
     aplicarUIFiltrosTipo();
@@ -8787,10 +8989,16 @@ function resolverPantallaActiva() {
 }
 
 function navegarAObjetivo(target) {
+  navDebugLog("navegarAObjetivo.start", { target });
   if (!target) return false;
 
+  normalizeHistorialNavegacion();
+
   const pantallaActiva = resolverPantallaActiva();
-  if (pantallaActiva === target) return true;
+  if (pantallaActiva === target) {
+    navDebugLog("navegarAObjetivo.noop", { target });
+    return true;
+  }
 
   const targetIndex = historialNavegacion.lastIndexOf(target);
   if (targetIndex >= 0) {
@@ -8802,30 +9010,43 @@ function navegarAObjetivo(target) {
   refrescarPantallaDestino(target);
   mostrarPantalla(target, false);
 
-  try {
-    window.history.replaceState({ pantalla: target }, "", "");
-  } catch {}
+  replaceHistoryStateSafe({ pantalla: target });
+
+  navDebugLog("navegarAObjetivo.end", { target });
 
   return true;
 }
 
 function navegarAtras() {
+  navDebugLog("navegarAtras.start");
+  normalizeHistorialNavegacion();
+
   if (historialNavegacion.length > 1) {
     // Quitar la pantalla actual del historial
     historialNavegacion.pop();
+
+    // Si quedan duplicados del mismo destino, compactarlos para evitar retrocesos redundantes.
+    while (historialNavegacion.length > 1
+      && historialNavegacion[historialNavegacion.length - 1] === historialNavegacion[historialNavegacion.length - 2]) {
+      historialNavegacion.pop();
+    }
+
     // Obtener la pantalla anterior
     const pantallaAnterior = historialNavegacion[historialNavegacion.length - 1];
     refrescarPantallaDestino(pantallaAnterior);
     
     // Mostrar la pantalla anterior sin agregar al historial
     mostrarPantalla(pantallaAnterior, false);
+    navDebugLog("navegarAtras.end", { resultado: true, pantallaAnterior });
     return true;
   } else if (impedirSalidaApp) {
     // Si estamos en el menú principal, mantener la app abierta
     // agregando de nuevo una entrada al historial
-    window.history.pushState({ pantalla: "menu" }, "", "");
+    pushHistoryStateSafe({ pantalla: "menu" });
+    navDebugLog("navegarAtras.end", { resultado: true, pantallaAnterior: "menu" });
     return true;
   }
+  navDebugLog("navegarAtras.end", { resultado: false });
   return false;
 }
 
@@ -9541,7 +9762,7 @@ function rerenderSetConFiltros({ keepScroll = true } = {}) {
 }
 
 function setFiltroTextoSet(texto) {
-  filtroTextoSet = normalizarTexto((texto || "").trim());
+  filtroTextoSet = String(texto || "");
   rerenderSetConFiltros();
 }
 
@@ -9708,10 +9929,10 @@ function cardMatchesRarityFilter(card) {
 function getListaSetFiltrada(setKey) {
   let lista = getMergedSetExactCards(setKey);
 
-  const ft = String(filtroTextoSet || "").trim();
-if (ft) {
-  lista = lista.filter(c => normalizarTexto(c.nombre).includes(ft));
-}
+  const ft = normalizarTexto(String(filtroTextoSet || "").trim());
+  if (ft) {
+    lista = lista.filter(c => normalizarTexto(c.nombre).includes(ft));
+  }
 
   if (filtroEnPosesionSet || filtroSoloFaltanSet) {
     lista = lista.filter(c => {
@@ -11987,14 +12208,6 @@ function wireGlobalButtons() {
     }
   };
 
-  document.querySelectorAll(".btn-menu").forEach(btn => {
-    if (btn.dataset.wired) return;
-    btn.dataset.wired = "1";
-    btn.addEventListener("click", () => {
-      handleMenuNavigation(btn.dataset.pantalla);
-    });
-  });
-
   // Menú principal (delegado)
   if (!document.body.dataset.menuWired) {
     document.body.dataset.menuWired = "1";
@@ -13864,32 +14077,34 @@ function installScrollTopButton() {
 
 
 
-// ===============================
-// Manejo del botón de retroceso del móvil
-// ===============================
-
-// Interceptar el evento popstate (botón de retroceso del navegador/móvil)
+// Botón de retroceso del sistema/móvil → popstate
 window.addEventListener("popstate", (event) => {
+  navDebugLog("popstate.received", { state: event?.state || null });
   // Prevenir que popstate se procese durante nuestra navegación interna
-  if (manejandoPopstate) return;
-  
-  manejandoPopstate = true;
-  
-  // Navegar a la pantalla anterior en el historial interno
-  const resultado = navegarAtras();
-  
-  // Si navegarAtras devolvió false (no hay más historial), salir de la app
-  if (!resultado && !impedirSalidaApp) {
-    // Permitir que el navegador maneje el retroceso (salir de la app)
-    manejandoPopstate = false;
+  if (manejandoPopstate) {
+    navDebugLog("popstate.ignored.locked", { state: event?.state || null });
     return;
   }
   
-  setTimeout(() => {
-    manejandoPopstate = false;
-  }, 50);
+  const lockToken = acquirePopstateLock("popstate-received");
+
+  // Si el state tiene una pantalla conocida y distinta a la activa, ir directamente.
+  // Si no, usar navegarAtras() para retroceder por el historial interno.
+  const syncedByState = syncNavigationFromHistoryState(event?.state || null);
+  if (syncedByState) {
+    schedulePopstateRelease(lockToken, 50, "popstate-state-sync-release");
+    return;
+  }
+
+  const resultado = navegarAtras();
+
+  if (!resultado && !impedirSalidaApp) {
+    releasePopstateLock(lockToken, "popstate-no-result");
+    return;
+  }
+
+  schedulePopstateRelease(lockToken, 50, "popstate-timeout-release");
 });
 
-// Inicializar el historial del navegador
-// Agregar una entrada inicial inmediatamente para que el botón de retroceso funcione
-window.history.pushState({ pantalla: "inicio" }, "", "");
+// Entrada inicial en el historial del navegador para que el botón atrás del sistema funcione desde el primer momento
+pushHistoryStateSafe({ pantalla: "menu", bootstrap: true });
