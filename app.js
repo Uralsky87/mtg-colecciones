@@ -8835,11 +8835,10 @@ function syncNavigationFromHistoryState(state) {
   normalizeHistorialNavegacion();
   const active = resolverPantallaActiva();
   if (active === target) {
-    // El estado del navegador apunta a la pantalla ya activa.
-    // Devolver false para que navegarAtras() ejecute el retroceso real
-    // y no se consuma un back press sin navegar.
-    navDebugLog("syncHistoryState.sameScreen.fallback", { target });
-    return false;
+    // El estado del navegador ya coincide con la pantalla visible.
+    // Tratarlo como gestionado evita consumir un retroceso adicional.
+    navDebugLog("syncHistoryState.sameScreen.handled", { target });
+    return true;
   }
 
   const targetIndex = historialNavegacion.lastIndexOf(target);
@@ -8853,6 +8852,24 @@ function syncNavigationFromHistoryState(state) {
   mostrarPantalla(target, false);
   navDebugLog("historyState.synced", { target });
   return true;
+}
+
+function syncHistorialWithActiveScreen() {
+  normalizeHistorialNavegacion();
+  const active = resolverPantallaActiva();
+  if (!isKnownPantalla(active)) return;
+
+  const last = historialNavegacion[historialNavegacion.length - 1];
+  if (last === active) return;
+
+  const targetIndex = historialNavegacion.lastIndexOf(active);
+  if (targetIndex >= 0) {
+    historialNavegacion = historialNavegacion.slice(0, targetIndex + 1);
+  } else {
+    historialNavegacion.push(active);
+  }
+
+  navDebugLog("historial.syncedWithActive", { active });
 }
 
 function getPantallaRefreshSignature(nombre) {
@@ -9019,6 +9036,7 @@ function navegarAObjetivo(target) {
 
 function navegarAtras() {
   navDebugLog("navegarAtras.start");
+  syncHistorialWithActiveScreen();
   normalizeHistorialNavegacion();
 
   if (historialNavegacion.length > 1) {
@@ -12231,12 +12249,18 @@ function wireGlobalButtons() {
     });
   });
   
-  // Buscar actualizaciones manualmente
+  // Buscar actualizaciones manualmente (solo web/PWA)
   const btnBuscarActualizaciones = document.getElementById("btnBuscarActualizaciones");
   if (btnBuscarActualizaciones) {
-    btnBuscarActualizaciones.addEventListener("click", async () => {
-      await buscarActualizacionesManualmente();
-    });
+    const isElectronRuntime = String(navigator?.userAgent || "").toLowerCase().includes("electron/");
+
+    if (isElectronRuntime) {
+      btnBuscarActualizaciones.hidden = true;
+    } else {
+      btnBuscarActualizaciones.addEventListener("click", async () => {
+        await buscarActualizacionesManualmente();
+      });
+    }
   }
 
   // Volver a decks
